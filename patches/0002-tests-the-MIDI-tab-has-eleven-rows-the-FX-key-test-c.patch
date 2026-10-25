@@ -1,0 +1,70 @@
+From 61d9908f7441efb79fe3ed80ee3ef7c4355eb695 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Sat, 24 Oct 2026 18:31:20 +0200
+Subject: [PATCH 2/2] tests: the MIDI tab has eleven rows; the FX-key test
+ counts the key's MIDI alone
+
+SEQ MIDI OUT adds a row to MENU > MIDI and sends while the sequencer plays.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QUnBRshuyKRXwZRuQuZqVi
+---
+ tests/feat13_test.c | 5 +++--
+ tests/ui_test.c     | 8 ++++++--
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/tests/feat13_test.c b/tests/feat13_test.c
+index a885e0c..dcb46a4 100644
+--- a/tests/feat13_test.c
++++ b/tests/feat13_test.c
+@@ -962,10 +962,11 @@ static int midi_learn_channels(void)
+         press(B_OCTUP);                                 /* T2: CH 10 */
+     ok = trk_midi_ch(1) == 9u && str_eq(menu_vname(MI_TCH2, menu_get(MI_TCH2)), "CH 10") &&
+          str_eq(menu_vname(MI_ROUTE, 0), "TRACK") && str_eq(menu_vname(MI_TCH1, menu_get(MI_TCH1)), "CH 1");
+-    ok &= mr_top() == 0u;                               /* (the MIDI tab: six of ten shown, the cursor's the last) */
++    ok &= mr_top() == 1u;                               /* (the MIDI tab: six of eleven shown, the cursor's the last;
++                                                         * (Skiff fork) SEQ MIDI OUT the eleventh) */
+     ui.menu_sel = MI_TCH6;
+     frame();
+-    ok &= mr_top() == 4u && mr_n() == 6u;
++    ok &= mr_top() == 5u && mr_n() == 6u;
+     ui.menu_sel = MI_CLOCK;
+     frame();
+     ok &= mr_top() == 0u;
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index fe59eef..22f124f 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -1515,7 +1515,7 @@ static int test_menu_tabs(void)
+                  "tab gaps constant (S, LARGE)",
+                  ok && MTAB_COUNT == 5u && str_eq(MTAB_NAME[0], "DISPLAY") && str_eq(MTAB_NAME[MTAB_MIDI], "MIDI") &&
+                  mtab_rows(MTAB_DISPLAY) == 7u && mtab_rows(MTAB_CONTROL) == 5u && mtab_rows(MTAB_AUDIO) == 6u &&   /* (#27) */
+-                 mtab_rows(MTAB_SYSTEM) == 7u && mtab_rows(MTAB_MIDI) == 10u);   /* ((Skiff) SYSTEM: CPU CLOCK) */
++                 mtab_rows(MTAB_SYSTEM) == 7u && mtab_rows(MTAB_MIDI) == 11u);   /* ((Skiff) SYSTEM: CPU CLOCK; (fork) MIDI: SEQ MIDI OUT) */
+ 
+     ui_power_on();
+     hold(B_HOME);
+@@ -2367,8 +2367,11 @@ static int test_layer(void)
+         bad += check("  LEDS is saved with the settings and read back (all four); DIM HI saves the field as before (0)",
+                      ok && p.zoom == 0u && settings_import(&p, sizeof p) && settings_leds == LEDS_DIM);
+     }
+-    /* combo: a key with FX: at once, silent, no MIDI, no recording, no step */
++    /* combo: a key with FX: at once, silent, no MIDI, no recording, no step ((Skiff fork) the sequencer plays here: SEQ
++     * MIDI OUT off, so what is counted is the key's MIDI alone) */
+     ui_power_on();
++    favorites.factory[15][24] = 0xA5u;
++    CPU2_BYTE |= 8u;
+     usb.config = 1; mo = mo_w;
+     go_page(GR_ROLL); my_steps(TSEL); song.rec = 1; song.playing = 1;
+     {
+@@ -2384,6 +2387,7 @@ static int test_layer(void)
+         key_up(white(2)); frame();
+         bad += check("  the key let go: its effect off, no note-off sent", !perf_held && !kb_layer && mo_w == mo);
+         btn_up(B_FX); frame();
++        CPU2_BYTE &= (uint8_t)~8u;                      /* ((Skiff fork) SEQ MIDI OUT back ON) */
+         bad += check("  FX let go after a combo: no tap, the map gone", !ui.layer && cur_page()->graph == GR_ROLL);
+     }
+     song.playing = 0; song.rec = 0;
+-- 
+2.43.0
+
