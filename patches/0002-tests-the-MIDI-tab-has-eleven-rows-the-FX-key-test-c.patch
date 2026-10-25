@@ -1,7 +1,7 @@
-From 61d9908f7441efb79fe3ed80ee3ef7c4355eb695 Mon Sep 17 00:00:00 2001
+From b62b92818130afca596c490ba1004850f9137ec7 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sat, 24 Oct 2026 18:31:20 +0200
-Subject: [PATCH 2/2] tests: the MIDI tab has eleven rows; the FX-key test
+Subject: [PATCH 2/5] tests: the MIDI tab has eleven rows; the FX-key test
  counts the key's MIDI alone
 
 SEQ MIDI OUT adds a row to MENU > MIDI and sends while the sequencer plays.

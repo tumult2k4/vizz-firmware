@@ -1,0 +1,67 @@
+From ed9d11b48b0610981f43d274956549f32d5ba8d6 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Sun, 25 Oct 2026 11:27:15 +0000
+Subject: [PATCH 4/5] tests: the keys' MIDI counted alone; the SMK jack's clock
+ by its bytes
+
+SEQ MIDI OUT reports the tracks' mutes (CC 103) when USB comes up and
+when it turns back ON, and at PLAY: ui_test's and perform_test's key
+tests let those out before they count the keys' MIDI; smk_ui_test
+counts the clock's bytes on the TRS jack (Start, Clock, Stop), where
+SEQ MIDI OUT's CCs go too on the SMK.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
+---
+ tests/perform_test.c | 2 ++
+ tests/smk_ui_test.c  | 7 ++++++-
+ tests/ui_test.c      | 2 ++
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/tests/perform_test.c b/tests/perform_test.c
+index a4f5754..c62dfa2 100644
+--- a/tests/perform_test.c
++++ b/tests/perform_test.c
+@@ -367,6 +367,8 @@ static int test_keys(void)
+     uint32_t mo0, fx = 1u << 3, k = 9;              /* (a button bit for FX; key 9: a white key, D4) */
+     song_setup();
+     usb.config = 1;
++    events_block(CTL);                              /* ((Vizz) SEQ MIDI OUT reports the tracks' mutes as USB comes up (CC
++                                                     * 103): out before the count, which is the keys' MIDI */
+     mo_r = mo_w = 0;
+     kb_mask = perf_mask = fx;
+     fm1_in.buttons = fx;
+diff --git a/tests/smk_ui_test.c b/tests/smk_ui_test.c
+index 9ebb876..cbf0be8 100644
+--- a/tests/smk_ui_test.c
++++ b/tests/smk_ui_test.c
+@@ -620,7 +620,12 @@ static int test_clock_out(void)
+     song.playing = 1;
+     smk_clk_block(4096u);
+     seq_stop();
+-    bad += check("SMK TRS MIDI OUT clock: none with an external clock", host_ut_n == 0u);
++    for (i = 0, pulses = starts = stops = 0; i < host_ut_n && i < HOST_UT; i++) {   /* ((Vizz) the clock's bytes: SEQ MIDI */
++        pulses += host_ut[i] == 0xF8u;                  /* OUT's mutes (CC 103) at PLAY go to the jack too) */
++        starts += host_ut[i] == 0xFAu;
++        stops += host_ut[i] == 0xFCu;
++    }
++    bad += check("SMK TRS MIDI OUT clock: none with an external clock", !pulses && !starts && !stops);
+     return bad;
+ }
+ 
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index 22f124f..0ca85f2 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -2446,6 +2446,8 @@ static int test_layer(void)
+                  str_eq(GP[G_CFDBK].label, "FEEDBACK"));
+     /* chording: a key held before FX stays a note, its note-off arrives */
+     ui_power_on();
++    events_block(CTL);                                  /* ((Vizz) the tracks' mutes SEQ MIDI OUT still owes (CC 103, as it
++                                                         * turned back ON above) go out first: the key's MIDI alone counted) */
+     mo = mo_w;
+     key_down(white(4)); frame(); btn_down(B_FX); frame(); key_up(white(4)); frame(); btn_up(B_FX); frame();
+     for (i = 0; i < 4u; i++) events_block(CTL);
+-- 
+2.43.0
+

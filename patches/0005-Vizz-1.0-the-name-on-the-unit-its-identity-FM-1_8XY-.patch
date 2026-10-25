@@ -1,0 +1,452 @@
+From e64b64c750306bd8127c3d612a9614db7bc4e4a6 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Sun, 25 Oct 2026 11:27:24 +0000
+Subject: [PATCH 5/5] Vizz 1.0: the name on the unit, its identity FM-1_8XY,
+ its one-file installer
+
+Vizz is a modified version of Skiff 1.4 for the VIZZ visualizer. What
+the unit shows says so; code, comments and files keep Skiff's names,
+and every credit and licence stays:
+
+- the splash: Vizz, the version, on Skiff 1.4; ABOUT: VIZZ, based on
+  Skiff 1.4 / Felucca, and the credits open with VIZZ (what it changes)
+  and SKIFF (illuminus5); the crash screen VIZZ CRASH; the update
+  loader's screens the VIZZ INSTALLER (its font: V and Z); MENU >
+  THEME shows the default as VIZZ (the editor's theme list keeps SKIFF)
+- the version v1.0 (FELUCCA_VERSION; build.py --release 1.0)
+- the identity FM-1_800, a release FM-1_8XY (Skiff's 7XY, Felucca's
+  9XY): app, loader, M-UPGRADE entry, fm1_install.py and the web
+  updater read only the model before "_"; the package vizz-X.Y.fwsc
+- L, the large face: Z (ABOUT's VIZZ), the pixel face too
+- web/make_vizz_installer.py: the installer page (index_pkg.html) as
+  one file with the package in it as a data: URL, its words Vizz's
+- the USB names and descriptors stay the FM-1's
+- README.md: the notice; BUILDING.md: the release and the installer
+
+Tests: the splash's lines (ui_render), the L face's strings (ui_test),
+the package identity (test_web: FM-1_8xx) and MENU > THEME's names
+(test_web: VIZZ for SKIFF).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
+---
+ BUILDING.md                  |  7 +++
+ README.md                    |  6 +++
+ firmware/loader/ldr_screen.c | 10 ++--
+ firmware/loader/loader.c     |  2 +-
+ firmware/src/felucca.c       |  5 +-
+ firmware/src/main.c          |  2 +-
+ firmware/src/menu_items.c    |  3 +-
+ firmware/src/ui_draw.c       |  3 +-
+ firmware/src/ui_menu.c       | 11 ++++-
+ tests/ui_render.c            |  2 +-
+ tests/ui_test.c              |  2 +-
+ tools/build.py               | 14 +++---
+ tools/gen_aa_font.py         |  4 +-
+ tools/gen_pixel_font.py      |  2 +-
+ web/make_vizz_installer.py   | 94 ++++++++++++++++++++++++++++++++++++
+ web/test_web.mjs             |  8 +--
+ 16 files changed, 149 insertions(+), 26 deletions(-)
+ create mode 100644 web/make_vizz_installer.py
+
+diff --git a/BUILDING.md b/BUILDING.md
+index e7598ed..01d1cf4 100644
+--- a/BUILDING.md
++++ b/BUILDING.md
+@@ -52,6 +52,13 @@ On Linux x86-64 the toolchain runs natively and Docker is not needed.
+ `web/make_site.py build/skiff-1.2.fwsc 1.2 OUT` makes the GitHub Pages site from it: the browser installer, the
+ editor and the package with its licences.
+ 
++(Vizz) `./build.sh --release 1.0` makes `build/vizz-1.0.fwsc`, identity `FM-1_810` (Vizz's `FM-1_8XY`; Skiff's are
++`FM-1_7XY`), and `build/release-1.0/`. `web/make_vizz_installer.py build/vizz-1.0.fwsc 1.0 OUT/vizz-installer.html`
++makes its browser installer as one file with the package in it; its licence links point at `LICENSE`,
++`LICENSING.md` and `LICENSES/` beside it (copy them from `build/release-1.0/`). Web MIDI needs a secure context:
++if the browser does not offer MIDI for the file opened from disk, serve its folder (`python3 -m http.server`) and
++open it from `localhost`.
++
+ `BOARD=smk37 ./build.sh` builds for the M-VAVE SMK-37 Pro instead ([SMK37.md](SMK37.md)): `build/skiff-smk37.fwsc`,
+ identity `SMK-37 Pro_700` (a release `SMK-37 Pro_7XY`, `skiff-smk37-X.Y.fwsc`). `MODEL=elite` or `MODEL=mke` makes the
+ same firmware under the SMK-37 Elite's or the MKE-P37's model name (`skiff-smk37-elite.fwsc`, `skiff-smk37-mke.fwsc`),
+diff --git a/README.md b/README.md
+index a0ec00b..969fa31 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,9 @@
++> **Vizz 1.0** is a modified version of Skiff 1.4 (illuminus5, GPL-3.0), made for the VIZZ browser visualizer:
++> SEQ MIDI OUT (the sequencer's notes, its step position as CC 102, MIDI clock, start / stop on USB MIDI) and the
++> tracks' mutes and solo as CC 103; the unit shows the name Vizz (its USB names stay the FM-1's), its packages
++> are `vizz-X.Y.fwsc` (identity `FM-1_8XY`). It is not a release of Skiff. The changes: the commits after the tag
++> `v1.4`; below, Skiff's README as of 1.4.
++
+ <p align="center">
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/logo/skiff-logo.svg">
+diff --git a/firmware/loader/ldr_screen.c b/firmware/loader/ldr_screen.c
+index 274988f..1e78113 100644
+--- a/firmware/loader/ldr_screen.c
++++ b/firmware/loader/ldr_screen.c
+@@ -4,7 +4,8 @@
+  * and what it waits for, then WRITING and a bar while the app area is written. Drawn with the loader's own 5 x 7
+  * letters (the app area may be half written: never read), before USB starts (USB is polled: the panel's ~0.3 s init
+  * would leave the host's enumeration unanswered) */
+-static const char LDR_CH[] = "ABCDEFGHIKLMNOPRSTUW";            /* the letters the screens use; others: a space */
++static const char LDR_CH[] = "ABCDEFGHIKLMNOPRSTUVWZ";          /* the letters the screens use; others: a space
++                                                                 * ((Vizz) V Z: its name) */
+ static const uint8_t LDR_FONT[sizeof LDR_CH - 1u][7] = {         /* rows, bit 4 the left dot */
+     {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E},   /* A B */
+     {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E},   /* C D */
+@@ -15,7 +16,8 @@ static const uint8_t LDR_FONT[sizeof LDR_CH - 1u][7] = {         /* rows, bit 4
+     {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11}, {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E},   /* N O */
+     {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11},   /* P R */
+     {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},   /* S T */
+-    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A},   /* U W */
++    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04},   /* U V */
++    {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F},   /* W Z */
+ };
+ #define LDR_INK 0xFFFFu
+ #define LDR_TITLE 0x2616u                /* teal, #22C3B4: calm (the orange read as an error) */
+@@ -62,7 +64,7 @@ static void ldr_screen(void)
+ {
+     lcd_init();                                     /* (the panel cleared, on) */
+     ldr_text(70, 3, LDR_TITLE, "UPDATE MODE");
+-    ldr_lines("WAITING FOR THE", "SKIFF INSTALLER", "KEEP USB CONNECTED");   /* (an install on its way, or one cut
++    ldr_lines("WAITING FOR THE", "VIZZ INSTALLER", "KEEP USB CONNECTED");    /* (an install on its way, or one cut
+                                                                               * off: words for both, no alarm) */
+     lcd_sync();
+ }
+@@ -85,7 +87,7 @@ static void ldr_bar(uint32_t done, uint32_t total)
+ }
+ static void ldr_failed(void)                        /* a session that wrote nothing or stopped: the way out */
+ {
+-    ldr_lines("UPDATE FAILED", "INSTALL AGAIN WITH", "THE SKIFF INSTALLER");
++    ldr_lines("UPDATE FAILED", "INSTALL AGAIN WITH", "THE VIZZ INSTALLER");
+     lcd_fill(LDR_BAR_X, LDR_BAR_Y, LDR_BAR_W, 8, 0);
+     lcd_sync();
+     ldr_writing = 0;
+diff --git a/firmware/loader/loader.c b/firmware/loader/loader.c
+index fda1bd4..30b0230 100644
+--- a/firmware/loader/loader.c
++++ b/firmware/loader/loader.c
+@@ -13,7 +13,7 @@
+ #define FELUCCA_OTA_DRYRUN 0
+ #define FELUCCA_USB_PID 0x0002
+ #ifndef FELUCCA_ID                     /* build.py passes "ota-" + its PRODUCT */
+-#define FELUCCA_ID "ota-FM-1_700"
++#define FELUCCA_ID "ota-FM-1_800"                /* ((Vizz) its dev build) */
+ #endif
+ #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
+ #include "fm1_time.h"
+diff --git a/firmware/src/felucca.c b/firmware/src/felucca.c
+index 58bea44..e54052c 100644
+--- a/firmware/src/felucca.c
++++ b/firmware/src/felucca.c
+@@ -42,11 +42,12 @@
+ #if BOARD_SMK37
+ #define FELUCCA_ID SMK_MODEL "_700"   /* package identity (build.py: the .fwsc marker string) */
+ #else
+-#define FELUCCA_ID "FM-1_700"    /* package identity (build.py: the .fwsc marker string) */
++#define FELUCCA_ID "FM-1_800"    /* package identity (build.py: the .fwsc marker string; (Vizz) its 8XY) */
+ #endif
+ #endif
+ #ifndef FELUCCA_VERSION
+-#define FELUCCA_VERSION "v1.4"     /* Skiff's; shown in the menu, the console and the editor; build.py --release X.Y */
++#define FELUCCA_VERSION "v1.0"     /* (Vizz) Vizz's (Skiff 1.4's v1.4); shown in the menu, the console and the editor;
++                                    * build.py --release X.Y */
+ #endif
+ #if FELUCCA_OTA && !FELUCCA_FLASH
+ #error "FELUCCA_OTA needs FELUCCA_FLASH"
+diff --git a/firmware/src/main.c b/firmware/src/main.c
+index 5d5853e..c0dac67 100644
+--- a/firmware/src/main.c
++++ b/firmware/src/main.c
+@@ -81,7 +81,7 @@ static void fm1_fault(const fm1_crash_t *c)
+     fm1_audio_stop();
+     scr_wake_now();                                   /* (MENU > SCREEN OFF: the panel on first) */
+     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
+-    draw_text_line(0, 8, 240, &AF_M, "SKIFF CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
++    draw_text_line(0, 8, 240, &AF_M, "VIZZ CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
+     hexs(b, c->vec);
+     draw_text_line(10, 40, 220, &AF_M, b, UI_CRASH_INK, UI_CRASH_BG, 0);
+     hexs(b, c->pc);
+diff --git a/firmware/src/menu_items.c b/firmware/src/menu_items.c
+index f7489ba..bdda0ef 100644
+--- a/firmware/src/menu_items.c
++++ b/firmware/src/menu_items.c
+@@ -199,7 +199,8 @@ static const char *menu_vname(uint32_t row, uint32_t v)
+     if (f)
+         return f->name[v & 1u];
+     switch (row) {
+-    case MI_COLOR: return v < NPALETTES ? UI_PALETTES[v].name : "CUSTOM";
++    /* ((Vizz) the default THEME shown as VIZZ; UI_PALETTES keeps "SKIFF", the name the editor knows its look by) */
++    case MI_COLOR: return v == UI_SKIFF_INDEX ? "VIZZ" : v < NPALETTES ? UI_PALETTES[v].name : "CUSTOM";
+     case MI_PHEAD: return v & 1u ? "LINE" : "THEME";
+     case MI_LOWCUT: return SPK_EQ[v % 3u];
+     case MI_HOLD: return HOLD_N[v & 3u];
+diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
+index dd42401..3f2fcfa 100644
+--- a/firmware/src/ui_draw.c
++++ b/firmware/src/ui_draw.c
+@@ -1108,7 +1108,8 @@ static void draw_columns(void)
+ #define SPL_X0 ((240u - SPL_SQ) / 2u)               /* its top-left on the screen (x and y) */
+ #define SPL_PAD 16                                  /* the text's inset: left (its ink), top and bottom (the capitals) */
+ #define SPL_PITCH 20                                /* line to line */
+-static const char *const SPLASH_LINES[] = {"Skiff", FELUCCA_VERSION, "on Felucca 1.1.5", "H\xFCgelton + community"};
++/* ((Vizz) its name and version, then what it comes from: Skiff 1.4, on Felucca 1.1.5) */
++static const char *const SPLASH_LINES[] = {"Vizz", FELUCCA_VERSION, "on Skiff 1.4", "H\xFCgelton + community"};
+ /* a band of two lines, h tall, at y on the screen: the first line's top at ly; the two lines' capitals declared
+  * against al0..al1 (mode: AL_V the band centred there, AL_B the last baseline on al1) */
+ static void splash_band(uint32_t y, uint32_t h, int32_t ly, const char *const *l, uint32_t mode, int32_t al0,
+diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
+index 45e33df..aedd7e7 100644
+--- a/firmware/src/ui_menu.c
++++ b/firmware/src/ui_menu.c
+@@ -34,6 +34,13 @@ static void draw_about_qr(int32_t x, int32_t y)
+ enum { MC_TEXT, MC_TITLE, MC_URL };
+ typedef struct { const char *text; uint8_t kind; } menu_credit_t;
+ static const menu_credit_t MENU_CREDITS[] = {
++    {"VIZZ", MC_TITLE},                        /* (Vizz) what it is: Skiff 1.4, changed */
++    {"A modified version of Skiff 1.4 for the VIZZ visualizer: SEQ MIDI OUT (the sequencer on USB MIDI, its mutes as CC 103) / GPL-3.0", MC_TEXT},
++    {"", MC_TEXT},
++    {"SKIFF", MC_TITLE},                       /* (Vizz) the firmware Vizz changes */
++    {"illuminus5 / GPL-3.0", MC_TEXT},
++    {"https://github.com/illuminus5/skiff", MC_URL},
++    {"", MC_TEXT},
+     {"FELUCCA", MC_TITLE},                     /* (Skiff 1.0) the firmware Skiff is built on */
+     {"Leo Kuroshita, H\xFCgelton Instruments / GPL-3.0", MC_TEXT},
+     {"https://github.com/hugelton/Felucca", MC_URL},
+@@ -131,8 +138,8 @@ static int32_t menu_document(int32_t y, int draw)
+ {
+     uint32_t i;
+     if (draw) {
+-        cv_text(6, y + 2, &AF_L, "SKIFF", T_THEME);
+-        cv_text(6, y + 38, &AF_S, "Groovebox on Felucca", T_TEXT);
++        cv_text(6, y + 2, &AF_L, "VIZZ", T_THEME);                      /* ((Vizz) a modified Skiff: its name, */
++        cv_text(6, y + 38, &AF_S, "based on Skiff 1.4 / Felucca", T_TEXT);   /* where it comes from) */
+         cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
+         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
+         {   /* (Skiff) the core clock now, from the PLL (hal/fm1_clk.h; MENU > SYSTEM > CPU CLOCK) */
+diff --git a/tests/ui_render.c b/tests/ui_render.c
+index 81c92f2..618461c 100644
+--- a/tests/ui_render.c
++++ b/tests/ui_render.c
+@@ -1519,7 +1519,7 @@ static void draw(int s)
+     }
+     if (s == S_SPLASH) {                          /* the power-on splash (main.c, before the UI): its lines, the version
+                                                    * shown FELUCCA_VERSION (run_tests.sh: src/felucca.c's) */
+-        static const char WANT[] = "Skiff|" FELUCCA_VERSION "|on Felucca 1.1.5|H\xFCgelton + community";
++        static const char WANT[] = "Vizz|" FELUCCA_VERSION "|on Skiff 1.4|H\xFCgelton + community";   /* ((Vizz)) */
+         splash_seen[0] = 0;
+         in_splash = 1;
+         draw_splash();
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index 0ca85f2..6565827 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -4215,7 +4215,7 @@ static int test_bughunt_ui2(void)
+ /* L is a sparse face (tools/gen_aa_font.py L_CHARS): every string drawn in it has all its glyphs */
+ static int test_large_face(void)
+ {
+-    static const char *const FIXED[] = {"SKIFF", "0123456789"};   /* main.c, ui_menu.c; ui_draw.c draw_uboot */
++    static const char *const FIXED[] = {"VIZZ", "0123456789"};    /* ui_menu.c ((Vizz) ABOUT); ui_draw.c draw_uboot */
+     uint32_t i, missing = 0;
+     const char *s;
+     for (i = 0; i < NB + NE + 2u; i++)                              /* ui_input.c setup_show: the control names */
+diff --git a/tools/build.py b/tools/build.py
+index b1c3d33..1812d71 100755
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -6,8 +6,10 @@
+   tools/build.py [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
+ 
+ Outputs in build/: felucca.bin (app), loader/ota.bin (update loader),
+-felucca.fwsc (package). A release build (--release X.Y) writes skiff-X.Y.fwsc and a folder
++felucca.fwsc (package). A release build (--release X.Y) writes vizz-X.Y.fwsc (Skiff: skiff-X.Y) and a folder
+ release-X.Y/ with the package, the app, SHA256SUMS, the samples' attributions and the licence files.
++(Vizz, a modified Skiff) the FM-1's identity is FM-1_800, a release's FM-1_8XY (Skiff's 7XY, Felucca's 9XY: neither
++the app, the loader nor the installers read more of it than the model before "_"), the package vizz-X.Y.fwsc.
+ See BUILDING.md for the toolchain and the SDK.
+ 
+ BOARD=smk37 (or --board smk37) builds Skiff for the M-VAVE SMK-37 Pro (after genkigenki's SMK-37 layer for Felucca):
+@@ -60,12 +62,12 @@ SDK_SHA256 = {
+     "cfg/eq_cfg_hw.bin": "41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d",
+ }
+ 
+-PRODUCT = "FM-1_700"                # package identity; release builds are FM-1_7XY (Felucca's are FM-1_9XY)
++PRODUCT = "FM-1_800"                # package identity; release builds are FM-1_8XY ((Vizz) Skiff's 7XY, Felucca's 9XY)
+ BOARD = "fm1"                       # fm1 (default) or smk37: BOARD env or --board
+-BOARD_PRODUCT = {"fm1": "FM-1_700", "smk37": "SMK-37 Pro_700"}   # a dev build's identity
+-BOARD_PREFIX = {"fm1": "FM-1_7", "smk37": "SMK-37 Pro_7"}        # a release build's: prefix + X + Y
++BOARD_PRODUCT = {"fm1": "FM-1_800", "smk37": "SMK-37 Pro_700"}   # a dev build's identity ((Vizz) the FM-1's 8XY)
++BOARD_PREFIX = {"fm1": "FM-1_8", "smk37": "SMK-37 Pro_7"}        # a release build's: prefix + X + Y
+ BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}           # the FM-1 build gets no new flag (byte-identical)
+-BOARD_STEM = {"fm1": "skiff", "smk37": "skiff-smk37"}            # a release package: STEM-X.Y.fwsc
++BOARD_STEM = {"fm1": "vizz", "smk37": "skiff-smk37"}             # a release package: STEM-X.Y.fwsc ((Vizz) vizz-X.Y)
+ # smk37: the keyboard's model name (MODEL env or --model); one hardware, three names. pro adds no flag
+ MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}
+ VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
+@@ -372,7 +374,7 @@ def mmio_check():
+ def main():
+     global PRODUCT, VERSION, BOARD, APP_SLOT
+     ap = argparse.ArgumentParser()
+-    ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_7XY, version string vX.Y")
++    ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_8XY (Vizz), version string vX.Y")
+     ap.add_argument("--board", choices=sorted(BOARD_PRODUCT), default=None,
+                     help="target board: fm1 (default) or smk37 (default: $BOARD, else fm1)")
+     ap.add_argument("--model", choices=sorted(MODELS), default=None,
+diff --git a/tools/gen_aa_font.py b/tools/gen_aa_font.py
+index 5e7899e..eec880f 100644
+--- a/tools/gen_aa_font.py
++++ b/tools/gen_aa_font.py
+@@ -46,8 +46,8 @@ HUFF = [("M", "L", "V")]
+ # B_NAME / E_NAME) and MENU > LARGE's card values and page titles (ui_draw.c draw_column_tall, ui_graph.c
+ # graph_title: # . / J W too; a value with another character is set in M): a sparse face of those glyphs, the
+ # space as its range and the rest as extras
+-# (ui_test.c checks that every L string is covered)
+-L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"
++# (ui_test.c checks that every L string is covered; (Vizz) Z: ABOUT's VIZZ)
++L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ # V (Skiff): STYLE BLOCKS' knob card values (ui_blocks.c), between M and L so three figures and a unit fit a card;
+ # sparse as L, with ! : Z for the trig conditions ("!FILL", "1:2"); another character sets the value in M
+ V_CHARS = " !#+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+diff --git a/tools/gen_pixel_font.py b/tools/gen_pixel_font.py
+index 4de560a..493d93c 100644
+--- a/tools/gen_pixel_font.py
++++ b/tools/gen_pixel_font.py
+@@ -99,7 +99,7 @@ G = {
+ }
+ G[0xE4], G[0xF6], G[0xFC] = G[0xC4], G[0xD6], G[0xDC]      # (no lower case: ä ö ü as their capitals)
+ EXTRAS = [0x7C, 0x7E, 0x85, 0xA9, 0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC]
+-L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"            # gen_aa_font.py's L and V sets
++L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"           # gen_aa_font.py's L and V sets
+ V_CHARS = " !#+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ # name, scale, bold, (h, Barlow's capitals' first row, their rows) of the Barlow face it stands for, range, extras
+ FACES = [("S", 1, False, (16, 3, 10), (32, 96), EXTRAS),
+diff --git a/web/make_vizz_installer.py b/web/make_vizz_installer.py
+new file mode 100644
+index 0000000..4c86541
+--- /dev/null
++++ b/web/make_vizz_installer.py
+@@ -0,0 +1,94 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++# Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
++# (Vizz, a modified Skiff: after web/make_site.py)
++"""Make Vizz's browser installer: one self-contained HTML file, the package in it.
++
++  web/make_vizz_installer.py build/vizz-1.0.fwsc 1.0 OUT.html
++
++As web/make_site.py makes Skiff's installer page (index_pkg.html with fm1pkg.js, fm1ota.js and fm1backup.js inlined),
++with the package carried in the page as a data: URL instead of a file next to it, so the one file installs it (opened
++from disk or any server, in Chrome or Edge: Web MIDI). Vizz is the FM-1's only; its identity is FM-1_8xx (Skiff's
++7xx, Felucca's 9xx). The page's words name Vizz where they named the firmware; the credits and licences stay as
++Skiff's page has them (the licence links point at LICENSE, LICENSING.md and LICENSES/ beside the page: copy them along,
++as a release folder of build.py has them).
++"""
++import base64
++import json
++import re
++import sys
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++sys.path.insert(0, str(HERE))
++from make_site import product_of, strip_module  # noqa: E402
++
++# first, in the page's words (TEXT), the firmware's name; "Learn Skiff" is the name of Skiff's manual and stays
++WORDS = re.compile(r"\bSkiff\b(?!（使い方| \(the manual)")
++# then (old, new, count): every one must be found as often as given (the template changed: update these)
++EDITS = [
++    ("<title>Skiff</title>", "<title>Vizz</title>", 1),
++    ("<h1>Skiff</h1>", "<h1>Vizz</h1>", 1),
++    ('''  <p class="small"><span data-t="smk"></span>
++    <a href="https://github.com/illuminus5/skiff/blob/main/SMK37.md" target="_blank" rel="noopener" style="color:inherit">SMK37.md</a></p>
++''', "", 1),
++    ('<a href="../editor/"', '<a href="https://illuminus5.github.io/skiff/webapp/editor/" target="_blank" rel="noopener"', 1),
++    ('<a href="../../learn/"', '<a href="https://illuminus5.github.io/skiff/learn/" target="_blank" rel="noopener"', 1),
++    ('  <p class="small">Skiff by illuminus5, built on Felucca',
++     '  <p class="small">Vizz is a modified version of Skiff 1.4 (SEQ MIDI OUT: the sequencer on USB MIDI, its mutes '
++     'as CC 103; the name), made for the VIZZ visualizer; not a release of Skiff.<br>\n'
++     '    Skiff by illuminus5, built on Felucca', 1),
++    ('href="../../firmware/LICENSING.md"', 'href="LICENSING.md"', 1),
++    ('href="../../firmware/LICENSE"', 'href="LICENSE"', 1),
++    ('href="../../firmware/LICENSES/Apache-2.0.txt"', 'href="LICENSES/Apache-2.0.txt"', 1),
++    ('href="../../firmware/LICENSES/"', 'href="LICENSES/"', 1),
++    ('github.com/illuminus5/skiff</a></p>', 'github.com/illuminus5/skiff</a> (v1.4)</p>', 1),
++    ("say(`Skiff ${meta.version}`)", "say(`Vizz ${meta.version}`)", 1),
++    ("a.download = `Skiff-backup-", "a.download = `Vizz-backup-", 1),
++    ('intro: "FM-1 または SMK-37 を USB で接続してください。', 'intro: "FM-1 を USB で接続してください。', 1),
++    ('intro: "Connect the FM-1 or SMK-37 by USB.', 'intro: "Connect the FM-1 by USB.', 1),
++    ('beta: "Vizz はカスタムファームウェアです。不具合は GitHub で知らせてください。',
++     'beta: "Vizz はカスタムファームウェア（Skiff 1.4 の改変版）です。不具合を Skiff に報告しないでください。', 1),
++    ('beta: "Vizz is custom firmware; please report problems on GitHub.',
++     'beta: "Vizz is custom firmware, a modified Skiff 1.4: please do not report its problems to Skiff.', 1),
++    ('editor: "エディタ（', 'editor: "Skiff のエディタ（オンライン。', 1),
++    ('editor: "Editor (', 'editor: "Skiff\'s editor (online; ', 1),
++]
++
++
++def page(pkg_path, version):
++    raw = Path(pkg_path).read_bytes()
++    product = product_of(raw)
++    if not re.fullmatch(r"FM-1_8\d\d", product):
++        raise SystemExit(f"{pkg_path}: identity {product!r} is not Vizz's (FM-1_8xx)")
++    if b"FELUCCA-LOADER-1" not in raw:              # (as make_site.py: never a package with vendor files)
++        raise SystemExit(f"{pkg_path}: no Felucca loader in it; only fm1pkg_make.py packages")
++    html = (HERE / "index_pkg.html").read_text(encoding="utf-8")
++    a, b = html.index("const TEXT = {"), html.index("let lang = ")
++    html = html[:a] + WORDS.sub("Vizz", html[a:b]) + html[b:]
++    for old, new, n in EDITS:
++        if html.count(old) != n:
++            raise SystemExit(f"index_pkg.html: {old[:60]!r} found {html.count(old)} times, not {n}; update EDITS")
++        html = html.replace(old, new)
++    lib = strip_module((HERE / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
++        strip_module((HERE / "fm1ota.js").read_text(encoding="utf-8")) + "\n" + \
++        strip_module((HERE / "fm1backup.js").read_text(encoding="utf-8"))
++    url = "data:application/octet-stream;base64," + base64.b64encode(raw).decode("ascii")
++    meta = json.dumps({"version": version, "product": product, "pkg": url,
++                       "packages": [{"product": product, "pkg": url}]})
++    for mark in ("/*LIB*/", "/*META*/"):
++        if html.count(mark) != 1:
++            raise SystemExit(f"index_pkg.html must contain {mark} once; update make_vizz_installer.py")
++    return product, html.replace("/*LIB*/", lib).replace("/*META*/", meta)
++
++
++def main(pkg, version, out):
++    product, html = page(pkg, version)
++    Path(out).write_text(html, encoding="utf-8")
++    print(f"installer: {out} ({len(html)} B), Vizz {version}, {product}")
++
++
++if __name__ == "__main__":
++    if len(sys.argv) != 4:
++        sys.exit(__doc__)
++    main(*sys.argv[1:])
+diff --git a/web/test_web.mjs b/web/test_web.mjs
+index 5184b65..3ac0573 100644
+--- a/web/test_web.mjs
++++ b/web/test_web.mjs
+@@ -460,8 +460,10 @@ function mockTables() {
+   const mj = join(DESC, "../menu.json");
+   if (E.MENU && existsSync(mj)) {                   /* the MENU settings: tests/editor_test.c's MENU_DESC replies */
+     const fm = JSON.parse(readFileSync(mj, "utf8"));
+-    cmp("MENU settings", E.MENU.map((x) => ({ id: x.id, kind: 0, min: 0, max: (x.names || m2.state.palettes).length - 1,
+-      value: x.def, name: x.name, names: x.names || m2.state.palettes, tab: x.tab, tabName: E.MENU_TABS[x.tab] })), fm);
++    const themes = m2.state.palettes.map((n) => n === "SKIFF" ? "VIZZ" : n);   /* ((Vizz) MENU > THEME shows its default as
++                                                                                VIZZ; the themes' own list keeps SKIFF) */
++    cmp("MENU settings", E.MENU.map((x) => ({ id: x.id, kind: 0, min: 0, max: (x.names || themes).length - 1,
++      value: x.def, name: x.name, names: x.names || themes, tab: x.tab, tabName: E.MENU_TABS[x.tab] })), fm);
+   }
+   diffs.slice(0, 20).forEach((d) => console.log("  " + d));
+   ok(!diffs.length, `editor: mock tables == firmware (${diffs.length} differences)`);
+@@ -1771,7 +1773,7 @@ async function packages() {
+   const logical = py(`import sys; raw = open(sys.argv[1], "rb").read()
+ sys.stdout.buffer.write(b"".join(raw[i * 48:i * 48 + 47] for i in range(20)) + raw[960:])`, pkg);
+   ok(eq(logicalImage(raw), logical), "fm1pkg.js logicalImage");
+-  ok(/^FM-1_7\d\d$/.test(productOf(raw)), "fm1pkg.js productOf");   /* Skiff's identities (Felucca's: FM-1_9xx) */
++  ok(/^FM-1_8\d\d$/.test(productOf(raw)), "fm1pkg.js productOf");   /* (Vizz) its identities (Skiff's 7xx, Felucca's 9xx) */
+ }
+ 
+ /* ------------------------------------------------- update protocol (fm1ota.js) --- */
+-- 
+2.43.0
+

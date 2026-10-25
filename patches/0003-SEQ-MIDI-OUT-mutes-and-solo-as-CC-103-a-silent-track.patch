@@ -1,0 +1,425 @@
+From 5034a995e8fe41cb33f0920cbc73c73c4e625c2a Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Sun, 25 Oct 2026 11:14:13 +0000
+Subject: [PATCH 3/5] SEQ MIDI OUT: mutes and solo as CC 103; a silent track
+ sends no note-on
+
+A track is silent as its sound is: its MUTE (P_MUTE), or GLO's SOLO held
+on another track (perf_solo, as ui_layer.c glo_sounding; not while
+perf_kill turns the layer's effects off). A silent track sends no
+note-on; its note-offs and its step CC 102 go on. Turning silent with
+notes held: CC 123 on its channel first.
+
+CC 103 on the track's channel (T1..T6 CHANNEL) says it: 127 silent,
+0 sounding. Sent when it changes (compared every audio block with what
+was sent last, so every source counts: keys, solo, launches, loads, a
+channel change), for all six right after Start, on every bar while
+playing (16 1/16 steps, either clock), when SEQ MIDI OUT turns ON and
+when USB comes up. Nothing while SEQ MIDI OUT is OFF.
+
+tests/seqmidi_test.c: cases 1-8 of docs/FIRMWARE-MUTE.md (mute while a
+note sounds, sounding again, Start, the bars, OFF, T2 on channel 10,
+solo, a muted track's step CC).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
+---
+ firmware/src/seq.c   |  78 +++++++++++++--
+ tests/run_tests.sh   |   2 +-
+ tests/seqmidi_test.c | 222 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 293 insertions(+), 9 deletions(-)
+
+diff --git a/firmware/src/seq.c b/firmware/src/seq.c
+index 6200df5..7f5100f 100644
+--- a/firmware/src/seq.c
++++ b/firmware/src/seq.c
+@@ -89,16 +89,55 @@ static uint32_t trk_midi_ch(uint32_t i)            /* MIDI channel 0..15 of trac
+ #define SKIFF_SEQ_MIDI 1
+ #endif
+ #define SEQ_STEP_CC 102u                            /* an undefined controller: harmless to a synth that hears it */
++/* (Vizz, SEQ MIDI OUT) a track's mute as CC SEQ_MUTE_CC on its channel: 127 silent, 0 sounding. Silent is what silences
++ * its sound: its MUTE (P_MUTE: trk_note_on plays nothing), or GLO's SOLO held on another track (perf_solo: perform.c
++ * perf_begin mutes the others' output; not while perf_kill turns the layer's effects off), as ui_layer.c glo_sounding.
++ * A silent track sends no note-on (its note-offs and its step CC go on); turning silent with notes held, CC 123 first.
++ * Sent when it changes (seq_mute_block compares every block: any source, the keys, a solo, a launch, a load), for all
++ * six at PLAY (after Start), on every bar while playing, when SEQ MIDI OUT turns ON and when USB comes up */
++#define SEQ_MUTE_CC 103u                            /* undefined too (102..119) */
+ static volatile uint8_t seq_midi_on = 1;
+ #if SKIFF_SEQ_MIDI
++static uint8_t seq_mute_sent[NTRK];                 /* what was sent last: bit 0 silent, bits 1..4 the channel; 0xFF not
++                                                     * yet: send it */
++static int trk_silent(uint32_t ti)
++{
++    return trk[ti].p[P_MUTE] != 0 || (perf_solo && !perf_kill && !((perf_solo >> ti) & 1u));
++}
++static void seq_midi_alloff(uint32_t ti)            /* CC 123 All Notes Off: a panic dropped notes without their offs */
++{
++    if (seq_midi_on)
++        midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | 123u << 16);
++}
++static void seq_midi_mute(uint32_t ti, int force)  /* CC SEQ_MUTE_CC when it changed (or its channel), or force */
++{
++    uint32_t mc = trk_midi_ch(ti), m = trk_silent(ti) ? 1u : 0u, s = m | mc << 1, was = seq_mute_sent[ti];
++    if (!seq_midi_on) {
++        seq_mute_sent[ti] = 0xFFu;                  /* (OFF: all six again when it turns ON) */
++        return;
++    }
++    if (!force && was == s)
++        return;
++    if (m && was == (s & ~1u) && trk[ti].seq_n)
++        seq_midi_alloff(ti);                        /* sounding until now, notes held: they end first */
++    midi_out_event(0x0Bu | (0xB0u | mc) << 8 | SEQ_MUTE_CC << 16 | (m ? 127u : 0u) << 24);
++    seq_mute_sent[ti] = (uint8_t)s;
++}
++static void seq_midi_mutes(void)                    /* all six, as they are now */
++{
++    uint32_t i;
++    for (i = 0; i < NTRK; i++)
++        seq_midi_mute(i, 1);
++}
+ static void seq_midi_note(uint32_t ti, uint32_t note, uint32_t vel)
+ {
+     uint32_t mc = trk_midi_ch(ti);
+-    if (!seq_midi_on)
++    if (!seq_midi_on || (vel && trk_silent(ti)))   /* (a silent track: no note-on; its note-offs always) */
+         return;
+-    if (vel)
++    if (vel) {
++        seq_midi_mute(ti, 0);                       /* (sounding again within this block, a launch's MUTE: CC 0 first) */
+         midi_out_event(0x09u | (0x90u | mc) << 8 | (note & 0x7Fu) << 16 | (vel & 0x7Fu) << 24);
+-    else
++    } else
+         midi_out_event(0x08u | (0x80u | mc) << 8 | (note & 0x7Fu) << 16);
+ }
+ static void seq_midi_step(uint32_t ti, uint32_t idx)
+@@ -106,11 +145,6 @@ static void seq_midi_step(uint32_t ti, uint32_t idx)
+     if (seq_midi_on)
+         midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | SEQ_STEP_CC << 16 | (idx & 0x7Fu) << 24);
+ }
+-static void seq_midi_alloff(uint32_t ti)            /* CC 123 All Notes Off: a panic dropped notes without their offs */
+-{
+-    if (seq_midi_on)
+-        midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | 123u << 16);
+-}
+ #if !BOARD_SMK37                                    /* (the SMK sends its own clock to TRS: smk_clk_block) */
+ static void seq_midi_rt(uint32_t st)                /* a realtime byte: Clock F8, Start FA, Stop FC (CIN F) */
+ {
+@@ -125,6 +159,7 @@ static void seq_midi_rt(uint32_t st)                /* a realtime byte: Clock F8
+ #define seq_midi_step(ti, idx) ((void)0)
+ #define seq_midi_rt(st) ((void)0)
+ #define seq_midi_alloff(ti) ((void)0)
++#define seq_midi_mutes() ((void)0)
+ #endif
+ 
+ static int drum_track(const track_t *t) { return drum_engine(eng_idx(t->eng_req)); }   /* ((Skiff) DRUM or DRUM-X) */
+@@ -959,6 +994,30 @@ static void seq_clk_block(uint32_t n)
+ }
+ #endif
+ 
++/* (Vizz, SEQ MIDI OUT) each block, before the tracks tick: CC SEQ_MUTE_CC for a track whose mute changed since what was
++ * sent (whatever changed it), all six on each bar while playing (launch_steps: 16 of a 1/16 track's steps, either clock)
++ * and when USB comes up (a host connected after PLAY knows within a bar) */
++static uint32_t seq_mute_bar;                       /* the bar the last ones were sent in (launch_steps / 16) */
++#if SKIFF_SEQ_MIDI
++static uint8_t seq_mute_usb;                        /* usb.config as last seen */
++static void seq_mute_block(void)
++{
++    uint32_t i, force = 0;
++    if (seq_mute_usb != usb.config) {
++        seq_mute_usb = usb.config;
++        memset(seq_mute_sent, 0xFF, sizeof seq_mute_sent);
++    }
++    if (song.playing && launch_steps / 16u != seq_mute_bar) {
++        seq_mute_bar = launch_steps / 16u;
++        force = 1;
++    }
++    for (i = 0; i < NTRK; i++)
++        seq_midi_mute(i, (int)force);
++}
++#else
++#define seq_mute_block() ((void)0)
++#endif
++
+ static void seq_start(void)
+ {
+     uint32_t i;
+@@ -972,6 +1031,8 @@ static void seq_start(void)
+         seq_midi_rt(0xFAu);
+         seq_clk_acc = beat_samples();
+     }
++    seq_midi_mutes();                              /* (Vizz) every track's mute after Start (CC SEQ_MUTE_CC) */
++    seq_mute_bar = 0;
+     motion_begin();
+     take_clear();                                  /* (Skiff) TAKES: a new log from PLAY */
+     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
+@@ -1547,6 +1608,7 @@ static void events_block(uint32_t n)
+     }
+     if (song.playing)
+         launch_clock(seq_n);                          /* (Skiff) the steps a BAR / BEAT launch waits for */
++    seq_mute_block();                                 /* (Vizz, SEQ MIDI OUT) the mutes as they changed, each bar */
+     if (aud_req)
+         seq_audition();                               /* ((1.3) STEP PREVIEW: a step sounds, stopped) */
+     for (i = 0; i < NTRK; i++)
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 99641a1..cd7d776 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -242,7 +242,7 @@ if [ -f build/gen/felucca_tables.h ]; then
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/ratchet_test" tests/ratchet_test.c -lm
+     run "RATCH: x1..x4 in a step (notes, chords, drum hits), gates, chance, swing, projects, user presets, CHANCE page; FLAM" "$OUT/ratchet_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/seqmidi_test" tests/seqmidi_test.c -lm
+-    run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row" "$OUT/seqmidi_test"
++    run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (Vizz) mutes and solo as CC 103" "$OUT/seqmidi_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/midi_control_test" tests/midi_control_test.c -lm
+     run "USB/TRS clock, bend, sustain, ownership and panic recovery" "$OUT/midi_control_test"
+     $CC -O1 -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/digital_test" tests/digital_test.c -lm
+diff --git a/tests/seqmidi_test.c b/tests/seqmidi_test.c
+index 1a1b3f0..65d1f7f 100644
+--- a/tests/seqmidi_test.c
++++ b/tests/seqmidi_test.c
+@@ -8,6 +8,16 @@
+  *   RATCH      x3: three note-on / note-off pairs in the step
+  *   SLIDE      a slide into the same note sends no second note-on, and every note-on gets one note-off
+  *   MENU       MENU > MIDI > SEQ MIDI OUT: ON by default, OFF sends nothing, back ON sends again
++ * (Vizz) the mutes, CC 103 (SEQ_MUTE_CC) on the track's channel, 127 silent, 0 sounding (docs/FIRMWARE-MUTE.md 1..8):
++ *   MUTE       1 T2 muted (GLO + its black key) while its note sounds: CC 123 first, one CC 103 = 127, no note-on after
++ *              2 sounding again: CC 103 = 0 before its next note-on
++ *   START      3 right after Start (FA) six CC 103, each track's state on its channel
++ *   BAR        4 six CC 103 on every bar while playing
++ *   OFF        5 SEQ MIDI OUT OFF: no CC 103 (mutes, solo, PLAY); back ON: six at once
++ *   CHANNEL    6 T2 CHANNEL 10: T2's CC 103 on channel 10
++ *   SOLO       7 GLO + F3 held, T1 solo: CC 103 = 127 for T2..T6, 0 for T1, only T1's notes; let go: 0 for every track
++ *              not muted, their notes again
++ *   STEP       8 a muted track's CC 102 goes on (16 a bar)
+  * Built and run by tests/run_tests.sh. */
+ #define UI_TEST_NO_MAIN 1
+ #include "ui_test.c"
+@@ -110,6 +120,58 @@ static void setup(void)
+ }
+ static uint32_t beat_blocks(void) { return beat_samples() / CTL; }
+ 
++/* (Vizz) the log from entry `from`: a note-on (K_ON), a note-off (K_OFF) or a CC (its number: 102, 103, 123) with the
++ * value v (-1 any), on channel ch (16 any): how many, the first's index (-1 none), the last one's value (-1 none) */
++enum { K_ON = 0x100, K_OFF = 0x101, ANY_CH = 16 };
++static int lmatch(uint32_t pkt, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
++    if (st >= 0xF0u || (ch < 16u && (st & 15u) != ch))
++        return 0;
++    if (kind == K_ON)
++        return cin == 0x9u && (st & 0xF0u) == 0x90u;
++    if (kind == K_OFF)
++        return cin == 0x8u && (st & 0xF0u) == 0x80u;
++    return cin == 0xBu && (st & 0xF0u) == 0xB0u && d1 == kind && (v < 0 || d2 == (uint32_t)v);
++}
++static uint32_t lcount(uint32_t from, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t i, n = 0;
++    for (i = from; i < mlog_n; i++)
++        n += (uint32_t)lmatch(mlog[i], kind, ch, v);
++    return n;
++}
++static int lfirst(uint32_t from, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t i;
++    for (i = from; i < mlog_n; i++)
++        if (lmatch(mlog[i], kind, ch, v))
++            return (int)i;
++    return -1;
++}
++static int llast_val(uint32_t from, uint32_t kind, uint32_t ch)
++{
++    int r = -1;
++    uint32_t i;
++    for (i = from; i < mlog_n; i++)
++        if (lmatch(mlog[i], kind, ch, -1))
++            r = (int)(mlog[i] >> 24 & 0x7Fu);
++    return r;
++}
++static uint32_t cc103(uint32_t ti, uint32_t v)       /* the packet: track ti's mute v on its channel */
++{
++    return 0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | SEQ_MUTE_CC << 16 | v << 24;
++}
++static uint32_t step_blocks(uint32_t n) { return n * div_samples(2) / CTL; }   /* n 1/16 steps, in blocks */
++static void settle(void) { blocks(1); reset_log(); }  /* a block (what changed while set up sent), the log emptied */
++static void glo_mute(uint32_t ti)                    /* GLO + its black key: a track's MUTE turned (latched, at once) */
++{
++    lay_combo(B_GLO, black(ti));
++    key_up(black(ti));
++    btn_up(B_GLO);
++    frame();
++}
++
+ int main(void)
+ {
+     int bad = 0;
+@@ -227,6 +289,166 @@ int main(void)
+     bad += check("  back ON: the notes go out again", menu_get(MI_SEQOUT) == 0u && m.on == NTRK && m.start == 1u);
+     bad += check("MENU: SEQ MIDI OUT in the MIDI tab", MI_TAB[MI_SEQOUT] == MTAB_MIDI && str_eq(MI_NAME[MI_SEQOUT], "SEQ MIDI OUT"));
+ 
++    /* (Vizz) 1, 2 MUTE: T2 a note on every step, held most of it (GATE 100); muted with GLO + its black key while one
++     * sounds, 6 steps on (no bar line: no repeat in the count), then sounding again for 4 steps */
++    {
++        uint32_t held, sent;
++        int a, b, ok;
++        setup();
++        for (i = 0; i < 16u; i++)
++            trk[1].step[i] = (step_t){{50}, 1, ST_NOTE, 0, 100};
++        trk[1].p[P_SGATE] = 100;
++        settle();
++        transport_req = 1;
++        blocks(4);                                   /* step 0: its note sounding */
++        held = trk[1].seq_n;
++        sent = lcount(0, K_ON, 1, -1);
++        reset_log();
++        glo_mute(1);
++        blocks(step_blocks(6));
++        a = lfirst(0, 123u, 1, -1);
++        b = lfirst(0, SEQ_MUTE_CC, 1, 127);
++        bad += check("1 MUTE (GLO + black key 2) while T2's note sounds: CC 123 on channel 2, then one CC 103 = 127",
++                     trk[1].p[P_MUTE] == 1 && held && sent == 1u && a >= 0 && b > a &&
++                     lcount(0, SEQ_MUTE_CC, 1, 127) == 1u && lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == 1u);
++        bad += check("  no note-on on channel 2 after it (6 steps), its note-offs still sent, its step CC on",
++                     lcount(0, K_ON, 1, -1) == 0u && lcount(0, K_OFF, 1, -1) >= 1u && lcount(0, SEQ_STEP_CC, 1, -1) >= 6u);
++        reset_log();
++        glo_mute(1);
++        blocks(step_blocks(4));
++        a = lfirst(0, SEQ_MUTE_CC, 1, 0);
++        b = lfirst(0, K_ON, 1, -1);
++        ok = trk[1].p[P_MUTE] == 0 && a >= 0 && b > a && lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == 1u;
++        bad += check("2 sounding again: one CC 103 = 0 on channel 2 before its next note-on; its notes again (no CC 123)",
++                     ok && lcount(0, K_ON, 1, -1) >= 3u && lcount(0, 123u, ANY_CH, -1) == 0u);
++        transport_req = 2;
++        blocks(2);
++    }
++
++    /* (Vizz) 3 START, 4 BAR, 8 STEP: T3 a note on every step, muted (as the TRACKS page's MUTE sets it) */
++    {
++        int ok;
++        setup();
++        for (i = 0; i < 16u; i++)
++            trk[2].step[i] = (step_t){{67}, 1, ST_NOTE, 0, 100};
++        settle();
++        trk[2].p[P_MUTE] = 1;
++        blocks(1);
++        bad += check("  (a mute changed while stopped: at once, T3's CC 103 = 127 on channel 3)",
++                     mlog_n == 1u && mlog[0] == cc103(2, 127));
++        reset_log();
++        transport_req = 1;
++        blocks(1);
++        ok = mlog_n >= 1u + NTRK && mlog[0] == (0x0Fu | 0xFAu << 8);
++        for (i = 0; i < NTRK; i++)
++            ok &= mlog[1u + i] == cc103(i, i == 2u ? 127u : 0u);
++        bad += check("3 START: right after FA six CC 103, each track's on its channel (T3 127, the others 0)", ok);
++        reset_log();
++        blocks(step_blocks(16) + 8u);                /* through the first bar line */
++        ok = lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == NTRK;
++        for (i = 0; i < NTRK; i++)
++            ok &= lcount(0, SEQ_MUTE_CC, trk_midi_ch(i), i == 2u ? 127 : 0) == 1u;
++        reset_log();
++        blocks(step_blocks(16));                     /* .. and the second */
++        ok &= lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == NTRK;
++        for (i = 0; i < NTRK; i++)
++            ok &= lcount(0, SEQ_MUTE_CC, trk_midi_ch(i), i == 2u ? 127 : 0) == 1u;
++        bad += check("4 BAR: six CC 103 on each bar line while playing (two bars), each track's state", ok);
++        ok = lcount(0, SEQ_STEP_CC, 2, -1) == 16u && lcount(0, SEQ_STEP_CC, 0, -1) == 16u && lcount(0, K_ON, 2, -1) == 0u;
++        bad += check("8 STEP: a muted track's CC 102 goes on, 16 in a bar of 16 steps (no note-on)", ok);
++        if (lcount(0, SEQ_STEP_CC, 2, -1) != 16u)
++            printf("ui:   T3 step CCs %u\n", lcount(0, SEQ_STEP_CC, 2, -1));
++        transport_req = 2;
++        blocks(2);
++    }
++
++    /* (Vizz) 5 OFF: no CC 103 for a MUTE, a SOLO, PLAY or a bar line; back ON: all six at once */
++    {
++        int ok;
++        setup();
++        favorites.factory[15][24] = 0xA5u;           /* (a unit past bank.c's SCENE_FREED: the byte can be set) */
++        menu_put(MI_SEQOUT, 1);                      /* OFF */
++        trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        settle();
++        glo_mute(1);                                 /* T2 muted */
++        transport_req = 1;
++        blocks(step_blocks(20));
++        lay_combo(B_GLO, white(0));                  /* SOLO T1 held */
++        blocks(8);
++        key_up(white(0));
++        btn_up(B_GLO);
++        frame();
++        blocks(8);
++        transport_req = 2;
++        blocks(2);
++        bad += check("5 SEQ MIDI OUT OFF: no CC 103 (a MUTE, a SOLO, PLAY, a bar line), nothing at all",
++                     !seq_midi_on && trk[1].p[P_MUTE] == 1 && lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == 0u && mlog_n == 0u);
++        menu_put(MI_SEQOUT, 0);                      /* back ON */
++        blocks(1);
++        ok = seq_midi_on && mlog_n == NTRK;
++        for (i = 0; i < NTRK; i++)
++            ok &= mlog[i] == cc103(i, i == 1u ? 127u : 0u);
++        bad += check("  back ON: six CC 103 at once, stopped (T2 muted: 127)", ok);
++    }
++
++    /* (Vizz) 6 CHANNEL: T2 on channel 10 */
++    setup();
++    settle();
++    menu_put(MI_TCH1 + 1, 9);
++    blocks(1);
++    {
++        int ok = mlog_n == 1u && mlog[0] == (0x0Bu | 0xB9u << 8 | SEQ_MUTE_CC << 16);   /* (its channel changed: sent) */
++        reset_log();
++        glo_mute(1);
++        blocks(1);
++        bad += check("6 T2 CHANNEL 10: T2's CC 103 on channel 10 (sent as the channel changes; 127 muted)",
++                     ok && mlog_n == 1u && mlog[0] == (0x0Bu | 0xB9u << 8 | SEQ_MUTE_CC << 16 | 127u << 24));
++    }
++    glo_mute(1);
++    menu_put(MI_TCH1 + 1, 1);
++
++    /* (Vizz) 7 SOLO: every track a note on each beat, T4 muted; GLO + F3 held: T1 solo; then let go */
++    {
++        uint32_t k;
++        int ok;
++        setup();
++        for (i = 0; i < NTRK; i++)
++            for (k = 0; k < 16u; k += 4u)
++                trk[i].step[k] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        trk[3].p[P_MUTE] = 1;
++        settle();
++        transport_req = 1;
++        blocks(1u + step_blocks(2));                 /* on step 2 */
++        reset_log();
++        lay_combo(B_GLO, white(0));                  /* SOLO T1, held */
++        blocks(1);
++        ok = perf_solo == 1u && !perf_kill && lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == 4u;
++        for (i = 1; i < NTRK; i++)
++            ok &= lcount(0, SEQ_MUTE_CC, trk_midi_ch(i), 127) == (i == 3u ? 0u : 1u);
++        bad += check("7 SOLO T1 (GLO + F3 held): at once CC 103 = 127 for T2 T3 T5 T6 (T4 muted before), none for T1", ok);
++        blocks(step_blocks(16));                     /* a bar line: every track's again */
++        ok = llast_val(0, SEQ_MUTE_CC, trk_midi_ch(0)) == 0 && lcount(0, K_ON, trk_midi_ch(0), -1) >= 3u;
++        for (i = 1; i < NTRK; i++)
++            ok &= llast_val(0, SEQ_MUTE_CC, trk_midi_ch(i)) == 127 && lcount(0, K_ON, trk_midi_ch(i), -1) == 0u;
++        bad += check("  held a bar: T1 0, T2..T6 127; only T1's notes", ok);
++        reset_log();
++        key_up(white(0));
++        btn_up(B_GLO);
++        frame();
++        blocks(1);
++        ok = !perf_solo && lcount(0, SEQ_MUTE_CC, ANY_CH, -1) == 4u;
++        for (i = 1; i < NTRK; i++)
++            ok &= lcount(0, SEQ_MUTE_CC, trk_midi_ch(i), 0) == (i == 3u ? 0u : 1u);
++        bad += check("  let go: at once CC 103 = 0 for T2 T3 T5 T6 (T4 muted: no change, T1 as it was)", ok);
++        blocks(step_blocks(8));
++        ok = 1;
++        for (i = 0; i < NTRK; i++)
++            ok &= i == 3u ? lcount(0, K_ON, trk_midi_ch(i), -1) == 0u : lcount(0, K_ON, trk_midi_ch(i), -1) >= 1u;
++        bad += check("  their notes again (T4's not)", ok);
++        transport_req = 2;
++        blocks(2);
++    }
++
+     printf("seqmidi: %s\n", bad ? "FAILED" : "all ok");
+     return bad != 0;
+ }
+-- 
+2.43.0
+
