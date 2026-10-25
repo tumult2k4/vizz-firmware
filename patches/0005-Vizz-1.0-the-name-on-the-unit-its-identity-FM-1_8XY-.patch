@@ -1,7 +1,7 @@
 From e9763cb3887ffd22e36fe7e3de9f116cce470b7b Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sun, 25 Oct 2026 11:27:24 +0000
-Subject: [PATCH 5/5] Vizz 1.0: the name on the unit, its identity FM-1_8XY,
+Subject: [PATCH 5/6] Vizz 1.0: the name on the unit, its identity FM-1_8XY,
  its one-file installer
 
 Vizz is a modified version of Skiff 1.4 for the VIZZ visualizer. What

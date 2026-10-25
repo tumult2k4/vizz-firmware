@@ -1,0 +1,244 @@
+From aba19a9f6ce97dc8a889059dc11254dccca597f2 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Sun, 25 Oct 2026 12:30:03 +0000
+Subject: [PATCH 6/6] Vizz: fit the app slot (FM-1 built without the second
+ core)
+
+Skiff 1.4 left 212 bytes of the FM-1's app slot (XIP, 0x8DFBC) with
+the JieLi toolchain 20260730.1; SEQ MIDI OUT alone needs more. What
+saves without changing anything the unit does:
+
+- the globals SEQ MIDI OUT and its mutes added (seq_clk_acc, the CC 103
+  state) in .pool, zeroed at boot: among the merged globals they moved
+  others past the short offsets and grew code all over (fm1_main,
+  ui_input, the drawing, the editor: about 2 KB)
+- ABOUT's VIZZ in V, which has the Z; L stays Skiff's set
+- the credits' VIZZ line shorter, Skiff's own credit as it was
+- tools/size_fns.py: minsize for the main-loop functions of
+  midi_learn.c, master.c, throw.c, mod.c, perform.c, launch.c, fx.c
+  and audio.c (what an interrupt reaches stays -Os; no engine file:
+  their render functions are reached through ENGINES[], which
+  isr_reach does not follow)
+
+That leaves 712 bytes over. build.py therefore builds the FM-1 without
+the second core (FELUCCA_CPU2=0, Skiff's own option): MENU > SYSTEM >
+CPU 2 CORES (beta, 1 CORE by default) is gone; 2184 bytes stay free.
+FELUCCA_CPU2=1 builds it in again (and does not fit).
+
+run_tests.sh: SEQ MIDI OUT, the UI tests and the UI renders also as
+the FM-1 build has it (FELUCCA_CPU2=0).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
+---
+ BUILDING.md             |  4 +++-
+ firmware/src/seq.c      | 12 +++++++-----
+ firmware/src/ui_menu.c  | 11 ++++-------
+ tests/run_tests.sh      |  8 ++++++++
+ tests/ui_test.c         |  6 ++++--
+ tools/build.py          |  5 ++++-
+ tools/gen_aa_font.py    |  4 ++--
+ tools/gen_pixel_font.py |  2 +-
+ tools/size_fns.py       |  6 +++++-
+ 9 files changed, 38 insertions(+), 20 deletions(-)
+
+diff --git a/BUILDING.md b/BUILDING.md
+index 01d1cf4..438a5b2 100644
+--- a/BUILDING.md
++++ b/BUILDING.md
+@@ -53,7 +53,9 @@ On Linux x86-64 the toolchain runs natively and Docker is not needed.
+ editor and the package with its licences.
+ 
+ (Vizz) `./build.sh --release 1.0` makes `build/vizz-1.0.fwsc`, identity `FM-1_810` (Vizz's `FM-1_8XY`; Skiff's are
+-`FM-1_7XY`), and `build/release-1.0/`. `web/make_vizz_installer.py build/vizz-1.0.fwsc 1.0 OUT/vizz-installer.html`
++`FM-1_7XY`), and `build/release-1.0/`. The FM-1 build is made without the second core (`FELUCCA_CPU2=0`, MENU > SYSTEM
++> CPU 2 CORES gone): Skiff 1.4 left 212 bytes of the app slot, SEQ MIDI OUT needs more; `FELUCCA_CPU2=1` builds it
++in again and does not fit. `web/make_vizz_installer.py build/vizz-1.0.fwsc 1.0 OUT/vizz-installer.html`
+ makes its browser installer as one file with the package in it; its licence links point at `LICENSE`,
+ `LICENSING.md` and `LICENSES/` beside it (copy them from `build/release-1.0/`). Web MIDI needs a secure context:
+ if the browser does not offer MIDI for the file opened from disk, serve its folder (`python3 -m http.server`) and
+diff --git a/firmware/src/seq.c b/firmware/src/seq.c
+index 7f5100f..21b5f2c 100644
+--- a/firmware/src/seq.c
++++ b/firmware/src/seq.c
+@@ -98,8 +98,9 @@ static uint32_t trk_midi_ch(uint32_t i)            /* MIDI channel 0..15 of trac
+ #define SEQ_MUTE_CC 103u                            /* undefined too (102..119) */
+ static volatile uint8_t seq_midi_on = 1;
+ #if SKIFF_SEQ_MIDI
+-static uint8_t seq_mute_sent[NTRK];                 /* what was sent last: bit 0 silent, bits 1..4 the channel; 0xFF not
+-                                                     * yet: send it */
++static uint8_t seq_mute_sent[NTRK] __attribute__((section(".pool")));   /* what was sent last: bit 0 silent, bits 1..4
++                                                     * the channel; 0xFF not yet: send it (.pool, zeroed at boot: not
++                                                     * among the globals the audio ISR reaches, whose offsets would grow) */
+ static int trk_silent(uint32_t ti)
+ {
+     return trk[ti].p[P_MUTE] != 0 || (perf_solo && !perf_kill && !((perf_solo >> ti) & 1u));
+@@ -978,7 +979,7 @@ static void smk_clk_block(uint32_t n)
+ #endif
+ 
+ /* (SEQ MIDI OUT) the INT clock's MIDI Clock on USB: 24 a beat while playing, counted in samples as smk_clk_block's */
+-static uint32_t seq_clk_acc;
++static uint32_t seq_clk_acc __attribute__((section(".pool")));   /* ((Vizz) .pool: out of the merged globals) */
+ #if !BOARD_SMK37
+ static void seq_clk_block(uint32_t n)
+ {
+@@ -997,9 +998,10 @@ static void seq_clk_block(uint32_t n)
+ /* (Vizz, SEQ MIDI OUT) each block, before the tracks tick: CC SEQ_MUTE_CC for a track whose mute changed since what was
+  * sent (whatever changed it), all six on each bar while playing (launch_steps: 16 of a 1/16 track's steps, either clock)
+  * and when USB comes up (a host connected after PLAY knows within a bar) */
+-static uint32_t seq_mute_bar;                       /* the bar the last ones were sent in (launch_steps / 16) */
++static uint32_t seq_mute_bar __attribute__((section(".pool")));   /* the bar the last ones were sent in (launch_steps
++                                                                   * / 16) */
+ #if SKIFF_SEQ_MIDI
+-static uint8_t seq_mute_usb;                        /* usb.config as last seen */
++static uint8_t seq_mute_usb __attribute__((section(".pool")));    /* usb.config as last seen */
+ static void seq_mute_block(void)
+ {
+     uint32_t i, force = 0;
+diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
+index aedd7e7..0fbb18a 100644
+--- a/firmware/src/ui_menu.c
++++ b/firmware/src/ui_menu.c
+@@ -34,12 +34,8 @@ static void draw_about_qr(int32_t x, int32_t y)
+ enum { MC_TEXT, MC_TITLE, MC_URL };
+ typedef struct { const char *text; uint8_t kind; } menu_credit_t;
+ static const menu_credit_t MENU_CREDITS[] = {
+-    {"VIZZ", MC_TITLE},                        /* (Vizz) what it is: Skiff 1.4, changed */
+-    {"A modified version of Skiff 1.4 for the VIZZ visualizer: SEQ MIDI OUT (the sequencer on USB MIDI, its mutes as CC 103) / GPL-3.0", MC_TEXT},
+-    {"", MC_TEXT},
+-    {"SKIFF", MC_TITLE},                       /* (Vizz) the firmware Vizz changes */
+-    {"illuminus5 / GPL-3.0", MC_TEXT},
+-    {"https://github.com/illuminus5/skiff", MC_URL},
++    {"VIZZ", MC_TITLE},                        /* (Vizz) what it is */
++    {"Skiff 1.4 by illuminus5, modified: SEQ MIDI OUT for VIZZ / GPL-3.0", MC_TEXT},
+     {"", MC_TEXT},
+     {"FELUCCA", MC_TITLE},                     /* (Skiff 1.0) the firmware Skiff is built on */
+     {"Leo Kuroshita, H\xFCgelton Instruments / GPL-3.0", MC_TEXT},
+@@ -138,7 +134,8 @@ static int32_t menu_document(int32_t y, int draw)
+ {
+     uint32_t i;
+     if (draw) {
+-        cv_text(6, y + 2, &AF_L, "VIZZ", T_THEME);                      /* ((Vizz) a modified Skiff: its name, */
++        cv_text(6, y + 4, &AF_V, "VIZZ", T_THEME);                      /* ((Vizz) a modified Skiff: its name (V: the
++                                                                         * face has its Z, L has not), */
+         cv_text(6, y + 38, &AF_S, "based on Skiff 1.4 / Felucca", T_TEXT);   /* where it comes from) */
+         cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
+         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index cd7d776..0f71b01 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -243,6 +243,8 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "RATCH: x1..x4 in a step (notes, chords, drum hits), gates, chance, swing, projects, user presets, CHANCE page; FLAM" "$OUT/ratchet_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/seqmidi_test" tests/seqmidi_test.c -lm
+     run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (Vizz) mutes and solo as CC 103" "$OUT/seqmidi_test"
++    $CC -O1 -w -DFELUCCA_CPU2=0 -Ibuild/gen -Ifirmware/src -o "$OUT/seqmidi_test_cpu1" tests/seqmidi_test.c -lm
++    run "(Vizz) SEQ MIDI OUT as the FM-1 build has it (FELUCCA_CPU2=0, build.py's default for Vizz)" "$OUT/seqmidi_test_cpu1"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/midi_control_test" tests/midi_control_test.c -lm
+     run "USB/TRS clock, bend, sustain, ownership and panic recovery" "$OUT/midi_control_test"
+     $CC -O1 -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/digital_test" tests/digital_test.c -lm
+@@ -275,6 +277,12 @@ if [ -f build/gen/felucca_tables.h ]; then
+     if python3 -c "import PIL" 2>/dev/null; then python3 tests/ui_render.py build/ui_new build/ui_slot; fi
+     $CC -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/ui_test_fm4" tests/ui_test.c -lm
+     run "UI built with FELUCCA_FM4=1 (DIGITAL, kept in the tree): its OP pages, EDIT cycle, algorithm charts" "$OUT/ui_test_fm4"
++    $CC -w -DFELUCCA_CPU2=0 -Ibuild/gen -Ifirmware/src -o "$OUT/ui_test_cpu1" tests/ui_test.c -lm
++    run "(Vizz) UI as the FM-1 build has it (FELUCCA_CPU2=0: no second core, no CPU row)" "$OUT/ui_test_cpu1"
++    $CC -O1 -w -DFELUCCA_CPU2=0 "-DFELUCCA_VERSION=\"$FV\"" -Ibuild/gen -Ifirmware/src -Itests -o "$OUT/ui_render_cpu1" tests/ui_render.c -lm
++    mkdir -p build/ui_cpu1/ppm build/ui_cpu1_slot
++    run "(Vizz) UI renders as the FM-1 build has it (FELUCCA_CPU2=0): lint, GREY gray, MONO neutral, alignment" \
++        "$OUT/ui_render_cpu1" build/ui_cpu1 build/ui_cpu1_slot
+     $CC -O1 -w -DFELUCCA_FM4=1 "-DFELUCCA_VERSION=\"$FV\"" -Ibuild/gen -Ifirmware/src -Itests -o "$OUT/ui_render_fm4" tests/ui_render.c -lm
+     mkdir -p build/ui_fm4/ppm build/ui_fm4_slot
+     run "UI renders with FELUCCA_FM4=1: DIGITAL's screens (EDIT, OP ENV, the 8 algorithm charts), lint, GREY gray, MONO neutral" \
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index 6565827..25a2969 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -4215,12 +4215,14 @@ static int test_bughunt_ui2(void)
+ /* L is a sparse face (tools/gen_aa_font.py L_CHARS): every string drawn in it has all its glyphs */
+ static int test_large_face(void)
+ {
+-    static const char *const FIXED[] = {"VIZZ", "0123456789"};    /* ui_menu.c ((Vizz) ABOUT); ui_draw.c draw_uboot */
++    static const char *const FIXED[] = {"0123456789"};            /* ui_draw.c draw_uboot */
+     uint32_t i, missing = 0;
+     const char *s;
+-    for (i = 0; i < NB + NE + 2u; i++)                              /* ui_input.c setup_show: the control names */
++    for (i = 0; i < NB + NE + 1u; i++)                              /* ui_input.c setup_show: the control names */
+         for (s = i < NB ? B_NAME[i] : i < NB + NE ? E_NAME[i - NB] : FIXED[i - NB - NE]; *s; s++)
+             missing += glyph_at(&AF_L, (uint8_t)*s) < 0;
++    for (s = "VIZZ"; *s; s++)                                       /* ((Vizz) ui_menu.c ABOUT: in V) */
++        missing += glyph_at(&AF_V, (uint8_t)*s) < 0;
+     return check("the L face holds every glyph of the strings drawn in it", !missing);
+ }
+ 
+diff --git a/tools/build.py b/tools/build.py
+index 1812d71..b6d249a 100755
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -372,7 +372,7 @@ def mmio_check():
+ 
+ 
+ def main():
+-    global PRODUCT, VERSION, BOARD, APP_SLOT
++    global PRODUCT, VERSION, BOARD, APP_SLOT, CPU2
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_8XY (Vizz), version string vX.Y")
+     ap.add_argument("--board", choices=sorted(BOARD_PRODUCT), default=None,
+@@ -389,6 +389,9 @@ def main():
+         raise SystemExit(f"MODEL={model}: pro, elite or mke, with BOARD=smk37")
+     fm1pkg_make.set_board(BOARD)
+     APP_SLOT = fm1pkg_make.APP_SLOT
++    if BOARD == "fm1" and os.environ.get("FELUCCA_CPU2") is None:   # (Vizz) the FM-1 build without the second core
++        os.environ["FELUCCA_CPU2"] = "0"            # (MENU > SYSTEM > CPU 2 CORES, beta): the app slot has no room for
++        CPU2 = False                                # it beside SEQ MIDI OUT (Skiff 1.4 left 212 B); FELUCCA_CPU2=1: with it
+     PRODUCT = BOARD_PRODUCT[BOARD]
+     stem = BOARD_STEM[BOARD]
+     name = "felucca.fwsc" if BOARD == "fm1" else f"{stem}.fwsc"
+diff --git a/tools/gen_aa_font.py b/tools/gen_aa_font.py
+index eec880f..5e7899e 100644
+--- a/tools/gen_aa_font.py
++++ b/tools/gen_aa_font.py
+@@ -46,8 +46,8 @@ HUFF = [("M", "L", "V")]
+ # B_NAME / E_NAME) and MENU > LARGE's card values and page titles (ui_draw.c draw_column_tall, ui_graph.c
+ # graph_title: # . / J W too; a value with another character is set in M): a sparse face of those glyphs, the
+ # space as its range and the rest as extras
+-# (ui_test.c checks that every L string is covered; (Vizz) Z: ABOUT's VIZZ)
+-L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
++# (ui_test.c checks that every L string is covered)
++L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"
+ # V (Skiff): STYLE BLOCKS' knob card values (ui_blocks.c), between M and L so three figures and a unit fit a card;
+ # sparse as L, with ! : Z for the trig conditions ("!FILL", "1:2"); another character sets the value in M
+ V_CHARS = " !#+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+diff --git a/tools/gen_pixel_font.py b/tools/gen_pixel_font.py
+index 493d93c..4de560a 100644
+--- a/tools/gen_pixel_font.py
++++ b/tools/gen_pixel_font.py
+@@ -99,7 +99,7 @@ G = {
+ }
+ G[0xE4], G[0xF6], G[0xFC] = G[0xC4], G[0xD6], G[0xDC]      # (no lower case: ä ö ü as their capitals)
+ EXTRAS = [0x7C, 0x7E, 0x85, 0xA9, 0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC]
+-L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"           # gen_aa_font.py's L and V sets
++L_CHARS = " #+-./0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"            # gen_aa_font.py's L and V sets
+ V_CHARS = " !#+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ # name, scale, bold, (h, Barlow's capitals' first row, their rows) of the Barlow face it stands for, range, extras
+ FACES = [("S", 1, False, (16, 3, 10), (32, 96), EXTRAS),
+diff --git a/tools/size_fns.py b/tools/size_fns.py
+index 5903c29..2903390 100644
+--- a/tools/size_fns.py
++++ b/tools/size_fns.py
+@@ -26,7 +26,11 @@ SIZE_FILES = ["ui.c", "favorites.c", "menu_items.c", "icons.c", "ui_graph.c", "u
+               # (Skiff) its own main-loop files: the cards, the page graphs, the themes, FM6 LAB, DRUM-X's pages, HOME,
+               # TAKES, SEQ TOOLS, the pool and its editor commands (what an interrupt reaches of them stays -Os)
+               "ui_blocks.c", "ui_pgraph.c", "ui_crypt.c", "ui_neon.c", "ui_quark.c", "ui_fm6.c", "ui_dx.c", "ui_home.c",
+-              "ui_take.c", "ui_tools.c", "bank.c", "take.c", "editor_project.c", "editor_song.c"]
++              "ui_take.c", "ui_tools.c", "bank.c", "take.c", "editor_project.c", "editor_song.c",
++              # (Vizz) the flash's last KB: the main-loop functions of these (MIDI LEARN, MASTER, THROW's knob,
++              # the mod and FX names, init): nothing of the engines, whose render functions an interrupt reaches
++              # through tables (ENGINES[]) that isr_reach does not follow
++              "midi_learn.c", "master.c", "throw.c", "mod.c", "perform.c", "launch.c", "fx.c", "audio.c"]
+ ISR_ROOTS = ("fm1_alnk0_irq", "fm1_timer5_irq")      # hal/fm1_isr.S: the audio ISR, the key / LED scan (+ USB poll)
+ DEF = re.compile(r"^(?:static|void|int|uint\w*|int\w*|const)\b[^;=(]*?\b([A-Za-z_]\w*)\s*\(", re.M)
+ IR_DEF = re.compile(r"^(define [^\n]*?@\"?([\w.]+)\"?\([^\n]*\)(?: unnamed_addr| local_unnamed_addr)?)( #\d+[^\n]*\{)$",
+-- 
+2.43.0
+

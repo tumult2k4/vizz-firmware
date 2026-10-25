@@ -1,7 +1,7 @@
 From ed9d11b48b0610981f43d274956549f32d5ba8d6 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sun, 25 Oct 2026 11:27:15 +0000
-Subject: [PATCH 4/5] tests: the keys' MIDI counted alone; the SMK jack's clock
+Subject: [PATCH 4/6] tests: the keys' MIDI counted alone; the SMK jack's clock
  by its bytes
 
 SEQ MIDI OUT reports the tracks' mutes (CC 103) when USB comes up and

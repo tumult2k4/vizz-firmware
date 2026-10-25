@@ -1,7 +1,7 @@
 From 5034a995e8fe41cb33f0920cbc73c73c4e625c2a Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sun, 25 Oct 2026 11:14:13 +0000
-Subject: [PATCH 3/5] SEQ MIDI OUT: mutes and solo as CC 103; a silent track
+Subject: [PATCH 3/6] SEQ MIDI OUT: mutes and solo as CC 103; a silent track
  sends no note-on
 
 A track is silent as its sound is: its MUTE (P_MUTE), or GLO's SOLO held
