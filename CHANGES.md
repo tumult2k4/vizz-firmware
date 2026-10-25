@@ -125,7 +125,15 @@ M-VAVEs Updater das Gerät weiter als FM-1 behandelt (wie bei Skiffs `7XY`).
 
 Host-Tests (`tests/run_tests.sh`) auf dem Endstand, ohne die Teile, die das gebaute Paket brauchen:
 
-(Der vollständige Lauf auf dem Endstand läuft noch; das Ergebnis wird hier eingetragen. Vorab grün: `seqmidi_test` mit allen neuen Fällen, `ui_test`, `ui_render` (0 Lint-Befunde), `perform_test`, `smk_ui_test`, `ldr_screen_test`.)
+**`ALL HOST TESTS PASSED`**: 101 Test-Schritte von `run_tests.sh`, zusammen 5 607 Einzelprüfungen „ok", 0 Fehler
+(Linux x86-64, gcc 13, Python 3 mit Pillow und fontTools, Node 22; Header mit `tools/build.py`s `generate()` erzeugt,
+also ohne Toolchain). Darin u. a.: `seqmidi_test` mit den Fällen 1–8 (32 Prüfungen), die UI-Tests und UI-Renders
+(219 Bildschirme × 6 Paletten, 0 Lint-Befunde, Ausrichtung 0 Abweichungen), Regression (Golden-Hashes und CPU-Budget
+unverändert), Editor-Protokoll, Projekte, Backup, alle Engines, ASan/UBSan-Läufe und Fuzzer, Installer-CLI gegen ein
+simuliertes FM-1, die Web-Tests (Editor-Tabellen = Firmware: 0 Abweichungen) und der Loader-Bildschirm.
+
+Innerhalb der Suiten übersprungen, wie bei Skiff ohne diese Dateien üblich: M-VAVEs Original-Pakete (V15, SMK V016)
+und – mangels Instruktionszähler auf diesem Host – die Kostenmessung in `mod_test`.
 
 Nicht gelaufen, weil sie `build/felucca.fwsc`, `felucca.bin`, `loader/ota.bin` oder `felucca.dis` aus dem
 Toolchain-Build brauchen: M-UPGRADE-Einstieg (`ota_test`, auch SMK-Varianten und ASan), Update-Loader
