@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build Vizz 1.0 from this repo (BRIEF.md, steps 1, 4 and 5): Skiff v1.4 + patches/, the release package, every
 # test, the one-file installer, out/. Linux x86-64 (or WSL), with git, curl, python3, pip, a C compiler; node for the
-# web tests. Needs to reach github.com, gitee.com (the AC79 SDK) and pkgman.jieliapp.com (the toolchain).
+# web tests. Needs to reach github.com, gitee.com (the AC79 SDK) and pkgman.jieliapp.com (the toolchain; it
+# redirects to jl-update.oss-cn-shenzhen.aliyuncs.com).
 #   ./build-vizz.sh [WORKDIR]          (default: ../vizz-build; the Skiff clone goes there)
 #   JIELI_TOOLCHAIN, AC79_SDK          as Skiff's build.sh (default: ~/.jieli/toolchain, ~/fw-AC79_AIoT_SDK)
 set -e

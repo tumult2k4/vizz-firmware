@@ -15,7 +15,8 @@ für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ:
 `git am -3 patches/*.patch` auf einem Branch ab dem Tag `v1.4`. Was sich ändert und was getestet ist:
 [CHANGES.md](CHANGES.md).
 
-Bauen: `./build-vizz.sh` (Linux x86-64 oder WSL; braucht github.com, gitee.com und pkgman.jieliapp.com) klont Skiff,
+Bauen: `./build-vizz.sh` (Linux x86-64 oder WSL; braucht github.com, gitee.com, pkgman.jieliapp.com und dessen
+Download-Host jl-update.oss-cn-shenzhen.aliyuncs.com) klont Skiff,
 wendet die Patches an, holt Toolchain und SDK, baut das Release, lässt alle Tests laufen und legt `out/vizz-1.0.fwsc`,
 `out/vizz-installer.html` und `out/SHA256SUMS` (mit den Lizenztexten) ab. Der Auftrag dazu: [BRIEF.md](BRIEF.md).
 Die fertigen Pakete liegen auf dem Branch `vizz-1.0` unter `out/`.

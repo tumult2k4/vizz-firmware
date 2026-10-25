@@ -153,12 +153,27 @@ M-VAVEs Updater das Gerät weiter als FM-1 behandelt (wie bei Skiffs `7XY`).
 
 ## Testergebnis
 
-Erster vollständiger Lauf von `build-vizz.sh` (frischer Klon, alle Patches, Release, Entwicklungs-Build,
-`tests/run_tests.sh` komplett, **mit** den Tests, die das gebaute Paket brauchen): 116 Test-Schritte, 6 580
-Einzelprüfungen „ok", keine Prüfung „FAIL". Ein Schritt scheiterte trotzdem: die Kosten der Render-Schleifen
-(`target_budget.py`) – sie verlangten `mix_part`/`mix_split` und Skiffs Budget mit zweitem Kern. Behoben in 0006 (siehe
-oben); auf demselben Build läuft die Prüfung jetzt grün, ebenso auf reinem Skiff 1.4 mit zweitem Kern. Der
-abschließende Komplettlauf auf genau dem veröffentlichten Stand läuft; sein Ergebnis wird hier eingetragen.
+**`ALL HOST TESTS PASSED`** – abschließender Lauf von `./build-vizz.sh` auf genau dem veröffentlichten Stand (frischer
+Klon von Skiff `v1.4`, alle sechs Patches, Release- und Entwicklungs-Build, `tests/run_tests.sh` komplett **mit** den
+Tests, die das gebaute Paket brauchen): 114 Test-Schritte, 6 586 Einzelprüfungen „ok", 0 Fehler. Der Neubau ergab
+`vizz-1.0.fwsc` und `vizz-installer.html` bitgleich (gleiche SHA-256 wie in `SHA256SUMS`).
+
+Darin u. a.:
+
+- **mit dem echten Paket:** M-UPGRADE-Einstieg (auch unter ASan/UBSan), Update-Loader „andere App → dieser Build",
+  SMK-Paket-Layout, `fm1pkg.js` liest das Paket wie Python, der Loader-Bildschirm;
+- `seqmidi_test` mit den Fällen 1–8 (32 Prüfungen), auch in der Konfiguration ohne zweiten Kern;
+- UI-Tests und UI-Renders (219 Bildschirme × 6 Paletten, 0 Lint-Befunde, Ausrichtung 0 Abweichungen), auch ohne
+  zweiten Kern;
+- Regression: 176 Golden-Renders unverändert, 0 Health-/Stimmen-Fehler – der Klang ist bit für bit der von Skiff 1.4;
+- Kosten der Render-Schleifen (`tests/target_budget_cpu1.txt`): alle im Budget, Audio-Interrupt 34 330 bei 33 951
+  für reines Skiff 1.4 (+1,1 %);
+- Editor-Protokoll (Tabellen = Firmware: 0 Abweichungen), Projekte, Backup, alle Engines, ASan/UBSan und Fuzzer,
+  Installer-CLI gegen ein simuliertes FM-1, Web-Tests, der zweite Kern unter ThreadSanitizer (Host-Test).
+
+Übersprungen, wie bei Skiff ohne diese Dateien bzw. Werkzeuge: M-VAVEs Original-Pakete (V15, SMK V016), der
+PHYS-Vergleich mit DaisySP, der Browser-Emulator (Emscripten) und – mangels Instruktionszähler auf diesem Host – die
+Kostenmessung in `mod_test`.
 
 ## Hinweise
 
