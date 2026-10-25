@@ -1,6 +1,6 @@
 # Firmware-Spezifikation: Mute-Status über SEQ MIDI OUT (CC 103)
 
-Ergänzung zum Skiff-Fork-Patch `0001-SEQ-MIDI-OUT-…` (SEQ MIDI OUT). Umgesetzt in der Vizz-Firmware (siehe `firmware/`). Ziel: Ein Visualizer (oder eine DAW) weiß
+Ergänzung zum Skiff-Fork-Patch `0001-SEQ-MIDI-OUT-…` (SEQ MIDI OUT). Umgesetzt in der Vizz-Firmware (siehe `patches/0003` und `CHANGES.md`). Ziel: Ein Visualizer (oder eine DAW) weiß
 jederzeit, welche Spuren der FM-1 stumm sind, und bekommt von stummen Spuren keine Noten mehr.
 
 Der Visualizer (VIZZ) wertet das bereits aus: Stumme Spuren werden in der Spurleiste durchgestrichen und mit „M"
