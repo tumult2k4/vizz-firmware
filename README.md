@@ -9,6 +9,7 @@ für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ:
   `patches/0004`, Spezifikation `docs/FIRMWARE-MUTE.md`
 - **Name**: Vizz statt Skiff (Splash, ABOUT, Loader), Version 1.0, Paket `vizz-1.0.fwsc` mit der Kennung `FM-1_810`,
   Installer als eine HTML-Datei – `patches/0005`
+- **Platz**: Damit alles in den Flash der FM-1 passt, wird ohne die Beta-Option „2 CORES" gebaut – `patches/0006`
 
 `patches/` ist die vollständige Serie ab Skiff `v1.4` (`git format-patch v1.4..vizz`), anzuwenden mit
 `git am -3 patches/*.patch` auf einem Branch ab dem Tag `v1.4`. Was sich ändert und was getestet ist:

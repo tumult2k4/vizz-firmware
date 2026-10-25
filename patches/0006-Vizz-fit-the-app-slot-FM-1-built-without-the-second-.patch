@@ -1,4 +1,4 @@
-From aba19a9f6ce97dc8a889059dc11254dccca597f2 Mon Sep 17 00:00:00 2001
+From c4feb221d5e9d3c8c013c21118b442ed8870ca5a Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sun, 25 Oct 2026 12:30:03 +0000
 Subject: [PATCH 6/6] Vizz: fit the app slot (FM-1 built without the second
@@ -26,21 +26,28 @@ CPU 2 CORES (beta, 1 CORE by default) is gone; 2184 bytes stay free.
 FELUCCA_CPU2=1 builds it in again (and does not fit).
 
 run_tests.sh: SEQ MIDI OUT, the UI tests and the UI renders also as
-the FM-1 build has it (FELUCCA_CPU2=0).
+the FM-1 build has it (FELUCCA_CPU2=0); the target cost of the render
+loops against tests/target_budget_cpu1.txt when the build has no
+second core (Skiff v1.4's own code built so: fx.c inlines mix_part
+into mix_block, the audio ISR's loops nest deeper; target_budget.py:
+mix_part and mix_split optional). Vizz's ISR: +1.1 % on it.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
 ---
- BUILDING.md             |  4 +++-
- firmware/src/seq.c      | 12 +++++++-----
- firmware/src/ui_menu.c  | 11 ++++-------
- tests/run_tests.sh      |  8 ++++++++
- tests/ui_test.c         |  6 ++++--
- tools/build.py          |  5 ++++-
- tools/gen_aa_font.py    |  4 ++--
- tools/gen_pixel_font.py |  2 +-
- tools/size_fns.py       |  6 +++++-
- 9 files changed, 38 insertions(+), 20 deletions(-)
+ BUILDING.md                  |  4 +-
+ firmware/src/seq.c           | 12 +++---
+ firmware/src/ui_menu.c       | 11 ++---
+ tests/run_tests.sh           | 14 ++++++-
+ tests/target_budget.py       |  4 +-
+ tests/target_budget_cpu1.txt | 79 ++++++++++++++++++++++++++++++++++++
+ tests/ui_test.c              |  6 ++-
+ tools/build.py               |  5 ++-
+ tools/gen_aa_font.py         |  4 +-
+ tools/gen_pixel_font.py      |  2 +-
+ tools/size_fns.py            |  6 ++-
+ 11 files changed, 124 insertions(+), 23 deletions(-)
+ create mode 100644 tests/target_budget_cpu1.txt
 
 diff --git a/BUILDING.md b/BUILDING.md
 index 01d1cf4..438a5b2 100644
@@ -125,7 +132,7 @@ index aedd7e7..0fbb18a 100644
          cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
          cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
 diff --git a/tests/run_tests.sh b/tests/run_tests.sh
-index cd7d776..0f71b01 100755
+index cd7d776..ee2a317 100755
 --- a/tests/run_tests.sh
 +++ b/tests/run_tests.sh
 @@ -243,6 +243,8 @@ if [ -f build/gen/felucca_tables.h ]; then
@@ -150,6 +157,119 @@ index cd7d776..0f71b01 100755
      $CC -O1 -w -DFELUCCA_FM4=1 "-DFELUCCA_VERSION=\"$FV\"" -Ibuild/gen -Ifirmware/src -Itests -o "$OUT/ui_render_fm4" tests/ui_render.c -lm
      mkdir -p build/ui_fm4/ppm build/ui_fm4_slot
      run "UI renders with FELUCCA_FM4=1: DIGITAL's screens (EDIT, OP ENV, the 8 algorithm charts), lint, GREY gray, MONO neutral" \
+@@ -425,8 +433,10 @@ else
+     run "ASan/UBSan fuzz: user sample slot headers -> scan -> SAMPLE / GRAIN / SLICE (1000, seed 17)" "$A/fuzz_smp" 1000 17
+ fi
+ 
+-run "regression: target cost of the render loops (pi32v2 disassembly)" python3 tests/target_budget.py \
+-    build/felucca.dis tests/target_budget.txt
++TB=tests/target_budget.txt                      # ((Vizz) a build without the second core, the FM-1's: its own budget)
++grep -q '^mix_split:$' build/felucca.dis 2>/dev/null || TB=tests/target_budget_cpu1.txt
++run "regression: target cost of the render loops (pi32v2 disassembly, $TB)" python3 tests/target_budget.py \
++    build/felucca.dis "$TB"
+ 
+ run "installer CLI (fm1_install.py) against a simulated FM-1" python3 tests/install_test.py
+ run "(#21) sample upload CLI: mix (a sound's LEVEL REV DLY) against a fake device" python3 tests/sample_upload_test.py
+diff --git a/tests/target_budget.py b/tests/target_budget.py
+index d6bb090..34d48e6 100644
+--- a/tests/target_budget.py
++++ b/tests/target_budget.py
+@@ -44,7 +44,9 @@ FUNCS = ["analog_render", "digital_render", "digital_render_legacy", "digital_re
+ # built only with FELUCCA_FM4=1 (DIGITAL, src/eng_digital.c; not in the default build, so not in BUDGET): absent,
+ # they are skipped; present, checked against these (their budget lines until the engine was retired in 1.0)
+ OPTIONAL = {"digital_render": 12, "digital_render_legacy": 333, "digital_render_custom": 558,
+-            "uac_tap48": 504}           # (absent from a FELUCCA_UAC_48K=0 or FELUCCA_UAC=0 build)
++            "uac_tap48": 504,           # (absent from a FELUCCA_UAC_48K=0 or FELUCCA_UAC=0 build)
++            "mix_part": 778, "mix_split": 42}   # ((Vizz) absent from a FELUCCA_CPU2=0 build, the FM-1's: fx.c
++                                        # inlines mix_part into mix_block there, and has no split)
+ TOL = 0.10                      # exact (no noise): small edits pass, a grown render loop does not
+ DIV_W = 8                       # a divide weighs 1 + 8 instructions
+ NEST = 4                        # an instruction in a loop inside a loop weighs 4, two deep 16, ...
+diff --git a/tests/target_budget_cpu1.txt b/tests/target_budget_cpu1.txt
+new file mode 100644
+index 0000000..fca5e19
+--- /dev/null
++++ b/tests/target_budget_cpu1.txt
+@@ -0,0 +1,79 @@
++# (Vizz) the budget of a build without the second core (FELUCCA_CPU2=0, Vizz's FM-1 build): Skiff v1.4's own code
++# built so (fx.c inlines mix_part into mix_block there, the audio ISR's loops nest deeper); run_tests.sh takes it
++# when build/felucca.dis has no mix_split.
++# FELUCCA target cost budget (tests/target_budget.py): instructions in the loops of each
++# function in build/felucca.dis, x4 per nesting level, divides x9. The check allows +10 %.
++# Rewritten by BUDGET_UPDATE=1.
++analog_render 577
++phase_render 77
++lofi_render 123
++sample_render 128
++formant_render 312
++trio_render 341
++trio_pass 175
++wheel_render 265
++wheel_block 86
++grain_render 1726
++grain_block 133
++phys_render 61
++drum_render 89
++drumx_render 72
++dx_run 368
++noise_render 259
++fm6_render 363
++fm6_op_run 72
++fm6_op_fb 26
++px_modal_block 111
++px_modal_run 192
++px_memb_block 106
++px_string_excite 171
++px_string_run 264
++px_symp_run 252
++dv_metal_run 26
++dv_kick_run 151
++dv_snare_run 154
++dv_clap_run 74
++dv_hat_run 61
++dv_tom_run 75
++dv_rim_run 61
++dv_bell_run 52
++dv_cym_run 67
++dv_out 35
++dv_metal_mix 16
++slicer_track 556
++slice_render 440
++slc_rev 120
++fm1_alnk0_irq 33951
++fm1_timer5_irq 33968
++click_render 30
++mod_begin 165
++mod_voice 34
++mod_end 7
++perf_begin 28
++perf_mute 18
++perf_pre 26
++perf_block 829
++perf_master 31
++perf_gate 37
++perf_dub 22
++duck_block 123
++duck_apply 11
++launch_step 0
++launch_swap 68
++throw_on 186
++throw_off 15
++rev_room 218
++rev_spring 127
++dist_hard 47
++dist_fold 48
++dist_bits 33
++rev_hall 1995
++rev_side_mix 9
++cho_mode 169
++track_insert 3
++ins_drive 277
++ins_swept 230
++mix_spread 70
++esync_coef 0
++mod_depth 25
++smx_render 16
 diff --git a/tests/ui_test.c b/tests/ui_test.c
 index 6565827..25a2969 100644
 --- a/tests/ui_test.c
