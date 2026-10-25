@@ -1,4 +1,4 @@
-From e64b64c750306bd8127c3d612a9614db7bc4e4a6 Mon Sep 17 00:00:00 2001
+From e9763cb3887ffd22e36fe7e3de9f116cce470b7b Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Sun, 25 Oct 2026 11:27:24 +0000
 Subject: [PATCH 5/5] Vizz 1.0: the name on the unit, its identity FM-1_8XY,
@@ -25,7 +25,7 @@ and every credit and licence stays:
 
 Tests: the splash's lines (ui_render), the L face's strings (ui_test),
 the package identity (test_web: FM-1_8xx) and MENU > THEME's names
-(test_web: VIZZ for SKIFF).
+(editor_test's MENU_DESC and test_web: VIZZ for SKIFF).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
@@ -39,6 +39,7 @@ Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
  firmware/src/menu_items.c    |  3 +-
  firmware/src/ui_draw.c       |  3 +-
  firmware/src/ui_menu.c       | 11 ++++-
+ tests/editor_test.c          |  4 +-
  tests/ui_render.c            |  2 +-
  tests/ui_test.c              |  2 +-
  tools/build.py               | 14 +++---
@@ -46,7 +47,7 @@ Claude-Session: https://claude.ai/code/session_01257TywRk7Y9DD2HfKqtetj
  tools/gen_pixel_font.py      |  2 +-
  web/make_vizz_installer.py   | 94 ++++++++++++++++++++++++++++++++++++
  web/test_web.mjs             |  8 +--
- 16 files changed, 149 insertions(+), 26 deletions(-)
+ 17 files changed, 151 insertions(+), 28 deletions(-)
  create mode 100644 web/make_vizz_installer.py
 
 diff --git a/BUILDING.md b/BUILDING.md
@@ -225,6 +226,21 @@ index 45e33df..aedd7e7 100644
          cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
          cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
          {   /* (Skiff) the core clock now, from the PLL (hal/fm1_clk.h; MENU > SYSTEM > CPU CLOCK) */
+diff --git a/tests/editor_test.c b/tests/editor_test.c
+index 4f8578d..03297a5 100644
+--- a/tests/editor_test.c
++++ b/tests/editor_test.c
+@@ -925,8 +925,8 @@ static int menu_protocol(void)
+               (WANT[i][1] ? !strcmp(joined, WANT[i][1]) : it.nnames == NPALETTES) &&
+               it.value == (DEF[i] < 0 ? (int32_t)settings.palette : DEF[i]) &&
+               it.tab == TAB[i] && !strcmp(it.tabname, TABN[TAB[i]]) && !it.rest;
+-        if (i == 0)
+-            for (k = 0; k < NPALETTES; k++) ok &= !strcmp(it.names[k], UI_PALETTES[k].name);
++        if (i == 0)                                 /* ((Vizz) THEME shows the default as VIZZ; UI_PALETTES keeps SKIFF) */
++            for (k = 0; k < NPALETTES; k++) ok &= !strcmp(it.names[k], k == UI_SKIFF_INDEX ? "VIZZ" : UI_PALETTES[k].name);
+         if (!ok) { printf("  MENU_DESC %u: %s [%s] value %d max %d tab %u %s\n", i, it.name, joined, it.value, it.max, it.tab, it.tabname); break; }
+         if (jf) {
+             fprintf(jf, "%s\n {\"id\":%u,\"kind\":%u,\"min\":%d,\"max\":%d,\"value\":%d,\"name\":\"%s\",\"names\":[", i ? "," : "",
 diff --git a/tests/ui_render.c b/tests/ui_render.c
 index 81c92f2..618461c 100644
 --- a/tests/ui_render.c

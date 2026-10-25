@@ -90,6 +90,9 @@ Nur Sichtbares und die Dateinamen der Ergebnisse; Code-Bezeichner, Kommentare un
 - Version `v1.0` (`FELUCCA_VERSION`; der Editor bekommt „FELUCCA v1.0", er nutzt den Text nur zur Anzeige).
 - **USB-Gerätenamen und -Deskriptoren unverändert** (`usb.c` nicht angefasst): das Gerät meldet sich weiter als
   FM-1, der Loader weiter als „Felucca Update".
+- Angepasste Tests: die Zeilen des Startbildschirms (`ui_render`), die Texte der L-Schrift (`ui_test`), die Namen
+  von MENU > THEME (`editor_test`, `web/test_web.mjs`: VIZZ statt SKIFF) und die Kennung des Entwicklungs-Pakets
+  (`web/test_web.mjs`: `FM-1_8xx`).
 - `README.md` (Hinweis ganz oben) und `BUILDING.md` sagen, dass Vizz eine geänderte Fassung von Skiff 1.4 ist und wie
   Release und Installer entstehen. `LICENSE`, `LICENSING.md`, `LICENSES/` und alle Urheberhinweise unverändert.
 - `web/make_vizz_installer.py`: macht aus Skiffs Installer-Seite (`web/index_pkg.html` mit `fm1pkg.js`,
