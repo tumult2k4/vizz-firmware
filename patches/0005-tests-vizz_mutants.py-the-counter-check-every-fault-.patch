@@ -1,0 +1,165 @@
+From 6a6163257a92ebe72588bd794ae6c3729261e467 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Mon, 26 Oct 2026 03:26:37 +0000
+Subject: [PATCH 5/5] tests/vizz_mutants.py: the counter-check, every fault
+ caught
+
+Each deliberate fault in SEQ MIDI OUT (seq.c) or in the installer must
+make its tests fail; put into a copy of the source, the test built from
+it and run. The faults: the mutes not compared each block, a silent
+track's note-ons not held back, no CC 123 on turning silent, SOLO or the
+held MUTE left out of silent, no CC 103 on the bar or after Start, a
+pitch struck again with no note-off first, a note of its own length not
+ended alone, a tied note's note-on sent again, a slide into a sounding
+note struck again, CC 102 counted on across a chain's parts, Stop only
+for STOP pressed (not at SONG ONCE's end); the installer telling a Vizz
+1.x by its version only, the installer with no backup before. Run by
+hand after tests/run_tests.sh (4 minutes): python3 tests/vizz_mutants.py
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011Z5NrMFizGcfqt3zdrJXAX
+---
+ tests/vizz_mutants.py | 131 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 131 insertions(+)
+ create mode 100755 tests/vizz_mutants.py
+
+diff --git a/tests/vizz_mutants.py b/tests/vizz_mutants.py
+new file mode 100755
+index 0000000..d7f88cd
+--- /dev/null
++++ b/tests/vizz_mutants.py
+@@ -0,0 +1,131 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++"""(Vizz 2.0) The counter-check: each deliberate fault in SEQ MIDI OUT (seq.c) or in the installer must make its tests
++fail. Run from the tree after ./build.sh (build/gen) and, for the installer's faults, with an installer and
++conv.wasm as tests/run_tests.sh makes them (build/host/vizz-installer.html, build/conv/conv.wasm):
++
++  python3 tests/vizz_mutants.py [--no-installer]
++
++Each fault is put into a copy of the source in a scratch folder, the test built from it and run; the report lists the
++checks that failed. A fault none fails is a hole in the tests: the run fails."""
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++SEQ = [
++    ("the mutes not compared each block (seq_mute_block)", "seq.c",
++     "    seq_mute_block();                                 /* (Vizz, SEQ MIDI OUT) the mutes as they changed, each bar */",
++     "    (void)0;"),
++    ("a silent track's note-ons not held back", "seq.c",
++     "    if (!seq_midi_on || trk_silent(ti))             /* ((Vizz) a silent track: no note-on; its note-offs always) */",
++     "    if (!seq_midi_on)"),
++    ("no CC 123 when a track with notes sounding turns silent", "seq.c",
++     "        seq_midi_alloff(ti);                        /* sounding until now, notes sent sounding: they end first */",
++     "        (void)0;"),
++    ("GLO's SOLO left out of silent", "seq.c",
++     " | (perf_solo ? ~(uint32_t)perf_solo : 0u);", ";"),
++    ("the held MUTE (perf_held, perf_cut) left out of silent", "seq.c",
++     "(perf_held | perf_latched) >> PF_M1 | perf_cut | ", "perf_latched >> PF_M1 | "),
++    ("no CC 103 for all six on each bar", "seq.c", "        force = 1;", "        force = 0;"),
++    ("no CC 103 for all six after Start", "seq.c",
++     "    seq_midi_mutes();                              /* (Vizz) every track's mute after Start (CC SEQ_MUTE_CC) */",
++     "    (void)0;"),
++    ("a pitch struck again while it sounds: no note-off first", "seq.c",
++     "    if (*m & b)                                     /* (still sounding on its channel: ended first) */", "    if (0)"),
++    ("a note of its own length: no note-off when it ends alone (seq_keep_only)", "seq.c",
++     "            seq_midi_note(k, t->seq_notes[i], 0);   /* (SEQ MIDI OUT: a note of its own length ends alone) */",
++     "            (void)0;"),
++    ("a tied note going on sends its note-on again", "seq.c",
++     "                    seq_midi_note(k, nn[i], vv[i]);\n            }",
++     "                    seq_midi_note(k, nn[i], vv[i]);\n            } else if ((on >> i) & 1u)\n"
++     "                seq_midi_note(k, nn[i], vv[i]);"),
++    ("a slide into a sounding note struck again", "seq.c",
++     "                if (!slide_in || !seq_mo_has(k, nn[i]))", "                if (1)"),
++    ("CC 102 counted on (not from each chain part's step 0)", "seq.c",
++     "        seq_midi_step(trk_index(t), t->seq_idx);",
++     "        { static uint8_t c[NTRK]; seq_midi_step(trk_index(t), c[trk_index(t)]++ & 63u); }"),
++    ("Stop only for STOP pressed (events_block), not at SONG ONCE's end (seq_stop)", "seq.c", [
++        ("        seq_midi_rt(0xFCu);                        /* (SEQ MIDI OUT) Stop ((2.0) SONG ONCE's end too: bank.c song_rewind) */",
++         "        (void)0;"),
++        ("    } else if (transport_req == 2u) {\n        seq_stop();",
++         "    } else if (transport_req == 2u) {\n        if (song.playing && !song.g[G_CLOCK])\n"
++         "            seq_midi_rt(0xFCu);\n        seq_stop();")]),
++]
++INSTALLER = [
++    ("the installer: a Vizz 1.x told by its version only (Skiff's rule)",
++     "!before20(device.id, info)", "major(info.version) >= 2"),
++    ("the installer: no backup before the install",
++     "  if (major(meta.version) < 2) return null;\n  const device", "  return null;\n  const device"),
++]
++
++
++def run(cmd, **kw):
++    return subprocess.run(cmd, capture_output=True, text=True, **kw)
++
++
++def main():
++    work = tempfile.mkdtemp(prefix="vizz_mutants.")
++    holes = 0
++    try:
++        shutil.copytree(os.path.join(ROOT, "firmware"), os.path.join(work, "firmware"))
++        shutil.copytree(os.path.join(ROOT, "tests"), os.path.join(work, "tests"))
++        gen = os.path.join(ROOT, "build", "gen")
++        exe = os.path.join(work, "seqmidi_test")
++        cc = ["cc", "-O1", "-w", "-I" + gen, "-I" + os.path.join(work, "firmware", "src"), "-o", exe,
++              os.path.join(work, "tests", "seqmidi_test.c"), "-lm"]
++        r = run(cc)
++        if r.returncode or run([exe]).returncode:
++            sys.exit("vizz_mutants: seqmidi_test fails without a fault: " + r.stderr[-400:])
++        for m in SEQ:
++            what, f, pairs = m[0], m[1], m[2] if len(m) == 3 else [(m[2], m[3])]
++            p = os.path.join(work, "firmware", "src", f)
++            src = bad = open(p, encoding="utf-8").read()
++            for old, new in pairs:
++                if bad.count(old) != 1:
++                    sys.exit(f"vizz_mutants: {what}: the place is not in {f} once; update the fault")
++                bad = bad.replace(old, new)
++            open(p, "w", encoding="utf-8").write(bad)
++            r = run(cc)
++            out = run([exe]).stdout if not r.returncode else ""
++            open(p, "w", encoding="utf-8").write(src)
++            failed = [re.sub(r"^ui: +", "", ln).rsplit(" FAIL", 1)[0].strip() for ln in out.splitlines()
++                      if ln.endswith("FAIL")]
++            if r.returncode:
++                print(f"vizz_mutants: {what}: does not build\n{r.stderr[-400:]}")
++                holes += 1
++                continue
++            print(f"vizz_mutants: {what}: {len(failed)} checks fail{'' if failed else '  <- a hole in the tests'}")
++            for x in failed[:4]:
++                print(f"vizz_mutants:     {x[:110]}")
++            holes += not failed
++        if "--no-installer" not in sys.argv:
++            html = os.path.join(ROOT, "build", "host", "vizz-installer.html")
++            good = open(html, encoding="utf-8").read()
++            for what, old, new in INSTALLER:
++                if good.count(old) != 1:
++                    sys.exit(f"vizz_mutants: {what}: the place is not in the installer once; update the fault")
++                bad = os.path.join(work, "vizz-installer.html")
++                open(bad, "w", encoding="utf-8").write(good.replace(old, new))
++                r = run(["node", os.path.join(ROOT, "web", "test_vizz_installer.mjs"), bad,
++                         os.path.join(ROOT, "tests", "vizz10_unit.json"), os.path.join(ROOT, "build", "conv", "conv.wasm")])
++                if "skipped (no Playwright)" in r.stdout:
++                    print(f"vizz_mutants: {what}: skipped (no Playwright)")
++                    continue
++                failed = [ln.replace("vizz installer: ", "").rsplit(" FAIL", 1)[0].strip()
++                          for ln in r.stdout.splitlines() if ln.endswith("FAIL")]
++                print(f"vizz_mutants: {what}: {len(failed)} checks fail{'' if failed else '  <- a hole in the tests'}")
++                for x in failed[:4]:
++                    print(f"vizz_mutants:     {x[:110]}")
++                holes += not failed
++    finally:
++        shutil.rmtree(work, ignore_errors=True)
++    print("vizz_mutants: " + ("every fault caught" if not holes else f"{holes} faults not caught"))
++    sys.exit(1 if holes else 0)
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.43.0
+

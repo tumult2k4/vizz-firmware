@@ -1,0 +1,1139 @@
+From c443b2d85667185999ef30593306c16c7bfb057a Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Mon, 26 Oct 2026 02:57:19 +0000
+Subject: [PATCH 1/5] SEQ MIDI OUT on Skiff 2.0's sequencer: notes, step
+ position, clock, start/stop over USB MIDI
+
+Vizz 1.0's SEQ MIDI OUT (patches 0001, 0002 on Skiff 1.4) ported to the
+sequencer of Skiff 2.0: each track plays out on its MIDI channel (T1..T6
+CHANNEL), notes and drum hits with velocity (accent 127), ratchets,
+flams and slides as played; CC 102 = step index on entering a step;
+MIDI Clock (24 ppq), Start and Stop with the INT clock; CC 123 when a
+panic drops what was sent sounding (MIDI IN overflow, CC 120 received).
+MENU > MIDI > SEQ MIDI OUT (ON by default; bit 3 of the settings byte
+CPU2_BYTE, as Vizz 1.0 kept it).
+
+What 2.0 adds, as the sequencer does it (seq_step, seq_keep_only,
+seq_gate_end, launch_swap):
+- a note of its own length (NOTES' LENGTH: per-note ties, a GATE lock)
+  ends with its own note-off, a chord's notes apart; a tie is one note
+- MIDI has one note of a pitch on a channel: one struck again while it
+  still sounds there ends first (seq_mo: the notes sent sounding)
+- a chain's parts: CC 102 counts each from its own step 0; a note going
+  on from one part into the next is one note
+- SONG ONCE's end stops the transport (seq_stop): note-offs and Stop
+
+tests/seqmidi_test.c: Vizz 1.0's cases on 2.0 and the new ones
+(lengths, overlap, ties, chain, SONG ONCE, every pitch's on / off
+alternating). ui_test, feat13_test: the MIDI tab has eleven rows; the
+FX key test counts the key's MIDI alone. tests/ui_golden.txt: the MIDI
+tab's two pictures (its first rows, scrolled to T6) in every palette,
+28 of 3388, with the new row; no other picture changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011Z5NrMFizGcfqt3zdrJXAX
+---
+ firmware/src/menu_items.c   |  18 +-
+ firmware/src/midi_control.c |   1 +
+ firmware/src/seq.c          | 124 ++++++++-
+ firmware/src/ui.c           |   2 +
+ firmware/src/ui_input.c     |   1 +
+ tests/feat13_test.c         |   5 +-
+ tests/run_tests.sh          |   2 +
+ tests/seqmidi_test.c        | 533 ++++++++++++++++++++++++++++++++++++
+ tests/ui_golden.txt         |  56 ++--
+ tests/ui_test.c             |  10 +-
+ 10 files changed, 711 insertions(+), 41 deletions(-)
+ create mode 100644 tests/seqmidi_test.c
+
+diff --git a/firmware/src/menu_items.c b/firmware/src/menu_items.c
+index 24e3e7e..5aa8462 100644
+--- a/firmware/src/menu_items.c
++++ b/firmware/src/menu_items.c
+@@ -23,13 +23,13 @@
+ /* (SMK-37 Pro, SMK37_UX.md) KEY VELOCITY in CONTROL (question 8); no LEDS row (button LEDs A: on or off only): MI_LEDS
+  * past MI_COUNT, so its setting stays and no tab shows it */
+ enum { MI_COLOR, MI_PHEAD, MI_LARGE, MI_ANIM, MI_SCROFF, MI_HINTS, MI_HOLD, MI_ACCEL, MI_BPMLOCK, MI_SCLLED, MI_PREVIEW,
+-       MI_RETURN, MI_KVEL, MI_LOWCUT, MI_USB, MI_CLICK, MI_CLKLVL, MI_COUNTIN, MI_TUNE, MI_CLOCK, MI_ROUTE,
++       MI_RETURN, MI_KVEL, MI_LOWCUT, MI_USB, MI_CLICK, MI_CLKLVL, MI_COUNTIN, MI_TUNE, MI_CLOCK, MI_ROUTE, MI_SEQOUT,
+        MI_LEARN, MI_LCLEAR, MI_TCH1, MI_TCH2, MI_TCH3, MI_TCH4, MI_TCH5, MI_TCH6, MI_SERIAL_IN MI_RESTORE, MI_CPU, MI_CLK,
+        MI_PANEL, MI_RESET, MI_ABOUT, MI_COUNT, MI_LEDS MI_SERIAL_OUT };
+ static const char *const KVEL_N[SMK_KV_N] = {"DYNAMIC", "SOFT", "HARD", "FIXED 64", "FIXED 100", "FIXED 127"};
+ #else
+ enum { MI_COLOR, MI_PHEAD, MI_LARGE, MI_ANIM, MI_LEDS, MI_SCROFF, MI_HINTS, MI_HOLD, MI_ACCEL, MI_BPMLOCK, MI_SCLLED,
+-       MI_PREVIEW, MI_RETURN, MI_LOWCUT, MI_USB, MI_CLICK, MI_CLKLVL, MI_COUNTIN, MI_TUNE, MI_CLOCK, MI_ROUTE,
++       MI_PREVIEW, MI_RETURN, MI_LOWCUT, MI_USB, MI_CLICK, MI_CLKLVL, MI_COUNTIN, MI_TUNE, MI_CLOCK, MI_ROUTE, MI_SEQOUT,
+        MI_LEARN, MI_LCLEAR, MI_TCH1, MI_TCH2, MI_TCH3, MI_TCH4, MI_TCH5, MI_TCH6, MI_SERIAL_IN MI_RESTORE, MI_CPU, MI_CLK,
+        MI_PANEL, MI_RESET, MI_ABOUT, MI_COUNT MI_SERIAL_OUT };
+ #endif   /* ((Skiff U4, A3) HINTS; RESET SETTINGS, a row with no value: its dialog) */   /* ((Skiff U3, R8, R2) CLOCK, MIDI IN, TUNE: the unit's, GLOBAL's and SYSTEM's before; CPU: read) */   /* (1.1: the metronome's rows in
+@@ -46,7 +46,7 @@ static const char *const MI_NAME[MI_COUNT] = {"THEME", "PLAYHEAD", "LARGE", "ANI
+                                               "KEY VELOCITY",
+ #endif
+                                               "SPEAKER EQ", "USB LEVEL", "CLICK", "CLICK LEVEL", "COUNT-IN", "TUNE",
+-                                              "CLOCK", "MIDI IN", "MIDI LEARN", "LEARN CLEAR",
++                                              "CLOCK", "MIDI IN", "SEQ MIDI OUT", "MIDI LEARN", "LEARN CLEAR",
+                                               "T1 CHANNEL", "T2 CHANNEL", "T3 CHANNEL", "T4 CHANNEL", "T5 CHANNEL", "T6 CHANNEL",
+                                               MI_SERIAL_NAME "RESTORE LAST", "CPU", "CPU CLOCK", "CALIBRATION", "RESET SETTINGS",
+                                               "ABOUT"};
+@@ -79,6 +79,7 @@ static const uint8_t MI_TAB[MI_COUNT] = {
+     MTAB_AUDIO,                                                             /* (Skiff U3) TUNE */
+     MTAB_MIDI, MTAB_MIDI,                                                   /* (Skiff U3) CLOCK, MIDI IN ((1.3) from
+                                                                              * CONTROL) */
++    MTAB_MIDI,                                                              /* (Skiff fork) SEQ MIDI OUT */
+     MTAB_MIDI, MTAB_MIDI,                                                   /* (1.3) MIDI LEARN, LEARN CLEAR */
+     MTAB_MIDI, MTAB_MIDI, MTAB_MIDI, MTAB_MIDI, MTAB_MIDI, MTAB_MIDI,       /* (1.3) T1..T6 CHANNEL */
+     MI_SERIAL_TAB MTAB_SYSTEM, MTAB_SYSTEM, MTAB_SYSTEM,                    /* USB SERIAL, RESTORE LAST, (Skiff U3) CPU,
+@@ -193,6 +194,7 @@ static uint32_t menu_get(uint32_t row)
+     case MI_TCH1: case MI_TCH2: case MI_TCH3: case MI_TCH4: case MI_TCH5: case MI_TCH6: return trk_midi_ch(row - MI_TCH1);
+     case MI_HINTS: return ui_hints_off != 0;
+     case MI_PREVIEW: return PREVIEW_SET ? 1u : 0u;
++    case MI_SEQOUT: return SEQOUT_OFF ? 1u : 0u;       /* ((Skiff fork) 0 ON, the default; 1 OFF, as HINTS) */
+     case MI_RETURN: return ret_mode();
+     case MI_TUNE: return (uint32_t)clamp(song.g[G_TUNE] + 50, 0, 100);
+ #if FELUCCA_CPU2
+@@ -244,6 +246,7 @@ static const char *menu_vname(uint32_t row, uint32_t v)
+ #endif
+     case MI_HINTS: return v & 1u ? "OFF" : "ON";
+     case MI_PREVIEW: return v & 1u ? "ON" : "OFF";
++    case MI_SEQOUT: return v & 1u ? "OFF" : "ON";
+     case MI_RETURN: return RET_N[v % 3u];
+     case MI_TUNE: case MI_CPU: {                       /* "+12 CT"; the audio's share of each half-buffer ("14 %") */
+         static char b[20] __attribute__((section(".pool")));
+@@ -317,6 +320,10 @@ static void menu_put(uint32_t row, uint32_t v)
+     case MI_KVEL: SMK_KV_BYTE = (uint8_t)(v % SMK_KV_N); smk_kv_mode = SMK_KV_BYTE; break;
+ #endif
+     case MI_HINTS: ui_hints_off = (uint8_t)(v & 1u); ui.force = 1; break;
++    case MI_SEQOUT:                                    /* ((Skiff fork) bit 3 of CPU2_BYTE: set, OFF; seq.c reads */
++        CPU2_BYTE = (uint8_t)(v & 1u ? CPU2_BYTE | 8u : CPU2_BYTE & ~8u);   /* seq_midi_on, copied every frame: */
++        seq_midi_on = !SEQOUT_OFF;                     /* ui_input.c) */
++        break;
+     case MI_PREVIEW:                                   /* ((Skiff 1.3) a bit of CPU2_BYTE) */
+         CPU2_BYTE = (uint8_t)(v & 1u ? CPU2_BYTE | 2u : CPU2_BYTE & ~2u);
+         break;
+@@ -364,6 +371,7 @@ static void settings_reset(void)
+     menu_put(MI_HINTS, 0);
+     menu_put(MI_PHEAD, 0);
+     menu_put(MI_PREVIEW, 0);
++    menu_put(MI_SEQOUT, 0);                            /* ((Skiff fork) SEQ MIDI OUT ON) */
+     menu_put(MI_RETURN, RET_BAR);
+ #if FELUCCA_CPU2
+     menu_put(MI_CPU, 0);                               /* ((Skiff 1.3) 1 CORE) */
+@@ -377,8 +385,8 @@ static uint32_t menu_step(uint32_t row, int32_t s)
+ {
+     const menu_flag_t *f = menu_flag(row);
+     uint32_t v = menu_get(row), n = menu_n(row);
+-    if ((f && str_eq(f->name[0], "ON")) || row == MI_HINTS)   /* (ANIM, USB SERIAL, RESTORE LAST, HINTS: ON is their
+-                                                                * value 0) */
++    if ((f && str_eq(f->name[0], "ON")) || row == MI_HINTS || row == MI_SEQOUT)   /* (ANIM, USB SERIAL, RESTORE LAST,
++                                                                * HINTS, (Skiff fork) SEQ MIDI OUT: ON is their value 0) */
+         s = -s;
+     if (s > 0)
+         return v + 1u < n ? v + 1u : row == MI_COLOR ? 0u : v;
+diff --git a/firmware/src/midi_control.c b/firmware/src/midi_control.c
+index a48db29..677ba81 100644
+--- a/firmware/src/midi_control.c
++++ b/firmware/src/midi_control.c
+@@ -186,6 +186,7 @@ static void midi_silence_track(uint32_t track)
+     trk_all_off(t);
+     t->nheld = t->arp_phys = t->rh_n = 0;
+     arp_forget(t);
++    seq_midi_drop(track);                     /* ((Skiff fork) SEQ MIDI OUT: CC 123 for what it sent sounding) */
+     t->seq_n = t->seq_hold = t->slide_glide = 0;
+     for (i = 0; i < NVOICE; i++)
+         if (t->v[i].active)
+diff --git a/firmware/src/seq.c b/firmware/src/seq.c
+index 3d0507c..4df71dd 100644
+--- a/firmware/src/seq.c
++++ b/firmware/src/seq.c
+@@ -81,6 +81,85 @@ static uint32_t trk_midi_ch(uint32_t i)            /* MIDI channel 0..15 of trac
+     return mch_io ? (i + mch_io[i]) & 15u : i;
+ }
+ 
++/* (Skiff fork, SEQ MIDI OUT) MENU > MIDI > SEQ MIDI OUT, ON by default: what the sequencer plays goes out on USB MIDI as
++ * the keys' notes do, on each track's channel (trk_midi_ch): its notes and drum hits (GM notes, DRUM_LANE_NOTE) with
++ * their velocity (accent 127, ratchets and flams as played), and on entering a step its index as CC SEQ_STEP_CC (0..63,
++ * for a visualizer: where each track is; (2.0) a chain's part counted from its own first step). With the INT clock also
++ * MIDI Clock (24 per beat) and Start / Stop, so a host can follow the tempo. ui_input.c copies the setting here every
++ * frame (ui.c SEQOUT_OFF); the audio ISR reads it. A host that echoes this back into the FM-1 plays every note twice:
++ * route it elsewhere.
++ * (2.0) Each note ends with its own note-off as the sequencer ends it (its own length, a tie into the steps after it: one
++ * note; a chord's notes apart). MIDI has one note of a pitch on a channel: one struck again while it still sounds there
++ * (an overlap, a step played early by its NUDGE) ends first. seq_mo: the notes sent sounding, a bit per pitch and track */
++#ifndef SKIFF_SEQ_MIDI
++#define SKIFF_SEQ_MIDI 1
++#endif
++#define SEQ_STEP_CC 102u                            /* an undefined controller: harmless to a synth that hears it */
++static volatile uint8_t seq_midi_on = 1;
++#if SKIFF_SEQ_MIDI
++static uint8_t seq_mo[NTRK][16] __attribute__((section(".pool")));   /* (.pool, zeroed at boot: a new .bss global moves
++                                                                        * the others and their code with them) */
++static int seq_mo_any(uint32_t ti)                  /* track ti has notes sent sounding */
++{
++    uint32_t i, m = 0;
++    for (i = 0; i < 16u; i++)
++        m |= seq_mo[ti][i];
++    return m != 0u;
++}
++static int seq_mo_has(uint32_t ti, uint32_t note) { return (seq_mo[ti][(note & 0x7Fu) >> 3] >> (note & 7u)) & 1u; }
++static __attribute__((noinline)) void seq_midi_note(uint32_t ti, uint32_t note, uint32_t vel)
++{
++    uint32_t mc = trk_midi_ch(ti), b = 1u << (note & 7u);
++    uint8_t *m = &seq_mo[ti][(note & 0x7Fu) >> 3];
++    note &= 0x7Fu;
++    if (!vel) {                                     /* a note-off: for a note sent sounding */
++        if (*m & b) {
++            *m = (uint8_t)(*m & ~b);
++            if (seq_midi_on)
++                midi_out_event(0x08u | (0x80u | mc) << 8 | note << 16);
++        }
++        return;
++    }
++    if (!seq_midi_on)
++        return;
++    if (*m & b)                                     /* (still sounding on its channel: ended first) */
++        midi_out_event(0x08u | (0x80u | mc) << 8 | note << 16);
++    midi_out_event(0x09u | (0x90u | mc) << 8 | note << 16 | (vel & 0x7Fu) << 24);
++    *m = (uint8_t)(*m | b);
++}
++static __attribute__((noinline)) void seq_midi_step(uint32_t ti, uint32_t idx)
++{
++    if (seq_midi_on)
++        midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | SEQ_STEP_CC << 16 | (idx & 0x7Fu) << 24);
++}
++static void seq_midi_alloff(uint32_t ti)            /* CC 123 All Notes Off: a panic dropped notes without their offs */
++{
++    if (seq_midi_on)
++        midi_out_event(0x0Bu | (0xB0u | trk_midi_ch(ti)) << 8 | 123u << 16);
++}
++static __attribute__((noinline)) void seq_midi_drop(uint32_t ti)   /* .. for the notes sent sounding, which are gone */
++{
++    if (seq_mo_any(ti))
++        seq_midi_alloff(ti);
++    memset(seq_mo[ti], 0, sizeof seq_mo[ti]);
++}
++#if !BOARD_SMK37                                    /* (the SMK sends its own clock to TRS: smk_clk_block) */
++static void seq_midi_rt(uint32_t st)                /* a realtime byte: Clock F8, Start FA, Stop FC (CIN F) */
++{
++    if (seq_midi_on)
++        midi_out_event(0x0Fu | st << 8);
++}
++#else
++#define seq_midi_rt(st) ((void)0)
++#endif
++#else
++#define seq_midi_note(ti, note, vel) ((void)0)
++#define seq_midi_step(ti, idx) ((void)0)
++#define seq_midi_rt(st) ((void)0)
++#define seq_midi_drop(ti) ((void)0)
++#define seq_mo_has(ti, note) 0
++#endif
++
+ static int drum_track(const track_t *t) { return drum_engine(eng_idx(t->eng_req)); }   /* ((Skiff) DRUM or DRUM-X) */
+ 
+ /* the 27 keys from F: black or white, and the key's place among the keys of its colour (white 0..15, black
+@@ -1049,6 +1128,25 @@ static void smk_clk_block(uint32_t n)
+ }
+ #endif
+ 
++/* (SEQ MIDI OUT) the INT clock's MIDI Clock on USB: 24 a beat while playing, counted in samples as smk_clk_block's */
++static uint32_t seq_clk_acc __attribute__((section(".pool")));   /* (.pool: out of the merged globals) */
++#if !BOARD_SMK37 && SKIFF_SEQ_MIDI
++static __attribute__((noinline)) void seq_clk_block(uint32_t n)
++{
++    uint32_t b;
++    if (!song.playing || song.g[G_CLOCK] || !seq_midi_on)
++        return;
++    b = beat_samples();
++    seq_clk_acc += n * 24u;
++    while (b && seq_clk_acc >= b) {
++        seq_midi_rt(0xF8u);
++        seq_clk_acc -= b;
++    }
++}
++#else
++#define seq_clk_block(n) ((void)0)
++#endif
++
+ static void seq_start(void)
+ {
+     uint32_t i;
+@@ -1058,6 +1156,10 @@ static void seq_start(void)
+         smk_clk_acc = beat_samples();
+     }
+ #endif
++    if (!song.g[G_CLOCK]) {                        /* (SEQ MIDI OUT) Start, the first Clock with the first block */
++        seq_midi_rt(0xFAu);
++        seq_clk_acc = beat_samples();
++    }
+     motion_begin();
+     take_clear();                                  /* (Skiff) TAKES: a new log from PLAY */
+     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
+@@ -1094,8 +1196,10 @@ static uint32_t seq_h2[NTRK] __attribute__((section(".pool")));
+ static void seq_release(track_t *t)
+ {
+     uint32_t i, k = trk_index(t);
+-    for (i = 0; i < t->seq_n; i++)
++    for (i = 0; i < t->seq_n; i++) {
+         trk_note_off(t, t->seq_notes[i]);
++        seq_midi_note(k, t->seq_notes[i], 0);       /* (SEQ MIDI OUT) */
++    }
+     t->seq_n = 0;
+     t->seq_hold = 0;
+     t->slide_glide = 0;                             /* live MONO / LEG keys must not glide after it */
+@@ -1109,6 +1213,7 @@ static __attribute__((noinline)) void seq_keep_only(track_t *t, uint32_t keep)
+     for (i = 0; i < t->seq_n; i++) {
+         if (!((keep >> i) & 1u)) {
+             trk_note_off(t, t->seq_notes[i]);
++            seq_midi_note(k, t->seq_notes[i], 0);   /* (SEQ MIDI OUT: a note of its own length ends alone) */
+             continue;
+         }
+         km |= ((seq_k[k] >> i) & 1u) << n;
+@@ -1157,6 +1262,8 @@ static void seq_stop(void)
+     if (song.playing && !song.g[G_CLOCK])
+         smk_uart_tx_put(0xFCu);                    /* (the TRS jack: Stop) */
+ #endif
++    if (song.playing && !song.g[G_CLOCK])
++        seq_midi_rt(0xFCu);                        /* (SEQ MIDI OUT) Stop ((2.0) SONG ONCE's end too: bank.c song_rewind) */
+     song.playing = 0;
+     thr_out = 0;                                   /* (Skiff) the throws back at once (throw.c) */
+     cin_left = 0;                                  /* (a count-in: cancelled, nothing recorded) */
+@@ -1310,13 +1417,19 @@ static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint
+         if (!held)
+             seq_release(t);
+         for (i = 0; i < m; i++)
+-            if (!(((sk | on | xs) >> i) & 1u))
++            if (!(((sk | on | xs) >> i) & 1u)) {
+                 trk_note_on(t, nn[i], vv[i]);
++                if (!slide_in || !seq_mo_has(k, nn[i]))   /* (SEQ MIDI OUT) a note slid into and still sounding:
++                                                         * no new note-on (struck again otherwise: off, then on) */
++                    seq_midi_note(k, nn[i], vv[i]);
++            }
+         for (i = 0; i < t->seq_n; i++) {            /* release what is not held over (nor plays again) */
+             for (j = 0; j < m && (nn[j] != t->seq_notes[i] || ((xs >> j) & 1u)); j++)
+                 ;
+-            if (j == m)
++            if (j == m) {
+                 trk_note_off(t, t->seq_notes[i]);
++                seq_midi_note(k, t->seq_notes[i], 0);   /* (SEQ MIDI OUT) */
++            }
+         }
+         t->seq_n = 0;
+         for (i = 0; i < m; i++)
+@@ -1518,6 +1631,8 @@ static void seq_tick(track_t *t, uint32_t n)
+             take_pass[trk_index(t)]++;              /* a new pass of its loop: TAKES (take.c), the conditions */
+         }
+         t->seq_cnt++;
++        seq_midi_step(trk_index(t), t->seq_idx);    /* (SEQ MIDI OUT) where the track is: CC SEQ_STEP_CC ((2.0) a chain's
++                                                     * part from its step 0: launch_step) */
+         rec_hold(t, t->seq_idx, ln);
+         seq_enter(t, period, ln);                   /* (Skiff) it plays: now, later or already (NUDGE) */
+     }
+@@ -1676,6 +1791,7 @@ static void events_block(uint32_t n)
+         memset(mchord, 0, sizeof mchord);
+         midi_hint = 0;
+         for (i = 0; i < NTRK; i++) {
++            seq_midi_drop(i);                          /* (SEQ MIDI OUT: CC 123 for what it sent sounding) */
+             trk[i].rh_n = trk[i].rskip_n = 0;
+             trk[i].seq_n = trk[i].seq_hold = trk[i].slide_glide = trk[i].rat_left = 0;
+         }
+@@ -1747,6 +1863,8 @@ static void events_block(uint32_t n)
+         click_tick(seq_n);
+ #if BOARD_SMK37
+     smk_clk_block(n);
++#else
++    seq_clk_block(n);                                 /* (SEQ MIDI OUT) MIDI Clock with the INT clock */
+ #endif
+     for (i = 0; i < NPART; i++)
+         arp_step(&trk[i], clock_mode ? seq_n : n, clock_mode && song.playing ? seq_n : n);
+diff --git a/firmware/src/ui.c b/firmware/src/ui.c
+index c81cf9a..eb70637 100644
+--- a/firmware/src/ui.c
++++ b/firmware/src/ui.c
+@@ -139,6 +139,8 @@ static void theme_apply(void)                  /* settings.palette, and over it
+ #define CPU2_BYTE (favorites.factory[15][5])
+ #define CPU2_SET (CPU2_BYTE & 1u)
+ #define PREVIEW_SET ((CPU2_BYTE >> 1) & 1u)            /* ((1.3) MENU > STEP PREVIEW ON) */
++/* (Skiff fork) MENU > MIDI > SEQ MIDI OUT OFF: bit 3 of CPU2_BYTE; clear (every unit until it is set): ON (seq.c seq_midi_on) */
++#define SEQOUT_OFF ((CPU2_BYTE >> 3) & 1u)
+ /* (2.0, D 2A) MENU > CONTROL > RETURN: how MOMENTARY's values, the FX layer's macros and PERFORM's throws come back once
+  * let go (mom_poll; throw.c thr_beats): SNAP, over 1 BEAT, over 1 BAR. A settings byte ([15][16]: zero, the default
+  * 1 BAR; RET_BAR - the value) */
+diff --git a/firmware/src/ui_input.c b/firmware/src/ui_input.c
+index a33613f..b590c4c 100644
+--- a/firmware/src/ui_input.c
++++ b/firmware/src/ui_input.c
+@@ -2097,6 +2097,7 @@ static void ui_input(void)
+ #endif
+     perf_latch_on = ui.lock == LAYER_FX;                /* ((Skiff U2) a locked FX layer latches: MENU > FX LATCH retired) */
+     fx_usb_fixed = (ui_prefs & PREF_USB_FIXED) != 0u;   /* (MENU > USB LEVEL: fx.c, audio.c) */
++    seq_midi_on = !SEQOUT_OFF;                          /* ((Skiff fork) MENU > MIDI > SEQ MIDI OUT: seq.c) */
+     rp_apply();                                         /* (MENU > CLICK, CLICK LEVEL, COUNT-IN: click.c, seq.c) */
+     if (!ui.menu)
+         usb_serial_apply();                             /* (MENU > USB SERIAL: when the menu has closed) */
+diff --git a/tests/feat13_test.c b/tests/feat13_test.c
+index 75fe1e2..753b21c 100644
+--- a/tests/feat13_test.c
++++ b/tests/feat13_test.c
+@@ -1027,10 +1027,11 @@ static int midi_learn_channels(void)
+         press(B_OCTUP);                                 /* T2: CH 10 */
+     ok = trk_midi_ch(1) == 9u && str_eq(menu_vname(MI_TCH2, menu_get(MI_TCH2)), "CH 10") &&
+          str_eq(menu_vname(MI_ROUTE, 0), "TRACK") && str_eq(menu_vname(MI_TCH1, menu_get(MI_TCH1)), "CH 1");
+-    ok &= mr_top() == 0u;                               /* (the MIDI tab: six of ten shown, the cursor's the last) */
++    ok &= mr_top() == 1u;                               /* (the MIDI tab: six of eleven shown, the cursor's the last;
++                                                         * (Skiff fork) SEQ MIDI OUT the eleventh) */
+     ui.menu_sel = MI_TCH6;
+     frame();
+-    ok &= mr_top() == 4u && mr_n() == 6u;
++    ok &= mr_top() == 5u && mr_n() == 6u;
+     ui.menu_sel = MI_CLOCK;
+     frame();
+     ok &= mr_top() == 0u;
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 8762a5e..7206a7f 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -260,6 +260,8 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "RATCH: x1..x4 in a step (notes, chords, drum hits), gates, chance, swing, projects (the converter's build), user presets, CHANCE page; FLAM" "$OUT/ratchet_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/ties_test" tests/ties_test.c -lm
+     run "2.0 TIES (#25): notes going on while others start, a miss, a tie never starts a note, MONO, RATCH, STOP; record version 3" "$OUT/ties_test"
++    $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/seqmidi_test" tests/seqmidi_test.c -lm
++    run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (2.0) own lengths, overlaps, ties, chains, SONG ONCE" "$OUT/seqmidi_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/midi_control_test" tests/midi_control_test.c -lm
+     run "USB/TRS clock, bend, sustain, ownership and panic recovery" "$OUT/midi_control_test"
+     $CC -O1 -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/digital_test" tests/digital_test.c -lm
+diff --git a/tests/seqmidi_test.c b/tests/seqmidi_test.c
+new file mode 100644
+index 0000000..3912f1a
+--- /dev/null
++++ b/tests/seqmidi_test.c
+@@ -0,0 +1,533 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Skiff fork) SEQ MIDI OUT (seq.c seq_midi_*): what the sequencer plays goes out on USB MIDI, on the real sequencer,
++ * USB queue and UI sources (with the stubs of tests/ui_test.c):
++ *   NOTES      a step's notes: note-on on the track's channel with its velocity (accent 127), note-off at its gate;
++ *              each track on its own channel (T1..T6 CHANNEL); a drum hit as its GM note ((2.0) on a kit of its own,
++ *              USR1..USR3, too)
++ *   STEP       entering a step: CC 102 = its index on the track's channel
++ *   CLOCK      INT clock: Start at PLAY, 24 Clock a beat, Stop at STOP; with an external clock: none of the three
++ *   RATCH      x3: three note-on / note-off pairs in the step
++ *   SLIDE      a slide into the same note sends no second note-on, and every note-on gets one note-off
++ *   MENU       MENU > MIDI > SEQ MIDI OUT: ON by default, OFF sends nothing, back ON sends again
++ * (2.0) Skiff 2.0's sequencer (seq.c seq_step, seq_gate_end; launch.c; bank.c song_poll):
++ *   LENGTHS    a chord's notes of their own lengths (NOTES' LENGTH: 1, 2 and 4 STEPS) end apart, each with its own
++ *              note-off at its own end; a note a quarter of its step long (a GATE lock) ends there
++ *   OVERLAP    a pitch struck again while it still sounds on the channel (it goes on into the step half a step past
++ *              its GATE, a tie beside it holding): its note-off first, then the note-on (one of a pitch on a channel)
++ *   TIE        a TIE chain and a note tied on by per-note ties: one note-on, one note-off
++ *   CHAIN      A (LEN 4) on CHAIN into B (LEN 6): CC 102 counts each part from 0 (A 0..3, B 0..5, A again); A's last
++ *              note going on into B is one note
++ *   ONCE       SONG ONCE: at its end the transport stops: every note-on its note-off, one Stop, no Clock after it
++ *   PAIRS      in every case: on a channel, a pitch's note-ons and note-offs alternate (never two note-ons)
++ * Built and run by tests/run_tests.sh. */
++#define UI_TEST_NO_MAIN 1
++#include "ui_test.c"
++
++typedef struct { uint32_t on, off, cc, clk, start, stop, onvel_sum, ch_mask, last_cc; uint8_t onn[64]; } mstat_t;
++
++/* run the sequencer for `blocks` blocks as the audio ISR does (events_block), draining the USB ring as the host would:
++ * the events are copied to a log (the ring itself holds MQ), each with the block it came in (mtime: its sample) */
++static uint32_t mlog[16384], mtime[16384], mlog_n, mclock;
++static void drain(void)
++{
++    while (mo_r != mo_w && mlog_n < NELEM(mlog)) {
++        mtime[mlog_n] = mclock;
++        mlog[mlog_n++] = midi_out_q[mo_r++ % MQ];
++    }
++    mo_r = mo_w;
++}
++static void blocks(uint32_t n)
++{
++    while (n--) {
++        events_block(CTL);
++        mclock += CTL;
++        drain();
++    }
++}
++/* .. with the main loop's switching after each (bank.c bank_poll, song_poll: a chain's next part, a song's end) */
++static void blocks_main(uint32_t n)
++{
++    while (n--) {
++        events_block(CTL);
++        mclock += CTL;
++        bank_poll();
++        song_poll();
++        drain();
++    }
++}
++static void lscan(mstat_t *m)                       /* the log, counted */
++{
++    uint32_t i;
++    memset(m, 0, sizeof *m);
++    for (i = 0; i < mlog_n; i++) {
++        uint32_t pkt = mlog[i], cin = pkt & 15u, st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
++        if (cin == 0x9u && (st & 0xF0u) == 0x90u) {
++            if (m->on < 64u)
++                m->onn[m->on] = (uint8_t)d1;
++            m->on++;
++            m->onvel_sum += d2;
++            m->ch_mask |= 1u << (st & 15u);
++        } else if (cin == 0x8u && (st & 0xF0u) == 0x80u)
++            m->off++;
++        else if (cin == 0xBu && (st & 0xF0u) == 0xB0u && d1 == SEQ_STEP_CC) {
++            m->cc++;
++            m->last_cc = d2;
++        } else if (cin == 0xFu && st == 0xF8u)
++            m->clk++;
++        else if (cin == 0xFu && st == 0xFAu)
++            m->start++;
++        else if (cin == 0xFu && st == 0xFCu)
++            m->stop++;
++    }
++}
++static void reset_log(void) { drain(); mlog_n = 0; }
++static void ldump(const char *what)                 /* (SEQMIDI_DUMP=1: the log, for a failing case) */
++{
++    uint32_t i;
++    if (!getenv("SEQMIDI_DUMP"))
++        return;
++    printf("ui:   log of %s (%u):\n", what, mlog_n);
++    for (i = 0; i < mlog_n; i++)
++        if ((mlog[i] >> 8 & 0xFFu) != 0xF8u)
++            printf("ui:     %4u t %6u  %02X %3u %3u\n", i, mtime[i], mlog[i] >> 8 & 0xFFu, mlog[i] >> 16 & 0x7Fu,
++                   mlog[i] >> 24 & 0x7Fu);
++}
++
++/* the log from entry `from`: a note-on (K_ON), a note-off (K_OFF) or a CC (its number: 102, 103, 123) with the value v
++ * (-1 any; a note's: its pitch), on channel ch (16 any): how many, the first's index (-1 none), the last one's value */
++enum { K_ON = 0x100, K_OFF = 0x101, ANY_CH = 16 };
++static int lmatch(uint32_t pkt, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t cin = pkt & 15u, st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
++    if (st >= 0xF0u || (ch < 16u && (st & 15u) != ch))
++        return 0;
++    if (kind == K_ON)
++        return cin == 0x9u && (st & 0xF0u) == 0x90u && (v < 0 || d1 == (uint32_t)v);
++    if (kind == K_OFF)
++        return cin == 0x8u && (st & 0xF0u) == 0x80u && (v < 0 || d1 == (uint32_t)v);
++    return cin == 0xBu && (st & 0xF0u) == 0xB0u && d1 == kind && (v < 0 || d2 == (uint32_t)v);
++}
++static uint32_t lcount(uint32_t from, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t i, n = 0;
++    for (i = from; i < mlog_n; i++)
++        n += (uint32_t)lmatch(mlog[i], kind, ch, v);
++    return n;
++}
++static int lfirst(uint32_t from, uint32_t kind, uint32_t ch, int v)
++{
++    uint32_t i;
++    for (i = from; i < mlog_n; i++)
++        if (lmatch(mlog[i], kind, ch, v))
++            return (int)i;
++    return -1;
++}
++static int llast_val(uint32_t from, uint32_t kind, uint32_t ch)
++{
++    int r = -1;
++    uint32_t i;
++    for (i = from; i < mlog_n; i++)
++        if (lmatch(mlog[i], kind, ch, -1))
++            r = (int)(mlog[i] >> 24 & 0x7Fu);
++    return r;
++}
++/* (2.0) every channel's every pitch: its note-ons and note-offs alternate, starting with a note-on (an off for a note
++ * never sent sounding, or a second on before its off: 0); closed: none left sounding */
++static int lpaired(int closed)
++{
++    static uint8_t s[16][128];
++    uint32_t i, ch, n;
++    memset(s, 0, sizeof s);
++    for (i = 0; i < mlog_n; i++) {
++        uint32_t pkt = mlog[i], st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu;
++        if (lmatch(pkt, K_ON, ANY_CH, -1)) {
++            if (s[st & 15u][d1])
++                return 0;
++            s[st & 15u][d1] = 1;
++        } else if (lmatch(pkt, K_OFF, ANY_CH, -1)) {
++            if (!s[st & 15u][d1])
++                return 0;
++            s[st & 15u][d1] = 0;
++        }
++    }
++    for (ch = 0, n = 0; ch < 16u; ch++)
++        for (i = 0; i < 128u; i++)
++            n += s[ch][i];
++    return !closed || !n;
++}
++
++/* every track empty but those set up; 16 steps of 1/16 at 120 BPM, GATE 64, no swing */
++static void setup(void)
++{
++    uint32_t i;
++    ui_power_on();
++    usb.config = 1;
++    usb.suspended = 0;
++    song.g[G_BPM] = 120;
++    song.g[G_SWING] = 0;
++    song.g[G_CLOCK] = 0;
++    for (i = 0; i < NTRK; i++) {
++        track_t *t = &trk[i];
++        track_defaults_steps(t);
++        memset(t->step, 0, sizeof t->step);
++        t->p[P_SLEN] = 16;
++        t->p[P_SGATE] = 64;
++        t->p[P_SSWING] = 0;
++        t->p[P_SDIV] = 2;
++        t->p[P_MUTE] = 0;
++    }
++    seq_midi_on = 1;
++    memset(seq_mo, 0, sizeof seq_mo);
++    reset_log();
++    mclock = 0;
++}
++static uint32_t beat_blocks(void) { return beat_samples() / CTL; }
++static uint32_t step_blocks(uint32_t n) { return n * div_samples(2) / CTL; }   /* n 1/16 steps, in blocks */
++static uint32_t slen(void) { return div_samples(2); }                          /* a 1/16 step, samples */
++static int lat(int i) { return i < 0 ? -1 : (int)mtime[i]; }                   /* an entry's time (-1 none) */
++
++int main(void)
++{
++    int bad = 0;
++    mstat_t m;
++    uint32_t i;
++
++    /* NOTES + STEP + CLOCK: track 1 a note on step 0 (vel 100) and an accented one on step 4; track 3 a note on step 8 */
++    setup();
++    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++    trk[0].step[4] = (step_t){{64}, 1, ST_NOTE, SF_ACCENT, 100};
++    trk[2].step[8] = (step_t){{67}, 1, ST_NOTE, 0, 90};
++    transport_req = 1;
++    blocks(4u * beat_blocks() - 2u);                /* one bar, the last block or two short of the next pass */
++    lscan(&m);
++    bad += check("SEQ MIDI OUT ON by default (no setting stored)", menu_get(MI_SEQOUT) == 0u && str_eq(menu_vname(MI_SEQOUT, 0), "ON"));
++    bad += check("a bar: 3 note-ons, the velocities as played (100, accent 127, 90)", m.on == 3u && m.onvel_sum == 100u + 127u + 90u);
++    bad += check("  on the tracks' channels (T1 ch 1, T3 ch 3)", m.ch_mask == ((1u << trk_midi_ch(0)) | (1u << trk_midi_ch(2))));
++    bad += check("  every note-on ended by its gate (3 note-offs)", m.off == 3u && lpaired(1));
++    bad += check("  the notes: 60, 64, 67", m.onn[0] == 60u && m.onn[1] == 64u && m.onn[2] == 67u);
++    bad += check("STEP: CC 102 for each step entered, every track (16 x 6)", m.cc == 16u * NTRK);
++    if (m.cc != 16u * NTRK)
++        printf("ui:   step CCs %u\n", m.cc);
++    bad += check("CLOCK: Start once, 24 Clock a beat (95 or 96 in the bar)", m.start == 1u && m.clk >= 95u && m.clk <= 96u);
++    if (m.clk < 95u || m.clk > 96u)
++        printf("ui:   clocks %u\n", m.clk);
++    reset_log();
++    transport_req = 2;
++    blocks(2);
++    lscan(&m);
++    bad += check("STOP: one Stop, no Clock after it", m.stop == 1u && m.clk == 0u);
++
++    /* channels follow T1..T6 CHANNEL */
++    setup();
++    menu_put(MI_TCH1 + 1, 9);                       /* T2 on channel 10 */
++    trk[1].step[0] = (step_t){{50}, 1, ST_NOTE, 0, 100};
++    transport_req = 1;
++    blocks(4);
++    lscan(&m);
++    bad += check("T2 CHANNEL 10: its note on channel 10", m.on == 1u && m.ch_mask == 1u << 9);
++    transport_req = 2;
++    blocks(2);
++    menu_put(MI_TCH1 + 1, 1);
++
++    /* DRUM hits as GM notes */
++    setup();
++    trk[0].step[0] = (step_t){{0}, 0, ST_NOTE, 0, 100};
++    trk[0].step[0].hit = 1u | 2u;                    /* lanes 0 and 1 */
++    transport_req = 1;
++    blocks(4);
++    lscan(&m);
++    bad += check("drum hits: their GM notes (lanes 0, 1)", m.on == 2u && m.onn[0] == DRUM_LANE_NOTE[0] && m.onn[1] == DRUM_LANE_NOTE[1]);
++    transport_req = 2;
++    blocks(2);
++    {   /* (2.0, #35) a DRUM track on its own kit USR1..USR3 (a user sample slot a lane): the same GM notes */
++        int ok = 1;
++        for (i = 0; i < 3u; i++) {
++            setup();
++            set_engine_of(&trk[0], ENGI_DRUM);
++            trk[0].engine = trk[0].eng_req;
++            trk[0].p[P_E0] = (int16_t)(DK_USR1 + i);
++            trk[0].step[0] = (step_t){{0}, 0, ST_NOTE, 0, 100};
++            trk[0].step[0].hit = 1u | 4u | 0x80u;    /* lanes 0, 2, 7 */
++            transport_req = 1;
++            blocks(4);
++            lscan(&m);
++            ok &= drum_user(trk[0].p) == i + 1u && m.on == 3u && m.onn[0] == DRUM_LANE_NOTE[0] &&
++                  m.onn[1] == DRUM_LANE_NOTE[2] && m.onn[2] == DRUM_LANE_NOTE[7];
++            transport_req = 2;
++            blocks(2);
++        }
++        bad += check("  (2.0) on the kits of its own, USR1..USR3: the same GM notes (lanes 0, 2, 7)", ok);
++    }
++
++    /* RATCH x3 */
++    setup();
++    trk[0].p[P_SLEN] = 1;
++    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++    step_set_ratchet(&trk[0].step[0], 3);
++    transport_req = 1;
++    blocks(step_samples(&trk[0], div_samples(2), 0) / CTL - 1u);
++    lscan(&m);
++    bad += check("RATCH x3: three note-ons in the step, each with its note-off", m.on == 3u && m.off >= 2u && lpaired(0));
++    transport_req = 2;
++    blocks(2);
++    lscan(&m);
++    bad += check("  and after STOP every note-on has its note-off", m.on == m.off && lpaired(1));
++
++    /* SLIDE into the same note: one note-on, held; pairs balanced at STOP */
++    setup();
++    trk[0].p[P_SLEN] = 2;
++    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, SF_SLIDE, 100};
++    trk[0].step[1] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++    transport_req = 1;
++    blocks(2u * step_samples(&trk[0], div_samples(2), 0) / CTL - 1u);
++    lscan(&m);
++    bad += check("SLIDE into the same note: no second note-on while it sounds", m.on == 1u);
++    transport_req = 2;
++    blocks(2);
++    lscan(&m);
++    bad += check("  note-ons and note-offs balanced after STOP", m.on == m.off && lpaired(1));
++
++    /* external clock: no Start / Clock / Stop from us (notes still go out) */
++    setup();
++    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++    song.g[G_CLOCK] = 1;
++    blocks(1);
++    seq_start();                                     /* as midi_clock_transport would */
++    blocks(beat_blocks());
++    seq_stop();
++    drain();
++    lscan(&m);
++    bad += check("external clock: no Start, Clock or Stop sent", m.start == 0u && m.clk == 0u && m.stop == 0u);
++    song.g[G_CLOCK] = 0;
++
++    /* MENU: OFF sends nothing, back ON sends again */
++    setup();
++    menu_put(MI_SEQOUT, menu_step(MI_SEQOUT, -1));   /* a step down: OFF (ON is value 0, as HINTS) */
++    for (i = 0; i < NTRK; i++)
++        trk[i].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++    transport_req = 1;
++    blocks(beat_blocks());
++    transport_req = 2;
++    blocks(2);
++    lscan(&m);
++    bad += check("MENU > MIDI > SEQ MIDI OUT OFF: nothing sent (no notes, steps, clock, start, stop)",
++                 menu_get(MI_SEQOUT) == 1u && str_eq(menu_vname(MI_SEQOUT, 1), "OFF") && !m.on && !m.off && !m.cc && !m.clk && !m.start && !m.stop);
++    bad += check("  OFF is bit 3 of the settings byte CPU2_BYTE (saved with the settings), the others as they were",
++                 CPU2_BYTE == 8u && SEQOUT_OFF && !CPU2_SET && !PREVIEW_SET && !CLK320_SET);
++    menu_put(MI_SEQOUT, menu_step(MI_SEQOUT, 1));   /* a step up: ON */
++    reset_log();
++    transport_req = 1;
++    blocks(beat_blocks());
++    transport_req = 2;
++    blocks(2);
++    lscan(&m);
++    bad += check("  back ON: the notes go out again", menu_get(MI_SEQOUT) == 0u && m.on == NTRK && m.start == 1u && lpaired(1));
++    bad += check("MENU: SEQ MIDI OUT in the MIDI tab, after MIDI IN", MI_TAB[MI_SEQOUT] == MTAB_MIDI &&
++                 str_eq(MI_NAME[MI_SEQOUT], "SEQ MIDI OUT") && MI_SEQOUT == MI_ROUTE + 1u);
++    favorites.factory[15][5] = 8u;                   /* (RESET SETTINGS: ON again) */
++    settings_reset();
++    bad += check("  RESET SETTINGS: SEQ MIDI OUT ON", menu_get(MI_SEQOUT) == 0u && seq_midi_on);
++
++    /* (2.0) LENGTHS: T1 (GATE 100 %, a note 1 STEP: 2.0's default) a chord on step 0, C4 1 STEP, E4 2 STEPS, G4 4 STEPS
++     * (NOTES' LENGTH: per-note ties into the steps after it); C5 on step 8 a quarter of its step (its GATE locked) */
++    {
++        track_t *t = &trk[0];
++        int on[4], off[4], ok = 1;
++        static const uint8_t N[4] = {60, 64, 67, 72};
++        uint32_t l;
++        setup();
++        t->p[P_SGATE] = 127;
++        t->p[P_VOICE] = V_POLY;
++        t->step[0] = (step_t){{60, 64, 67}, 3, ST_NOTE, 0, 100};
++        t->step[8] = (step_t){{72}, 1, ST_NOTE, 0, 100};
++        ok &= len_set(t, 0, 2u, LEN_STEPS) == 0 && len_set(t, 0, 4u, LEN_STEPS + 2) == 0 && len_set(t, 8, 0, 32) == 0;
++        ok &= step_ties(&t->step[1]) == 3u && t->step[1].n == 2u;   /* (E4 and G4 on into step 1; G4's last a TIE) */
++        transport_req = 1;
++        blocks(step_blocks(16) - 2u);
++        l = slen();
++        for (i = 0; i < 4u; i++) {
++            on[i] = lat(lfirst(0, K_ON, 0, N[i]));
++            off[i] = lat(lfirst(0, K_OFF, 0, N[i]));
++            ok &= lcount(0, K_ON, 0, N[i]) == 1u && lcount(0, K_OFF, 0, N[i]) == 1u;
++        }
++        ok &= lcount(0, K_ON, ANY_CH, -1) == 4u && lpaired(1) && on[0] == on[1] && on[1] == on[2];
++        ldump("LENGTHS");
++        bad += check("(2.0) LENGTHS: a chord of C4 1 STEP, E4 2, G4 4 (per-note ties): one note-on each, together",
++                     ok);
++        ok = off[0] > on[0] && off[0] <= on[0] + (int)l &&
++             off[1] > on[0] + (int)l && off[1] <= on[0] + (int)(2u * l + l / 2u) &&
++             off[2] > on[0] + (int)(3u * l) && off[2] <= on[0] + (int)(4u * l + l / 2u) &&
++             off[0] < off[1] && off[1] < off[2];
++        bad += check("  each its own note-off at its own end (C4 in step 1, E4 after step 2, G4 after step 4)", ok);
++        if (!ok)
++            printf("ui:   step %u: on %d, offs %d %d %d\n", l, on[0], off[0], off[1], off[2]);
++        ok = on[3] >= on[0] + (int)(8u * l) - CTL && on[3] <= on[0] + (int)(8u * l) + CTL;
++        ok &= off[3] - on[3] >= (int)(l / 4u) - CTL && off[3] - on[3] <= (int)(l / 4u) + CTL;
++        bad += check("  C5 a quarter of its step (its GATE locked to 25 %): its note-off a quarter step after it", ok);
++        if (!ok)
++            printf("ui:   C5 on %d off %d (a step %u)\n", on[3], off[3], l);
++        transport_req = 2;
++        blocks(2);
++    }
++
++    /* (2.0) OVERLAP: GATE 100 %; C4 on step 0 tied into step 1 (2 STEPS), E4 starting on step 1 tied into step 2, C4
++     * again on step 2: the first C4 goes on half a step past step 1's GATE (seq_gate_end) and E4's tie holds the notes
++     * over (seq_k): the new C4 comes while the first still sounds */
++    {
++        track_t *t = &trk[0];
++        int a, b, c, ok;
++        setup();
++        t->p[P_SGATE] = 127;
++        t->p[P_VOICE] = V_POLY;
++        t->step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        t->step[1] = (step_t){{60, 64}, 2, ST_NOTE, 0, 100, 0, 1};    /* (C4 tied: acc bit 0) */
++        t->step[2] = (step_t){{64, 60}, 2, ST_NOTE, 0, 100, 0, 1};    /* (E4 tied, C4 new) */
++        transport_req = 1;
++        blocks(step_blocks(2) + step_blocks(1) / 4u);  /* (into step 2) */
++        a = lfirst(0, K_ON, 0, 60);
++        b = lfirst((uint32_t)a + 1u, K_OFF, 0, 60);
++        c = lfirst((uint32_t)a + 1u, K_ON, 0, 60);
++        ok = a >= 0 && b > a && c == b + 1 && lat(b) == lat(c) && lat(c) - lat(a) >= (int)(2u * slen()) - CTL &&
++             lat(c) - lat(a) <= (int)(2u * slen()) + CTL &&
++             lcount(0, K_ON, 0, 60) == 2u && lcount(0, K_ON, 0, 64) == 1u && lpaired(0);
++        bad += check("(2.0) OVERLAP: C4 struck again while it sounds (step 2): its note-off first, then the note-on", ok);
++        if (!ok)
++            printf("ui:   C4 on %d (t %d), off %d (t %d), on %d (t %d); a step %u\n", a, lat(a), b, lat(b), c, lat(c), slen());
++        blocks(step_blocks(4));
++        transport_req = 2;
++        blocks(2);
++        bad += check("  every pitch's note-ons and note-offs alternate (never two note-ons), none left after STOP",
++                     lpaired(1) && lcount(0, K_ON, ANY_CH, -1) == lcount(0, K_OFF, ANY_CH, -1));
++    }
++
++    /* (2.0) TIE: a TIE chain (steps 1..3 TIE) and, on T2 (GATE 100 %), D4 held over four steps by per-note ties (steps
++     * 1..3 list it tied): one note each */
++    {
++        int ok;
++        setup();
++        trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        for (i = 1; i < 4u; i++)
++            trk[0].step[i] = (step_t){{0}, 0, ST_TIE, 0, 0};
++        trk[1].p[P_SGATE] = 127;
++        trk[1].step[0] = (step_t){{62}, 1, ST_NOTE, 0, 100};
++        for (i = 1; i < 4u; i++)                     /* (as tests/ties_test.c: each step lists D4 tied, acc bit 0) */
++            trk[1].step[i] = (step_t){{62}, 1, ST_NOTE, 0, 100, 0, 1};
++        ok = step_ties(&trk[1].step[3]) == 1u;
++        transport_req = 1;
++        blocks(step_blocks(6));
++        ok &= lcount(0, K_ON, 0, 60) == 1u && lcount(0, K_OFF, 0, 60) == 1u &&
++              lat(lfirst(0, K_OFF, 0, 60)) > (int)(3u * slen()) && lcount(0, K_ON, 1, 62) == 1u &&
++              lcount(0, K_OFF, 1, 62) == 1u && lat(lfirst(0, K_OFF, 1, 62)) > (int)(3u * slen()) && lpaired(1);
++        ldump("TIE");
++        bad += check("(2.0) TIE: a TIE chain and a note tied on over 4 steps: one note-on, one note-off each, at its end", ok);
++        transport_req = 2;
++        blocks(2);
++    }
++
++    /* (2.0) CHAIN: T1 A (LEN 4, C4 on its last step, 3 STEPS: on into B's first two) on CHAIN into B (LEN 6), SONG OFF:
++     * the chain loops, A B A */
++    {
++        track_t *t = &trk[0];
++        uint32_t k, want[16], nw = 0, got[24], ng = 0;
++        int ok;
++        setup();
++        lists_clear();
++        track_defaults_steps(t);
++        t->p[P_SLEN] = 4;
++        t->p[P_SGATE] = 64;
++        t->p[P_SSWING] = 0;
++        t->p[P_VOICE] = V_POLY;
++        trk_pid[0] = 0;
++        t->step[3] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        bank_put(0, 0, 0);                           /* A */
++        track_defaults_steps(t);
++        t->p[P_SLEN] = 6;
++        t->p[P_SSWING] = 0;
++        trk_pid[0] = 0;
++        bank_put(0, 1, 0);                           /* B */
++        lists.ent[0][0][1] = REPS_CHAIN;
++        (void)ent_go(0, 0);
++        undo_clear();
++        song_poll();
++        ok = len_set(t, 3, 0, LEN_STEPS + 1) == 0 && t->p[P_SLEN] == 4;
++        reset_log();
++        transport_req = 1;
++        blocks_main(step_blocks(4 + 6 + 4) - 2u);
++        for (k = 0; k < 4u; k++)
++            want[nw++] = k;
++        for (k = 0; k < 6u; k++)
++            want[nw++] = k;
++        for (k = 0; k < 4u; k++)
++            want[nw++] = k;
++        for (i = 0; i < mlog_n && ng < NELEM(got); i++)
++            if (lmatch(mlog[i], SEQ_STEP_CC, 0, -1))
++                got[ng++] = mlog[i] >> 24 & 0x7Fu;
++        ok &= ng == nw;
++        for (k = 0; ok && k < nw; k++)
++            ok &= got[k] == want[k];
++        bad += check("(2.0) CHAIN: CC 102 counts each part from 0 (A 0..3, B 0..5, A 0..3 again), not on through", ok);
++        if (!ok) {
++            printf("ui:   step CCs:");
++            for (k = 0; k < ng; k++)
++                printf(" %u", got[k]);
++            printf("\n");
++        }
++        ok = lcount(0, K_ON, 0, 60) == 2u && lcount(0, K_OFF, 0, 60) == 1u &&
++             lat(lfirst(0, K_OFF, 0, 60)) > (int)(5u * slen()) && lat(lfirst(0, K_OFF, 0, 60)) < (int)(7u * slen()) &&
++             lpaired(0);
++        bad += check("  A's last note on into B's first two steps: one note (its note-off in B), then A's again", ok);
++        transport_req = 2;
++        blocks_main(2);
++        lists_clear();
++    }
++
++    /* (2.0) SONG ONCE: T1 a list of one entry (LEN 4, C4 on step 0, E4 on step 3, GATE 100 %), REPS x2; T2 no list,
++     * D4 held by a TIE chain over its 16 steps: sounding when the song ends */
++    {
++        track_t *t = &trk[0];
++        uint32_t n;
++        int ok, stop;
++        setup();
++        lists_clear();
++        track_defaults_steps(t);
++        t->p[P_SLEN] = 4;
++        t->p[P_SGATE] = 127;
++        t->p[P_SSWING] = 0;
++        trk_pid[0] = 0;
++        t->step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
++        t->step[3] = (step_t){{64}, 1, ST_NOTE, 0, 100};
++        bank_put(0, 0, 0);
++        lists.ent[0][0][1] = 1;                      /* (REPS x2: ui.c ent_reps) */
++        trk[1].step[0] = (step_t){{62}, 1, ST_NOTE, 0, 100};
++        for (i = 1; i < 16u; i++)
++            trk[1].step[i] = (step_t){{0}, 0, ST_TIE, 0, 0};
++        lists.song = SONG_ONCE;
++        reset_log();
++        song_top();                                  /* PLAY (ui_input.c play_press) */
++        for (n = 0; n < 8u * step_blocks(1) && (n < 2u || song.playing); n++)
++            blocks_main(1);
++        blocks_main(4);
++        stop = -1;
++        for (i = 0; i < mlog_n; i++)
++            if (mlog[i] == (0x0Fu | 0xFCu << 8))
++                stop = (int)i;
++        lscan(&m);
++        ok = !song.playing && m.start == 1u && m.stop == 1u && lcount(0, K_ON, 0, 60) == 2u &&
++             lcount(0, K_ON, 0, 64) == 2u && lcount(0, K_ON, 1, 62) == 1u && lpaired(1) && stop >= 0 &&
++             lat(stop) >= (int)(8u * slen()) && lat(stop) <= (int)(9u * slen()) &&
++             lfirst((uint32_t)stop, K_OFF, 1, 62) > stop;   /* (T2's held note: ended at the Stop, as at STOP) */
++        for (i = (uint32_t)(stop < 0 ? 0 : stop); ok && i < mlog_n; i++)
++            ok &= mlog[i] != (0x0Fu | 0xF8u << 8);
++        ldump("SONG ONCE");
++        bad += check("(2.0) SONG ONCE: at its end the transport stops: every note-on its note-off, one Stop, no Clock after",
++                     ok);
++        if (!ok)
++            printf("ui:   playing %d, start %u stop %u (at %d of %u), ons %u offs %u\n", song.playing, m.start, m.stop,
++                   stop, mlog_n, m.on, m.off);
++        lists.song = 0;
++        lists_clear();
++    }
++
++    printf("seqmidi: %s\n", bad ? "FAILED" : "all ok");
++    return bad != 0;
++}
+diff --git a/tests/ui_golden.txt b/tests/ui_golden.txt
+index 6115cd4..4fbc144 100644
+--- a/tests/ui_golden.txt
++++ b/tests/ui_golden.txt
+@@ -131,8 +131,8 @@ d0b0f57363fa210c CRYPT_menu
+ 10fe9d7434586a47 CRYPT_menu_end
+ b4b31251e26db16b CRYPT_menu_hold
+ 69c2d8889a6f6414 CRYPT_menu_leds
+-814b31b45e5f314f CRYPT_menu_midi
+-9b5642c1e2994372 CRYPT_menu_midi_scroll
++29071138b20bb65f CRYPT_menu_midi
++da3dafcc5aca7cca CRYPT_menu_midi_scroll
+ 919ae61b616e2fdc CRYPT_menu_slide
+ 40c734ce81e68b80 CRYPT_menu_speaker
+ b2484abda1bd3135 CRYPT_menu_system
+@@ -372,8 +372,8 @@ a3d1be6d1dd401db CUSTOM_CRYPT_menu
+ 7041aa118e8f7d45 CUSTOM_CRYPT_menu_end
+ ce6cef01379900f7 CUSTOM_CRYPT_menu_hold
+ ddfa65109fbb8125 CUSTOM_CRYPT_menu_leds
+-2230b29fd0d0ad99 CUSTOM_CRYPT_menu_midi
+-3bffabda03058c18 CUSTOM_CRYPT_menu_midi_scroll
++8d86b6e56545654a CUSTOM_CRYPT_menu_midi
++70cd76295bff0858 CUSTOM_CRYPT_menu_midi_scroll
+ 58be775381b5939f CUSTOM_CRYPT_menu_slide
+ e7259fa3118f8889 CUSTOM_CRYPT_menu_speaker
+ 4cd49a750dd448be CUSTOM_CRYPT_menu_system
+@@ -613,8 +613,8 @@ d80d8e61bc8ed9a1 CUSTOM_NEON_menu_audio
+ 1fa15f2c69b1fdae CUSTOM_NEON_menu_end
+ c159a097576b0aa5 CUSTOM_NEON_menu_hold
+ 8bf9b33983ff793c CUSTOM_NEON_menu_leds
+-88e2e7be4de1e71b CUSTOM_NEON_menu_midi
+-618d97cafba9e67b CUSTOM_NEON_menu_midi_scroll
++9f28bec24037219f CUSTOM_NEON_menu_midi
++a78465a99bd768d3 CUSTOM_NEON_menu_midi_scroll
+ 854035247c4097f8 CUSTOM_NEON_menu_slide
+ 212dc0d4ca4d0aab CUSTOM_NEON_menu_speaker
+ e4e02a48353c1b4f CUSTOM_NEON_menu_system
+@@ -854,8 +854,8 @@ c01600409b4eb157 CUSTOM_QUARK_menu_audio
+ 5c529065d454c472 CUSTOM_QUARK_menu_end
+ f0be54fe6d8328f3 CUSTOM_QUARK_menu_hold
+ 9344ea4a95bad72b CUSTOM_QUARK_menu_leds
+-c43b84572f022e38 CUSTOM_QUARK_menu_midi
+-09bac33a8840b146 CUSTOM_QUARK_menu_midi_scroll
++07c382cc2ceba18b CUSTOM_QUARK_menu_midi
++4fa8bfa37ef45aee CUSTOM_QUARK_menu_midi_scroll
+ d0f9c39fc62ce2ea CUSTOM_QUARK_menu_slide
+ 646019b4679a9810 CUSTOM_QUARK_menu_speaker
+ 6f7d2ad1ee8ebc20 CUSTOM_QUARK_menu_system
+@@ -1095,8 +1095,8 @@ cd06d5f16e707089 CUSTOM_SKIFF_menu
+ 6af403a75f7df920 CUSTOM_SKIFF_menu_end
+ 778c9052c3386c8b CUSTOM_SKIFF_menu_hold
+ cac62a6dae4f60e8 CUSTOM_SKIFF_menu_leds
+-d470db2259cdc7c8 CUSTOM_SKIFF_menu_midi
+-9742f1cdd9b51d7c CUSTOM_SKIFF_menu_midi_scroll
++d402e408941137e9 CUSTOM_SKIFF_menu_midi
++bf3b01c37c143f44 CUSTOM_SKIFF_menu_midi_scroll
+ 6af24cabf3236e46 CUSTOM_SKIFF_menu_slide
+ 93fa55876d9455ab CUSTOM_SKIFF_menu_speaker
+ 79177e1e5556b29c CUSTOM_SKIFF_menu_system
+@@ -1336,8 +1336,8 @@ facaa417c70838fe HI-CON_menu
+ 760d01c1e4f5c52a HI-CON_menu_end
+ 5cfab2709bb9ad85 HI-CON_menu_hold
+ c1d593ee5beabf32 HI-CON_menu_leds
+-7b3825849473f436 HI-CON_menu_midi
+-44f20e9128f02de2 HI-CON_menu_midi_scroll
++d7dedf9cdc28205b HI-CON_menu_midi
++4b7fe28a6780afee HI-CON_menu_midi_scroll
+ 3470343139ff17d2 HI-CON_menu_slide
+ 278400b4b5d84a49 HI-CON_menu_speaker
+ b38f6fbbec1709d1 HI-CON_menu_system
+@@ -1577,8 +1577,8 @@ c577497f7ac9bf98 LARGE_CRYPT_lfo_run
+ 10fe9d7434586a47 LARGE_CRYPT_menu_end
+ b10a5e70113b0ebd LARGE_CRYPT_menu_hold
+ 5093f606668a16c3 LARGE_CRYPT_menu_leds
+-14d705633d041074 LARGE_CRYPT_menu_midi
+-d47ac5628508678d LARGE_CRYPT_menu_midi_scroll
++2c198857c16ce9b0 LARGE_CRYPT_menu_midi
++1ac045a5e5c07c3d LARGE_CRYPT_menu_midi_scroll
+ e75ad012f2250416 LARGE_CRYPT_menu_slide
+ d5d8a3a16934b954 LARGE_CRYPT_menu_speaker
+ 203d3eefe4b2cabb LARGE_CRYPT_menu_system
+@@ -1818,8 +1818,8 @@ d2a45197e1cb959f LARGE_NEON_menu
+ 341de54bbd125f4f LARGE_NEON_menu_end
+ f1f78ec8be34d178 LARGE_NEON_menu_hold
+ 0148ac2a33f35d58 LARGE_NEON_menu_leds
+-21982a4539b31622 LARGE_NEON_menu_midi
+-81d899f0f4810e6c LARGE_NEON_menu_midi_scroll
++13f7b8e27fb18007 LARGE_NEON_menu_midi
++0f7bfc5790f4b0b8 LARGE_NEON_menu_midi_scroll
+ 7a89e3b0d65d22e0 LARGE_NEON_menu_slide
+ 23e01ae50e6dea64 LARGE_NEON_menu_speaker
+ ba8e79b8ebd4534e LARGE_NEON_menu_system
+@@ -2059,8 +2059,8 @@ c086c40a30de7ada LARGE_QUARK_menu_audio
+ ac2f4fdadbba3255 LARGE_QUARK_menu_end
+ cc7451b64b344651 LARGE_QUARK_menu_hold
+ 6082216f6e69bf08 LARGE_QUARK_menu_leds
+-99d0588c28ab6a84 LARGE_QUARK_menu_midi
+-2b687f729b5f05fa LARGE_QUARK_menu_midi_scroll
++f150f0c00893f9e1 LARGE_QUARK_menu_midi
++4e580ba84186431a LARGE_QUARK_menu_midi_scroll
+ decdd5cfc5e7d076 LARGE_QUARK_menu_slide
+ 95c6ac3cd43cccdc LARGE_QUARK_menu_speaker
+ b381163863b2e7b0 LARGE_QUARK_menu_system
+@@ -2300,8 +2300,8 @@ f3fe49eba858609c LARGE_SKIFF_lfo_2
+ f27412ab6d3f8348 LARGE_SKIFF_menu_end
+ b717a2e7d9e1bada LARGE_SKIFF_menu_hold
+ 27c3eb6d6efd9310 LARGE_SKIFF_menu_leds
+-6cd452f23a41cb41 LARGE_SKIFF_menu_midi
+-13acef039281e52f LARGE_SKIFF_menu_midi_scroll
++788cba9921b0eb26 LARGE_SKIFF_menu_midi
++2210c3d59c304b63 LARGE_SKIFF_menu_midi_scroll
+ eaa207c7f3c952d1 LARGE_SKIFF_menu_slide
+ 0b38aa13c5bbda49 LARGE_SKIFF_menu_speaker
+ 251fb4b6cb5a7568 LARGE_SKIFF_menu_system
+@@ -2543,8 +2543,8 @@ b24506ed402e7f9a NEON_lfo_run
+ 341de54bbd125f4f NEON_menu_end
+ 03024281ece743c5 NEON_menu_hold
+ 95673d93de46d7cc NEON_menu_leds
+-e56003e194b2ab8c NEON_menu_midi
+-2a6f08e094fdf45e NEON_menu_midi_scroll
++611864a2b212a3e6 NEON_menu_midi
++7c9c214fcf6cf4de NEON_menu_midi_scroll
+ ceebae53037132ae NEON_menu_slide
+ 4334ae321b1e509a NEON_menu_speaker
+ a71e5b6f2ab2f6dd NEON_menu_system
+@@ -2784,8 +2784,8 @@ d8d75ba22a8b1616 PAPER_lfo_2
+ c3f57331be1187a5 PAPER_menu_end
+ 65a4e81bfabde20a PAPER_menu_hold
+ 73d9b30b82919a22 PAPER_menu_leds
+-ec2db8cb8d487139 PAPER_menu_midi
+-2e1c515d6596bc60 PAPER_menu_midi_scroll
++097137fa1e4560f1 PAPER_menu_midi
++2baedac242e5e34c PAPER_menu_midi_scroll
+ 65b7dfc89557b76b PAPER_menu_slide
+ 7843a4eb2e47b4c0 PAPER_menu_speaker
+ ea170af85d9e57ba PAPER_menu_system
+@@ -3033,8 +3033,8 @@ ca5f7709b66d4e0b QUARK_menu_audio
+ ac2f4fdadbba3255 QUARK_menu_end
+ b392c706be0682f6 QUARK_menu_hold
+ 386c7e047ab00c1c QUARK_menu_leds
+-c67f50d0ca928916 QUARK_menu_midi
+-39214b40d6e35f70 QUARK_menu_midi_scroll
++397d2f468e3a7e5c QUARK_menu_midi
++7c8ea1b03970d6f0 QUARK_menu_midi_scroll
+ 38635964dbaefd5a QUARK_menu_slide
+ 8a8b2b47f5764e03 QUARK_menu_speaker
+ e06ad69b548dbe5a QUARK_menu_system
+@@ -3276,8 +3276,8 @@ a26dcca10a7c3264 SKIFF_lfo_run
+ f27412ab6d3f8348 SKIFF_menu_end
+ 5d724a36a7aba061 SKIFF_menu_hold
+ 1e0fee7164cbcefe SKIFF_menu_leds
+-de2bd40c0e594a11 SKIFF_menu_midi
+-8f09e4a4327593c1 SKIFF_menu_midi_scroll
++a7abb9df8bdb1a1b SKIFF_menu_midi
++9bcd8d3149f28481 SKIFF_menu_midi_scroll
+ c3a72048c8cf168d SKIFF_menu_slide
+ 281d7aa71b71ac38 SKIFF_menu_speaker
+ 61deedf2fba34a97 SKIFF_menu_system
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index aba7a7d..94d0b9e 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -1574,8 +1574,9 @@ static int test_menu_tabs(void)
+                  "tab gaps constant (S, LARGE)",
+                  ok && MTAB_COUNT == 5u && str_eq(MTAB_NAME[0], "DISPLAY") && str_eq(MTAB_NAME[MTAB_MIDI], "MIDI") &&
+                  mtab_rows(MTAB_DISPLAY) == 7u && mtab_rows(MTAB_CONTROL) == 6u && mtab_rows(MTAB_AUDIO) == 6u &&   /* (#27; (2.0) RETURN) */
+-                 mtab_rows(MTAB_SYSTEM) == 6u + FELUCCA_CDC && mtab_rows(MTAB_MIDI) == 10u);   /* ((Skiff) SYSTEM: CPU
+-                                                         * CLOCK; (Skiff 2.0) USB SERIAL with the console only) */
++                 mtab_rows(MTAB_SYSTEM) == 6u + FELUCCA_CDC && mtab_rows(MTAB_MIDI) == 11u);   /* ((Skiff) SYSTEM: CPU
++                                                         * CLOCK; (Skiff 2.0) USB SERIAL with the console only; (fork)
++                                                         * MIDI: SEQ MIDI OUT) */
+ 
+     ui_power_on();
+     hold(B_HOME);
+@@ -2432,8 +2433,10 @@ static int test_layer(void)
+         bad += check("  LEDS is saved with the settings and read back (all four); DIM HI saves the field as before (0)",
+                      ok && p.zoom == 0u && settings_import(&p, sizeof p) && settings_leds == LEDS_DIM);
+     }
+-    /* combo: a key with FX: at once, silent, no MIDI, no recording, no step */
++    /* combo: a key with FX: at once, silent, no MIDI, no recording, no step ((Skiff fork) the sequencer plays here: SEQ
++     * MIDI OUT off, so what is counted is the key's MIDI alone) */
+     ui_power_on();
++    CPU2_BYTE |= 8u;
+     usb.config = 1; mo = mo_w;
+     go_page(GR_ROLL); my_steps(TSEL); song.rec = 1; song.playing = 1;
+     {
+@@ -2449,6 +2452,7 @@ static int test_layer(void)
+         key_up(white(2)); frame();
+         bad += check("  the key let go: its effect off, no note-off sent", !perf_held && !kb_layer && mo_w == mo);
+         btn_up(B_FX); frame();
++        CPU2_BYTE &= (uint8_t)~8u;                      /* ((Skiff fork) SEQ MIDI OUT back ON) */
+         bad += check("  FX let go after a combo: no tap, the map gone", !ui.layer && cur_page()->graph == GR_ROLL);
+     }
+     song.playing = 0; song.rec = 0;
+-- 
+2.43.0
+
