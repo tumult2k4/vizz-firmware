@@ -8,4 +8,7 @@ für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ:
 - **Mute/Solo über CC 103**: stumme Spuren senden keine Noten, ihr Zustand kommt als CC 103 – `docs/FIRMWARE-MUTE.md`
 - **Name**: Vizz statt Skiff
 
-Wie gebaut wird: [BRIEF.md](BRIEF.md). Die fertigen Pakete liegen auf dem Branch `vizz-1.0` unter `out/`.
+| Version | Basis | Auftrag | Ergebnis |
+| --- | --- | --- | --- |
+| Vizz 1.0 | Skiff 1.4 | [BRIEF.md](BRIEF.md) | Branch `vizz-1.0`, `out/vizz-1.0.fwsc` |
+| Vizz 2.0 | Skiff 2.0.1 | [BRIEF-2.0.md](BRIEF-2.0.md) | Branch `vizz-2.0`, `out/vizz-2.0.fwsc` |
