@@ -1,7 +1,7 @@
 From d5ed13362a29a46e4a1ad66eec00a9f6324b7ae0 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 20:38:21 +0000
-Subject: [PATCH 09/12] Vizzbox: the VIZZBOX's controls, screen, favourites;
+Subject: [PATCH 09/13] Vizzbox: the VIZZBOX's controls, screen, favourites;
  new styles while playing; ENDLESS
 
 firmware/src/ui_vizzbox.c: K1..K4 GENRE SUBGENRE ENERGY VARIATION, SELECT TEMPO, ALGO LENGTH, PRESET the

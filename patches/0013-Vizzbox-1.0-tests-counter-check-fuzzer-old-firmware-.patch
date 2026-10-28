@@ -1,0 +1,1490 @@
+From 2abdddc183f05bbedf4d36eb29da82a0f83b0dd4 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 22:15:01 +0000
+Subject: [PATCH 13/13] Vizzbox 1.0, tests: counter-check, fuzzer, old firmware
+ on a unit with favourites, the heaviest drop
+
+tests/vizzbox_mutants.py: 22 deliberate faults in the producer, its ISR part, its screen, the autosave hook
+and 2 in the installer, each caught by the test that should see it (tests/vizz_mutants.py stays for Vizz
+2.0's). tests/vizzbox_fuzz.c: the VIZZBOX's knobs, buttons, keys, favourites, modes, MENU, MIDI in and power
+cycles at random under ASan / UBSan; no hanging note, every voice free after STOP, a fresh device plays (with
+a clock from outside where the MENU was left on USB or TRS clock). tests/vizzbox_compat.c: a unit with
+favourites booted, loaded, saved and autosaved by Skiff 2.0.1 and Vizz 2.0 (their trees from git): the
+favourites untouched, all of it there again on the Vizzbox; tests/ldr_test.c: the favourites kept over an
+update. tests/vizzbox_inactive.c: the GROOVEBOX with the producer compiled in plays as without it, audio,
+MIDI and screen bit for bit. tests/vizzbox_budget.c: every subgenre's first DROP at ENERGY and VARIATION 100
+against Skiff's heavy song (CPU time side by side; the heaviest 0.6..0.8x over several runs, with every
+effect 0.65..0.75x against the heavy song with them), at most 8 voices, none stolen. tests/producer_test.c: the user's projects, autosave and
+pattern pool untouched by a producer session and back after off and on; a favourite saved while playing
+written once stopped; CC 104 0 into the GROOVEBOX on a unit that never played; song N runs subgenre N only.
+web/emu/make_vizzbox_emu.py, test_vizzbox_emu.mjs: the Vizzbox in the browser as one file, tested in
+Chromium from the disk. producer.c: vb_note, never called, removed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ firmware/src/producer.c      |   2 -
+ tests/ldr_test.c             |  10 ++
+ tests/producer_test.c        | 122 ++++++++++++++++++
+ tests/run_tests.sh           |  50 ++++++++
+ tests/vizzbox_budget.c       | 232 +++++++++++++++++++++++++++++++++++
+ tests/vizzbox_compat.c       | 161 ++++++++++++++++++++++++
+ tests/vizzbox_fuzz.c         | 229 ++++++++++++++++++++++++++++++++++
+ tests/vizzbox_inactive.c     | 104 ++++++++++++++++
+ tests/vizzbox_mutants.py     | 212 ++++++++++++++++++++++++++++++++
+ web/emu/make_vizzbox_emu.py  |  79 ++++++++++++
+ web/emu/test_vizzbox_emu.mjs |  83 +++++++++++++
+ 11 files changed, 1282 insertions(+), 2 deletions(-)
+ create mode 100644 tests/vizzbox_budget.c
+ create mode 100644 tests/vizzbox_compat.c
+ create mode 100644 tests/vizzbox_fuzz.c
+ create mode 100644 tests/vizzbox_inactive.c
+ create mode 100644 tests/vizzbox_mutants.py
+ create mode 100644 web/emu/make_vizzbox_emu.py
+ create mode 100644 web/emu/test_vizzbox_emu.mjs
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index 0df1f87..902f72c 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -110,8 +110,6 @@ static int32_t vb_semi(int32_t d)
+         }
+     return o + (int32_t)i;
+ }
+-/* the note of degree d in the octave whose C is c (the key's root above it) */
+-static uint32_t vb_note(int32_t d, int32_t c) { return (uint32_t)clamp(c + (int32_t)vb.root + vb_semi(d), 0, 127); }
+ static uint32_t vb_chord(void)                      /* the staged bar's chord: its degree */
+ {
+     return vb.prog[(vb.sbar / vb.cbars) & 3u];
+diff --git a/tests/ldr_test.c b/tests/ldr_test.c
+index ba84c7f..615a725 100644
+--- a/tests/ldr_test.c
++++ b/tests/ldr_test.c
+@@ -279,6 +279,9 @@ int main(int argc, char **argv)
+ {
+     size_t olen;
+     static uint8_t user[0x1000];
++#if !BOARD_SMK37
++    static uint8_t favs[0x2000];                   /* ((Vizzbox) fm1_flash_map.h FL_VBOX) */
++#endif
+     uint8_t *old, head[0x4000];
+     uint32_t ofo, nfo, i;
+     int bad = 0, rc;
+@@ -300,6 +303,10 @@ int main(int argc, char **argv)
+     for (i = 0; i < 0x1000u; i++) nor[T_USER + i] = (uint8_t)(i * 7u);
+     put_record_at(T_USER + 0xF00u);
+     memcpy(user, nor + T_USER, sizeof user);
++#if !BOARD_SMK37
++    for (i = 0; i < sizeof favs; i++) nor[0x95000u + i] = (uint8_t)(i * 11u + 3u);   /* ((Vizzbox) its favourites, A / B) */
++    memcpy(favs, nor + 0x95000u, sizeof favs);
++#endif
+     /* a damaged package (one byte deep in the app area): refused before anything is erased */
+     {
+         size_t at = nfo + 0x50123u;
+@@ -324,6 +331,9 @@ int main(int argc, char **argv)
+     bad += check("update records cleared (RAM + flash: ours, the other one)",
+                  record_cleared && nor[T_REC + 6u] == 0xFF && nor[T_REC2 + 6u] == 0xFF);
+     bad += check("user sample data that looks like a record is kept", !memcmp(nor + T_USER, user, sizeof user));
++#if !BOARD_SMK37
++    bad += check("(Vizzbox) the favourites' sectors 0x95000..0x96FFF kept", !memcmp(nor + 0x95000u, favs, sizeof favs));
++#endif
+     bad += check("no write outside the allowed windows", bad_range == 0);
+     /* same package again: nothing to erase */
+     erases = 0; requests = 0;
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index 7247b20..5ba4008 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -311,6 +311,27 @@ static uint32_t six_at(uint32_t from)
+         }
+     return n;
+ }
++/* into the GROOVEBOX on a unit whose producer never played: CC 104 0 once (BRIEF 5), nothing else of the six */
++static void case_switch(void)
++{
++    uint32_t i, zero = 0, other = 0;
++    snprintf(tag, sizeof tag, "switch");
++    boot();
++    nev = 0;
++    web_buttons(1u << B_HOME);
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(0.5);
++    ok(!vb_mode, "HOME + PLAY: still the VIZZBOX");
++    for (i = 0; i < nev; i++)
++        if (ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u) {
++            zero += ev[i].d1 == 104u && !ev[i].d2;
++            other += ev[i].d1 != 104u || ev[i].d2;
++        }
++    ok(zero == 1u && !other, "into the GROOVEBOX, never played: CC 104 0 %u times, %u others", zero, other);
++}
+ /* PLAY and stop; SEQ MIDI OUT OFF, then on while playing; USB coming up; the GROOVEBOX */
+ static void case_transport(void)
+ {
+@@ -610,6 +631,99 @@ static void case_favourites(void)
+     if (read(p[0], &a, sizeof a) != (ssize_t)sizeof a)
+         ok(0, "no answer");
+     ok(a == direct, "loaded after off and on: MIDI %08x, played directly %08x", a, direct);
++    {   /* SAVE + a white key while playing: kept, written once stopped (an erase stops the audio) */
++        static uint8_t was[0x2000];
++        uint32_t k6;
++        for (k6 = 0; k6 < 27u && !(!key_black(k6) && key_place(k6) == 5u); k6++)
++            ;
++        knobs(1, 4, 0x6666u, 60, 30, 1);
++        press(1u << B_PLAY);
++        run_s(5.0);
++        memcpy(was, nor + 0x95000u, sizeof was);
++        web_buttons(1u << B_SAVE);
++        run_s(0.1);
++        web_keys(1u << k6);
++        run_s(0.08);
++        web_keys(0);
++        web_buttons(0);
++        run_s(2.0);
++        ok(vb_fav.f[5].seed == 0x6666u && !memcmp(was, nor + 0x95000u, sizeof was) && song.playing,
++           "saved while playing: not kept, or written while the audio plays");
++        press(1u << B_PLAY);
++        run_s(0.5);
++        ok(memcmp(was, nor + 0x95000u, sizeof was) != 0, "saved while playing: not written once stopped");
++    }
++}
++
++/* the user's music and projects (BRIEF: "Die gespeicherten Projekte des Nutzers fasst der Produzent nie an"): slot 1
++ * saved in the GROOVEBOX, the autosave settled; then 70 s of the producer's songs (a knob turned, a new style) and back
++ * into the GROOVEBOX: the projects, user samples and presets (0x97000..0xDFFFF), the autosave and the pattern pool
++ * (0xE5000..0xE8FFF) byte for byte as before; off and on (a fresh device on that flash): the GROOVEBOX with the user's
++ * music, slot 1 as saved */
++static struct { uint8_t nor[0x100000]; uint32_t store, autos; } pj;
++static void proj_music(void)
++{
++    uint32_t i;
++    for (i = 0; i < 16u; i++)
++        memset(&trk[0].step[i], 0, sizeof trk[0].step[i]);
++    for (i = 0; i < 16u; i += 4u)
++        trk[0].step[i] = (step_t){{(uint8_t)(41u + i / 4u)}, 1, ST_NOTE, 0, 99};
++    song.g[G_BPM] = 97;
++}
++static int proj_is(void)
++{
++    return trk[0].step[0].n == 1u && trk[0].step[0].note[0] == 41u && trk[0].step[12].note[0] == 44u &&
++           !trk[0].step[1].n && song.g[G_BPM] == 97;
++}
++static void proj_run(void *a)
++{
++    static uint8_t store[0xE0000u - 0x97000u], autos[0xE9000u - 0xE5000u];
++    (void)a;
++    boot();
++    vb_mode_set(0);
++    run_s(0.3);
++    proj_music();
++    ok(!project_save_as(0, "MINE"), "slot 1 not saved");
++    run_s(15.0);                                    /* (the autosave settled) */
++    memcpy(store, nor + 0x97000u, sizeof store);
++    memcpy(autos, nor + 0xE5000u, sizeof autos);
++    web_buttons(1u << B_HOME);                      /* HOME + PLAY: the VIZZBOX, PLAY */
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(0.3);
++    press(1u << B_PLAY);
++    run_s(30.0);
++    web_enc(EN_K1, 2);                              /* (another genre: a new style over a BREAK and a BUILD) */
++    run_s(40.0);
++    press(1u << B_PLAY);
++    run_s(3.0);
++    web_buttons(1u << B_HOME);                      /* back into the GROOVEBOX, stopped */
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(25.0);
++    pj.store = !memcmp(store, nor + 0x97000u, sizeof store);
++    pj.autos = !memcmp(autos, nor + 0xE5000u, sizeof autos);
++    memcpy(pj.nor, nor, sizeof nor);
++}
++static void case_projects(void)
++{
++    char b[PROJ_NAME_LEN + 1];
++    snprintf(tag, sizeof tag, "projects");
++    ok(!spawn(proj_run, &pj, sizeof pj), "no answer");
++    ok(pj.store, "the producer's session changed the projects, user samples or presets (0x97000..0xDFFFF)");
++    ok(pj.autos, "the producer's session changed the autosave or the pattern pool (0xE5000..0xE8FFF)");
++    memcpy(nor, pj.nor, sizeof nor);                /* off and on: a fresh device on that flash */
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    run_s(1.5);
++    ok(!vb_mode, "off and on: not in the GROOVEBOX, where it was left");
++    ok(proj_is(), "off and on: the GROOVEBOX without the user's music");
++    ok(project_name(0, b) && !strcmp(b, "MINE"), "off and on: slot 1 not MINE");
+ }
+ 
+ /* VIZZBOX <-> GROOVEBOX, playing too */
+@@ -663,6 +777,8 @@ static void one(const case_t *c)
+         case_determinism();
+     else if (!strcmp(c->name, "transport"))
+         case_transport();
++    else if (!strcmp(c->name, "switch"))
++        case_switch();
+     else if (!strcmp(c->name, "live"))
+         case_live();
+     else if (!strcmp(c->name, "mute"))
+@@ -671,6 +787,8 @@ static void one(const case_t *c)
+         case_endless();
+     else if (!strcmp(c->name, "favourites"))
+         case_favourites();
++    else if (!strcmp(c->name, "projects"))
++        case_projects();
+     else
+         case_modes();
+ }
+@@ -685,15 +803,19 @@ int main(int argc, char **argv)
+             cs[n++] = (case_t){"song", ri, len};
+     cs[n++] = (case_t){"determinism", 0, 0};
+     cs[n++] = (case_t){"transport", 0, 0};
++    cs[n++] = (case_t){"switch", 0, 0};
+     cs[n++] = (case_t){"live", 0, 0};
+     cs[n++] = (case_t){"mute", 0, 0};
+     cs[n++] = (case_t){"favourites", 0, 0};
++    cs[n++] = (case_t){"projects", 0, 0};
+     cs[n++] = (case_t){"modes", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+         int st;
+         if (only && strcmp(only, cs[i].name))
+             continue;
++        if (only && argc > 2 && cs[i].a != (uint32_t)atoi(argv[2]))   /* (song N: subgenre N's only) */
++            continue;
+         if (running == 4u) {
+             wait(&st);
+             failed += !WIFEXITED(st) || WEXITSTATUS(st) != 0;
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 38d09de..98515a5 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -87,6 +87,14 @@
+ # VIZZBOX INSTALLER (web/test_vizzbox_installer.mjs, the same way): the Vizzbox's installer over the same units, over
+ #                   Vizz 2.0, Skiff 2.0.1 and a Vizzbox (FM-1_850, v1.0: by its identity) installed only; Vizz 2.0's
+ #                   installer over a Vizzbox the same; Skiff's own page over one (by the version) writes nothing back
++# VIZZBOX (Vizzbox, the browser emulator's device built natively with VIZZBOX=1): tests/producer_test.c (every
++#                   subgenre in every LENGTH, determinism, transport and CC 104..109, live moves, MUTE / SOLO, ENDLESS
++#                   60 min, favourites, the user's projects untouched, VIZZBOX <-> GROOVEBOX), tests/vizzbox_ui.c (the
++#                   screens against their golden), tests/vizzbox_inactive.c (the GROOVEBOX with the producer compiled
++#                   in = without it, bit for bit), tests/vizzbox_compat.c (a unit with favourites through Skiff 2.0.1
++#                   and Vizz 2.0, from git), tests/vizzbox_budget.c (the heaviest drop against Skiff's heavy song),
++#                   tests/vizzbox_fuzz.c (ASan / UBSan); with emcc the one-file Vizzbox in Chromium
++#                   (web/emu/test_vizzbox_emu.mjs). The counter-check: tests/vizzbox_mutants.py (build-vizzbox.sh)
+ # Browser emulator (web/emu, when emcc is there): the firmware in WebAssembly (build/emu) boots, plays keys and MIDI,
+ #                   draws, lights its LEDs, keeps a save across instances, plays a song bit for bit as the same file
+ #                   built with cc (web/emu/native_check.c); the cost of 1 s of a heavy song against real time.
+@@ -275,6 +283,34 @@ if [ -f build/gen/felucca_tables.h ]; then
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_ui" tests/vizzbox_ui.c -lm
+     run "(Vizzbox) the VIZZBOX's screens in every palette, as tests/vizzbox_ui_golden.txt has them" \
+         sh -c "\"$OUT/vizzbox_ui\" > \"$OUT/vizzbox_ui.txt\" && diff tests/vizzbox_ui_golden.txt \"$OUT/vizzbox_ui.txt\""
++    $CC -O2 -ffp-contract=off -w -DVIZZBOX=0 -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_inactive0" tests/vizzbox_inactive.c -lm
++    $CC -O2 -ffp-contract=off -w -DVIZZBOX=1 -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_inactive1" tests/vizzbox_inactive.c -lm
++    run "(Vizzbox) the GROOVEBOX with the producer compiled in plays as Vizz 2.0: audio, USB MIDI and screen bit for bit (a song, keys, knobs, MUTE, MIDI in, STOP)" \
++        sh -c "\"$OUT/vizzbox_inactive0\" > \"$OUT/vizzbox_inactive0.txt\" && \"$OUT/vizzbox_inactive1\" > \"$OUT/vizzbox_inactive1.txt\" && diff \"$OUT/vizzbox_inactive0.txt\" \"$OUT/vizzbox_inactive1.txt\" && cat \"$OUT/vizzbox_inactive1.txt\""
++    $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_budget" tests/vizzbox_budget.c -lm
++    run "(Vizzbox) the heaviest drop (every subgenre, ENERGY and VARIATION 100, three seeds) and with every effect: CPU against Skiff's heavy song, at most 8 voices, none stolen" \
++        "$OUT/vizzbox_budget"
++    # (Vizzbox) a unit with favourites read by Skiff 2.0.1 (the tag v2.0.1) and Vizz 2.0 (its last patch, by its
++    # subject) and back: their trees from git, their devices built natively against this build/gen
++    VZ=$(git log --format=%H --fixed-strings --grep="tests/vizz_mutants.py: the counter-check" v2.0.1..HEAD 2>/dev/null | tail -1)
++    if [ -n "$VZ" ] && git rev-parse -q --verify v2.0.1 >/dev/null; then
++        rm -rf "${OUT:?}/compat"
++        CT="$PWD/$OUT/compat"                      # (absolute: the #include of FELUCCA_WEB is resolved from tests/)
++        mkdir -p "$CT/skiff" "$CT/vizz"
++        git archive v2.0.1 firmware web/emu | tar -x -C "$CT/skiff"
++        git archive "$VZ" firmware web/emu | tar -x -C "$CT/vizz"
++        $CC -O2 -ffp-contract=off -w -DVIZZBOX=1 -Ibuild/gen -Ifirmware/src -o "$CT/vizzbox" tests/vizzbox_compat.c -lm
++        for t in skiff vizz; do
++            $CC -O2 -ffp-contract=off -w "-DFELUCCA_WEB=\"$CT/$t/web/emu/felucca_web.c\"" -Ibuild/gen -I"$CT/$t/firmware/src" \
++                -o "$CT/$t/compat" tests/vizzbox_compat.c -lm
++        done
++        run "(Vizzbox) a unit with favourites: Skiff 2.0.1 boots it, loads, saves, autosaves, the favourites untouched; back on the Vizzbox all there" \
++            sh -c "\"$CT/vizzbox\" make \"$CT/a.nor\" && \"$CT/skiff/compat\" old \"$CT/a.nor\" \"$CT/b.nor\" && \"$CT/vizzbox\" back \"$CT/b.nor\""
++        run "(Vizzbox) the same with Vizz 2.0" \
++            sh -c "\"$CT/vizzbox\" make \"$CT/a.nor\" && \"$CT/vizz/compat\" old \"$CT/a.nor\" \"$CT/c.nor\" && \"$CT/vizzbox\" back \"$CT/c.nor\""
++    else
++        echo "== skip (Vizzbox) favourites read by Skiff 2.0.1 and Vizz 2.0 (no git history with v2.0.1 and Vizz 2.0's patches)"
++    fi
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/midi_control_test" tests/midi_control_test.c -lm
+     run "USB/TRS clock, bend, sustain, ownership and panic recovery" "$OUT/midi_control_test"
+     $CC -O1 -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/digital_test" tests/digital_test.c -lm
+@@ -480,6 +516,10 @@ else
+     run "ASan/UBSan fuzz: the converter's readers (FELUCCA_LEGACY), the same (5000, seed 13)" "$A/fuzz_proj_legacy" 5000 13
+     $SCC -o "$A/fuzz_smp" tests/fuzz_smp.c -lm
+     run "ASan/UBSan fuzz: user sample slot headers -> scan -> SAMPLE / GRAIN / SLICE (1000, seed 17)" "$A/fuzz_smp" 1000 17
++    $SCC -o "$A/vizzbox_fuzz" tests/vizzbox_fuzz.c -lm
++    run "(Vizzbox) ASan/UBSan fuzz: the VIZZBOX's knobs, buttons, keys, favourites, modes, MENU, MIDI in, power cycles (1500 actions, seed 11)" \
++        "$A/vizzbox_fuzz" 1500 11
++    run "(Vizzbox) ASan/UBSan fuzz: the same (1500 actions, seed 12)" "$A/vizzbox_fuzz" 1500 12
+ fi
+ 
+ TB=tests/target_budget.txt                          # ((Vizzbox) a build without the serial console: Vizz 2.0's own
+@@ -524,6 +564,16 @@ else
+         python3 web/make_vizzbox_installer.py build/felucca.fwsc 1.0 "$OUT/vizzbox-installer.html" build/conv/conv.wasm
+     run "(Vizzbox) the installer over Vizz 1.0 / 1.x, Skiff 1.4, a dev build: backup, conversion; over 2.0 and a Vizzbox installed only; Vizz 2.0's over a Vizzbox the same" \
+         node web/test_vizzbox_installer.mjs "$OUT/vizzbox-installer.html" tests/vizz10_unit.json build/conv/conv.wasm "$OUT/vizz-installer.html"
++    mkdir -p build/emu_vizzbox
++    FV=$(sed -n 's/^#define FELUCCA_VERSION "\([^"]*\)".*/\1/p' firmware/src/felucca.c)
++    run "(Vizzbox) the browser emulator with the producer (VIZZBOX=1 -> build/emu_vizzbox/felucca.wasm)" \
++        emcc -O2 -ffp-contract=off -std=gnu99 -w -DVIZZBOX=1 "-DFELUCCA_VERSION=\"$FV\"" -Ibuild/gen -Ifirmware/src \
++        --no-entry -sSTANDALONE_WASM -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 -sFILESYSTEM=0 \
++        -o build/emu_vizzbox/felucca.wasm web/emu/felucca_web.c
++    run "(Vizzbox) the one-file Vizzbox in the browser (web/emu/make_vizzbox_emu.py)" \
++        python3 web/emu/make_vizzbox_emu.py build/emu_vizzbox/felucca.wasm "${FV#v}" "$OUT/vizzbox-emu.html"
++    run "(Vizzbox) it in Chromium from the disk: switched on, the VIZZBOX, KNOB 1, PLAY (the screen, the audio), stop" \
++        node web/emu/test_vizzbox_emu.mjs "$OUT/vizzbox-emu.html"
+ fi
+ 
+ [ $fail -eq 0 ] && echo "ALL HOST TESTS PASSED" || { echo "HOST TESTS FAILED"; exit 1; }
+diff --git a/tests/vizzbox_budget.c b/tests/vizzbox_budget.c
+new file mode 100644
+index 0000000..ed9965e
+--- /dev/null
++++ b/tests/vizzbox_budget.c
+@@ -0,0 +1,232 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) The cost of the heaviest drop (BRIEF-VIZZBOX.md 7: "im Budget, auch im schwersten Genre-Drop mit allen
++ * Effekten (dafür einen Messfall anlegen)"). tests/target_budget.py holds every render loop to its budget, statically;
++ * what plays decides how many of them run. Here, on the browser emulator's device built natively (VIZZBOX=1): every
++ * subgenre's first DROP at ENERGY 100 and VARIATION 100 (three seeds), its CPU time for 8 s of audio, against the
++ * same for Skiff's heavy song (web/emu/felucca_web.c web_test_heavy: three POLY tracks holding four-note chords over
++ * the budget of 8 voices, drums; what emu_test.mjs holds to real time in the browser) on the same host; a form without
++ * a DROP (A: AMBIENT, DUB, DUB TECHNO) its first GROOVE. Each case on a fresh device (fork), its CPU time the
++ * thread's. The five heaviest again, each beside the heavy song (in turn, three times each, the least of each: the
++ * host's speed drifts, so a ratio comes from measurements side by side); the heaviest of them then with every effect
++ * at once (each track's DRIVE, CHORUS, DELAY and REVERB sends all the way up, the FX layer's REPEAT 1/32, GATE, DUB
++ * and FLANGE held) beside the heavy song with the same. In every drop at most 8 voices and none stolen.
++ *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_budget.c -lm
++ *   OUT [LIMIT]       fails if the heaviest drop costs more than LIMIT (default 1.10: the host's timing, as
++ *                     target_budget.py's +10 %) x the heavy song, or with every effect x the heavy song with them */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <stdlib.h>
++#include <sys/wait.h>
++#include <time.h>
++#include <unistd.h>
++
++static uint32_t last104, maxv;
++static uint32_t genre_of(int ri)                    /* subgenre ri (VB_SUB's order) -> its genre */
++{
++    uint32_t g = 0;
++    while (g < 9u && (uint32_t)ri >= vb_sub0(g + 1u))
++        g++;
++    return g;
++}
++static double cpu_s(void)
++{
++    struct timespec t;
++    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
++    return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
++}
++static void drain(void)
++{
++    while (mo_r != mo_w) {
++        uint32_t pkt = midi_out_q[mo_r % MQ];
++        mo_r++;
++        if (((pkt >> 8) & 0xFFu) == 0xBFu && ((pkt >> 16) & 0x7Fu) == 104u)
++            last104 = (pkt >> 24) & 0x7Fu;
++    }
++}
++static uint32_t voices(void)
++{
++    uint32_t k, i, n = 0;
++    for (k = 0; k < NTRK; k++)
++        for (i = 0; i < NVOICE; i++)
++            n += trk[k].v[i].active && trk[k].v[i].stage != 4u;
++    return n;
++}
++static void run_frames(uint32_t n)
++{
++    uint32_t k, v;
++    for (k = 0; k < n; k += 128u) {
++        web_render(n - k < 128u ? n - k : 128u);
++        drain();
++        if ((v = voices()) > maxv)
++            maxv = v;
++    }
++}
++static void press(uint32_t b)
++{
++    web_buttons(1u << b);
++    run_frames(1764);
++    web_buttons(0);
++    run_frames(1764);
++}
++static void boot(void)
++{
++    web_nor_erase();
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    run_frames(44100);
++}
++/* every effect at once: the sends up, the FX layer's REPEAT 1/32, GATE, DUB, FLANGE held */
++static void all_fx(void)
++{
++    static const uint32_t SENDS[] = {P_DIST, P_CHOR, P_DLY, P_REV};
++    uint32_t k, s;
++    for (k = 0; k < NTRK; k++)
++        for (s = 0; s < 4u; s++)
++            trk[k].p[SENDS[s]] = (int16_t)param_desc_of(eng_idx(trk[k].eng_req), SENDS[s])->max;
++    perf_press(PF_R32, 1);
++    perf_press(PF_GATE, 1);
++    perf_press(PF_DUB, 1);
++    perf_press(PF_FLG, 1);
++}
++
++typedef struct { int ri, seed, fx; double cost; uint32_t bpm, maxv, found, kills, want; } m_t;
++/* one case: ri < 0 the heavy song in the GROOVEBOX; else subgenre ri's first DROP. cost: CPU s per s of audio */
++static void one(m_t *m)
++{
++    double t0;
++    uint32_t i;
++    boot();
++    if (m->ri < 0) {
++        vb_mode_set(0);
++        run_frames(4410);
++        web_test_heavy();
++        press(B_PLAY);
++        run_frames(2u * 44100u);
++        m->found = 1;
++        if (m->fx)
++            all_fx();
++    } else {
++        vb.k.genre = (uint8_t)genre_of(m->ri);
++        vb.k.sub = (uint8_t)((uint32_t)m->ri - vb_sub0(vb.k.genre));
++        vb.k.seed = (uint16_t)m->seed;
++        vb.k.energy = 100;
++        vb.k.var = 100;
++        vb.k.len = VL_NORMAL;
++        vb.k.bpm = 0;
++        vb_knob_song();
++        press(B_PLAY);
++        for (i = 0, m->want = 2u; i < vb.nplan; i++)  /* (a form without a DROP, ambient's: its first GROOVE) */
++            if (vb.plan[i].type == VS_DROP)
++                m->want = 4u;
++        for (i = 0; i < 6000u && last104 != m->want; i++)   /* (to its one, at most 10 min) */
++            run_frames(4410);
++        m->found = last104 == m->want;
++        if (m->fx)
++            all_fx();
++    }
++    m->bpm = (uint32_t)song.g[G_BPM];
++    maxv = 0;
++    voice_kills = 0;
++    t0 = cpu_s();
++    run_frames(8u * 44100u);
++    m->cost = (cpu_s() - t0) / 8.0;
++    m->maxv = maxv;
++    m->kills = voice_kills;
++}
++static void measure(m_t *m, int reps);
++/* a and b measured in turn, three times each, the least of each */
++static void measure_pair(m_t *a, m_t *b)
++{
++    m_t x, y;
++    int r;
++    for (r = 0; r < 3; r++) {
++        x = *a;
++        y = *b;
++        measure(&x, 1);
++        measure(&y, 1);
++        if (!r || x.cost < a->cost)
++            *a = x;
++        if (!r || y.cost < b->cost)
++            *b = y;
++    }
++}
++static void measure(m_t *m, int reps)               /* reps times, each on a fresh device: the least */
++{
++    int p[2], r;
++    double best = 1e9;
++    m_t o;
++    for (r = 0; r < reps; r++) {
++        if (pipe(p))
++            exit(2);
++        if (!fork()) {
++            close(p[0]);
++            one(m);
++            if (write(p[1], m, sizeof *m) != (ssize_t)sizeof *m)
++                _exit(2);
++            _exit(0);
++        }
++        close(p[1]);
++        if (read(p[0], &o, sizeof o) == (ssize_t)sizeof o && o.cost < best) {
++            best = o.cost;
++            *m = o;
++        }
++        close(p[0]);
++        wait(NULL);
++    }
++}
++
++int main(int argc, char **argv)
++{
++    static const int SEEDS[] = {0x5EED, 0x0B0B, 0x7A11};
++    static m_t all[108];
++    double limit = argc > 1 ? atof(argv[1]) : 1.10, rtop = 0;
++    m_t ref = {-1, 0, 0, 0, 0, 0, 0, 0, 0}, refx = ref, top = ref, fx;
++    int ri, s, i, j, n = 0, bad = 0;
++    refx.fx = 1;
++    measure(&ref, 3);
++    measure(&refx, 3);
++    printf("budget: Skiff's heavy song (GROOVEBOX): %.4f s CPU per s of audio (%u voices); with every effect %.4f\n",
++           ref.cost, ref.maxv, refx.cost);
++    for (ri = 0; ri < 36; ri++)
++        for (s = 0; s < 3; s++) {
++            m_t *m = &all[n++];
++            *m = (m_t){ri, SEEDS[s], 0, 0, 0, 0, 0, 0, 0};
++            measure(m, 1);
++            if (!m->found || m->maxv > 8u || m->kills) {
++                printf("budget: %-11s / %-14s seed %04X: %s  FAIL\n", VB_GNAME[genre_of(ri)], VB_SNAME[ri], m->seed,
++                       !m->found ? "no DROP (GROOVE) within 10 minutes" : m->maxv > 8u ? "more than 8 voices" : "voices stolen");
++                bad++;
++                m->cost = 0;
++                continue;
++            }
++            if (s == 0 || getenv("VERBOSE"))
++                printf("budget: %-11s / %-14s seed %04X %3u BPM: the %-6s %.2f x the heavy song, at most %u voices\n",
++                       VB_GNAME[genre_of(ri)], VB_SNAME[ri], m->seed, m->bpm, m->want == 4u ? "DROP" : "GROOVE",
++                       m->cost / ref.cost, m->maxv);
++        }
++    for (i = 0; i < 5; i++) {                       /* the five heaviest, each beside the heavy song */
++        int k = 0;
++        m_t r = ref;
++        for (j = 1; j < n; j++)
++            if (all[j].cost > all[k].cost)
++                k = j;
++        fx = all[k];
++        all[k].cost = 0;
++        measure_pair(&fx, &r);
++        if (fx.cost / r.cost > rtop) {
++            rtop = fx.cost / r.cost;
++            top = fx;
++        }
++    }
++    fx = top;
++    fx.fx = 1;
++    measure_pair(&fx, &refx);
++    printf("budget: the heaviest DROP: %s / %s seed %04X %u BPM, %.2f x the heavy song (%u voices, none stolen)  %s\n",
++           VB_GNAME[genre_of(top.ri)], VB_SNAME[top.ri], top.seed, top.bpm, rtop, top.maxv, rtop <= limit ? "ok" : "FAIL");
++    printf("budget: .. with every effect (sends up, REPEAT 1/32, GATE, DUB, FLANGE held): %.2f x the heavy song with them  %s\n",
++           fx.cost / refx.cost, fx.cost <= limit * refx.cost ? "ok" : "FAIL");
++    bad += rtop > limit;
++    bad += fx.cost > limit * refx.cost;
++    return bad ? 1 : 0;
++}
+diff --git a/tests/vizzbox_compat.c b/tests/vizzbox_compat.c
+new file mode 100644
+index 0000000..28d4cd3
+--- /dev/null
++++ b/tests/vizzbox_compat.c
+@@ -0,0 +1,161 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) A unit with the Vizzbox's favourites, read by Vizz 2.0 and Skiff 2.0.1 (BRIEF-VIZZBOX.md 9: "Vizz 2.0 /
++ * Skiff 2.0.1 lesen ein Gerät mit Favoriten-Objekt ohne Fehler"), and back. The browser emulator's device
++ * (web/emu/felucca_web.c) of each, built natively, on the same 1 MiB flash image:
++ *   make OUT      (this tree, VIZZBOX=1) a new unit: the music saved in slot 1 (COMPAT ONE), the GROOVEBOX's
++ *                autosave, sixteen favourites written and one changed again (both copies, B 0x96000 and A 0x95000)
++ *   old IN OUT   (Vizz 2.0's or Skiff 2.0.1's tree, FELUCCA_WEB its felucca_web.c) that flash booted: slot 1 there
++ *                by its name and loaded as saved, another tempo saved in slot 2 (OLD SAVE), PLAY, the autosave, a setting
++ *                saved; the favourites' two sectors byte for byte as before
++ *   back IN      (this tree) that flash: the sixteen favourites as written, slots 1 and 2 by their names, each as
++ *                saved (slot 2 as the old firmware saved it)
++ *   cc -O2 -ffp-contract=off -w -DVIZZBOX=1 -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_compat.c -lm
++ *   cc -O2 -ffp-contract=off -w '-DFELUCCA_WEB="TREE/web/emu/felucca_web.c"' -Ibuild/gen -ITREE/firmware/src ... */
++#ifdef FELUCCA_WEB
++#include FELUCCA_WEB
++#else
++#include "../web/emu/felucca_web.c"
++#endif
++
++static int fails;
++static void check(const char *what, int c)
++{
++    printf("compat: %-96s %s\n", what, c ? "ok" : "FAIL");
++    fails += !c;
++}
++static void ms(uint32_t n)
++{
++    uint32_t f = n * 441u / 10u, k;
++    for (k = 0; k < f; k += 128u)
++        web_render(f - k < 128u ? f - k : 128u);
++}
++static int nor_io(const char *path, int write)
++{
++    FILE *f = fopen(path, write ? "wb" : "rb");
++    size_t n;
++    if (!f)
++        return 1;
++    n = write ? fwrite(nor, 1, sizeof nor, f) : fread(nor, 1, sizeof nor, f);
++    fclose(f);
++    return n != sizeof nor;
++}
++/* the music the test saves: T1 a bassline, its notes 36 + 4 * k, at `bpm` (the project's; a pattern is the pattern
++ * pool's, shared by the projects that name it: Skiff's own way) */
++static void music(uint32_t bpm)
++{
++    uint32_t i;
++    for (i = 0; i < 16u; i++)
++        memset(&trk[0].step[i], 0, sizeof trk[0].step[i]);
++    for (i = 0; i < 16u; i += 2u)
++        trk[0].step[i] = (step_t){{(uint8_t)(36u + 4u * (i / 2u % 3u))}, 1, ST_NOTE, 0, 100};
++    song.g[G_BPM] = (int16_t)bpm;
++}
++static int music_is(uint32_t bpm)
++{
++    return trk[0].step[0].n == 1u && trk[0].step[0].note[0] == 36 && trk[0].step[2].note[0] == 40 &&
++           trk[0].step[4].note[0] == 44 && trk[0].step[6].note[0] == 36 && !trk[0].step[1].n && song.g[G_BPM] == (int16_t)bpm;
++}
++static int name_is(uint32_t slot, const char *want)
++{
++    char b[PROJ_NAME_LEN + 1];
++    return project_name(slot, b) && !strcmp(b, want);
++}
++static uint32_t fav_hash(void)
++{
++    uint32_t h = 2166136261u, i;
++    for (i = 0x95000u; i < 0x97000u; i++)
++        h = (h ^ nor[i]) * 16777619u;
++    return h;
++}
++#if VIZZBOX
++static void favs_want(vb_song_t *f)
++{
++    uint32_t i;
++    for (i = 0; i < VB_NFAV; i++)
++        f[i] = (vb_song_t){(uint8_t)(i % 10u), 0, (uint8_t)(10u + 5u * i), (uint8_t)(90u - 5u * i), (uint8_t)(i % 3u),
++                           (uint8_t)(i & 1u ? 0u : 100u + i), (uint16_t)(0x1000u + i)};
++    f[3].seed = 0xBEEFu;
++}
++#endif
++
++int main(int argc, char **argv)
++{
++    const char *mode = argc > 1 ? argv[1] : "";
++    web_nor_erase();
++    if (!strcmp(mode, "old") || !strcmp(mode, "back"))
++        if (argc < 3 || nor_io(argv[2], 0)) {
++            printf("compat: no flash image %s\n", argc > 2 ? argv[2] : "");
++            return 2;
++        }
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    ms(1500);
++#if VIZZBOX
++    if (!strcmp(mode, "make") && argc > 2) {
++        vb_song_t want[VB_NFAV];
++        favs_want(want);
++        vb_mode_set(0);                             /* the GROOVEBOX: the music saved, the autosave */
++        ms(300);
++        music(120);
++        check("make: the music saved in slot 1 (COMPAT ONE)", !project_save_as(0, "COMPAT ONE"));
++        ms(12000);
++        vb_mode_set(1);
++        ms(300);
++        memcpy(vb_fav.f, want, sizeof vb_fav.f);
++        vb_fav.f[3].seed = 0x1003u;
++        vb_fav_dirty = 1;                           /* (the first copy, A) */
++        ms(300);
++        vb_fav.f[3].seed = 0xBEEFu;
++        vb_fav_dirty = 1;                           /* (one changed again: B) */
++        ms(300);
++        check("make: both copies written (A 0x95000, B 0x96000), the second (sequence 2) the newer",
++              !memcmp(nor + 0x95000u, "VBF1", 4) && !memcmp(nor + 0x96000u, "VBF1", 4) && vb_fav.seq == 2u);
++        vb_mode_set(0);
++        ms(500);
++        printf("compat: the favourites' sectors %08x\n", fav_hash());
++        return nor_io(argv[2], 1) || fails;
++    }
++    if (!strcmp(mode, "back")) {
++        vb_song_t want[VB_NFAV];
++        favs_want(want);
++        check("back: the sixteen favourites as written (the newer copy, sequence 2)",
++              vb_fav.magic == VB_FMAGIC && !memcmp(vb_fav.f, want, sizeof want) && vb_fav.seq == 2u);
++        check("back: slot 1 COMPAT ONE and slot 2 OLD SAVE by their names", name_is(0, "COMPAT ONE") && name_is(1, "OLD SAVE"));
++        project_load(1);
++        ms(300);
++        check("back: slot 2 loaded as the old firmware saved it (133 BPM)", music_is(133));
++        project_load(0);
++        ms(300);
++        check("back: slot 1 as the Vizzbox saved it (120 BPM)", music_is(120));
++        return fails ? 1 : 0;
++    }
++#else
++    if (!strcmp(mode, "old") && argc > 3) {
++        uint8_t fav[0x2000];
++        memcpy(fav, nor + 0x95000u, sizeof fav);
++        check("old: booted on the Vizzbox's flash; slot 1 there by its name", name_is(0, "COMPAT ONE"));
++        project_load(0);
++        ms(500);
++        check("old: slot 1 loaded as the Vizzbox saved it (120 BPM)", music_is(120));
++        song.g[G_BPM] = 133;
++        check("old: a change (133 BPM) saved in slot 2 (OLD SAVE)", !project_save_as(1, "OLD SAVE"));
++        web_buttons(1u << B_PLAY);
++        ms(60);
++        web_buttons(0);
++        ms(4000);
++        web_buttons(1u << B_PLAY);
++        ms(60);
++        web_buttons(0);
++        settings.palette = (uint8_t)((settings.palette + 1u) % NPALETTES);
++        settings_save();
++        ms(15000);                                  /* (the autosave, the settings written) */
++        check("old: the favourites' two sectors byte for byte as before (none read, written or erased)",
++              !memcmp(fav, nor + 0x95000u, sizeof fav));
++        printf("compat: the favourites' sectors %08x\n", fav_hash());
++        return nor_io(argv[3], 1) || fails;
++    }
++#endif
++    printf("usage: vizzbox_compat make OUT | old IN OUT | back IN\n");
++    return 2;
++}
+diff --git a/tests/vizzbox_fuzz.c b/tests/vizzbox_fuzz.c
+new file mode 100644
+index 0000000..7c8cb10
+--- /dev/null
++++ b/tests/vizzbox_fuzz.c
+@@ -0,0 +1,229 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) Fuzz (BRIEF-VIZZBOX.md 9): the VIZZBOX's controls at random over a long time, on the browser emulator's
++ * device (web/emu/felucca_web.c, VIZZBOX=1), built with ASan / UBSan in tests/run_tests.sh. Each action, after a
++ * random 20 .. 800 ms: a knob turned (K1..K4, SELECT, ALGO, PRESET, by 1 .. 12 either way), a button (PLAY, REC,
++ * FX, ARP, SEQ, OCT-, OCT+), HOME + PLAY (VIZZBOX <-> GROOVEBOX), SAVE or GLO held with a white key (a favourite), GLO
++ * with a black key (SOLO), black keys tapped or held (MUTE, cut), white keys played, MIDI in, the MENU opened and a
++ * knob turned there, a power cycle on the same flash. After each: the knobs' song in range (genre, subgenre, energy,
++ * variation, length), the plan within its ring, the tempo in range, the mode 0 or 1. At the end: stopped, every key
++ * let go, 12 s later every voice free and no note left on on USB MIDI (each note-on its note-off); a fresh device on
++ * that flash boots and plays (with a clock from outside where the fuzzing left MENU > MIDI > CLOCK on USB or TRS).
++ *   cc -O1 -g -fsanitize=address,undefined ... -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_fuzz.c -lm
++ *   OUT ACTIONS SEED */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <stdlib.h>
++
++static uint32_t fz, fails, held_keys, held_btn;
++static uint32_t st_play, st_switch, st_boot, st_secs, st_style;   /* what it went through */
++static uint8_t on[16][128];                         /* USB MIDI: notes on (channel, pitch) */
++static uint32_t rnd(uint32_t n)
++{
++    fz = fz * 1664525u + 1013904223u;
++    return (fz >> 8) % n;
++}
++static void fail(const char *what, uint32_t a, uint32_t b)
++{
++    printf("vizzbox_fuzz: FAIL %s (%u, %u)\n", what, a, b);
++    fails++;
++}
++static void drain(void)
++{
++    while (mo_r != mo_w) {
++        uint32_t pkt = midi_out_q[mo_r % MQ], st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
++        mo_r++;
++        if ((st & 0xF0u) == 0x90u && d2)
++            on[st & 15u][d1] = 1;
++        else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u)
++            on[st & 15u][d1] = 0;
++        else if ((st & 0xF0u) == 0xB0u && d1 == 123u)
++            memset(on[st & 15u], 0, 128);
++    }
++}
++static void ms(uint32_t n)
++{
++    uint32_t f = n * 441u / 10u, k;
++    for (k = 0; k < f; k += 128u) {
++        web_render(f - k < 128u ? f - k : 128u);
++        drain();
++        st_play += vb.own && song.playing;
++    }
++}
++/* an external clock (MENU > MIDI > CLOCK USB or TRS, as the fuzzing may have left it): Start, then 24 a beat at 120
++ * BPM for n ms */
++static void ext_clock(uint32_t n)
++{
++    uint32_t t;
++    for (t = 0; t < n * 24u; t += 500u) {           /* (every 1/24 of a 500 ms beat) */
++        uint32_t b = t ? 0xF8u : 0xFAu;
++        if (song.g[G_CLOCK] == 1)
++            midi_enqueue(0xFu | b << 8, 1u);
++        else
++            um_byte((uint8_t)b);
++        web_render(919);                            /* (20.8 ms) */
++        drain();
++    }
++}
++static uint32_t key_of(int black, uint32_t place)
++{
++    uint32_t k;
++    for (k = 0; k < 27u; k++)
++        if (key_black(k) == black && key_place(k) == place)
++            return k;
++    return 0;
++}
++static void invariants(uint32_t i)
++{
++    static uint32_t sec, style;
++    if (vb.own && song.playing && vb.sec != sec)
++        st_secs++;
++    if (vb.own && song.playing && (uint32_t)(vb.s.genre * 8u + vb.s.sub) != style)
++        st_style++;
++    sec = vb.sec;
++    style = vb.s.genre * 8u + vb.s.sub;
++    if (vb.k.genre >= 10u || vb.k.sub >= VB_NSUB[vb.k.genre % 10u])
++        fail("the knobs' style out of range", vb.k.genre, vb.k.sub);
++    if (vb.k.energy > 100u || vb.k.var > 100u || vb.k.len > VL_ENDLESS)
++        fail("the knobs' energy, variation or length out of range", i, vb.k.energy);
++    if (vb.nplan > VB_PLAN || (vb.own && song.playing && vb.sec >= vb.nplan + VB_PLAN))
++        fail("the plan out of its ring", vb.nplan, vb.sec);
++    if (song.g[G_BPM] < 20 || song.g[G_BPM] > 300)
++        fail("the tempo out of range", i, (uint32_t)song.g[G_BPM]);
++    if (vb_mode > 1u)
++        fail("the mode", i, vb_mode);
++}
++static void boot(void)
++{
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    memset(on, 0, sizeof on);
++    held_keys = held_btn = 0;
++    ms(1300);
++}
++
++int main(int argc, char **argv)
++{
++    static const uint32_t ENCS[] = {EN_K1, EN_K2, EN_K3, EN_K4, EN_SELECT, EN_ALGO, EN_PRESET};
++    static const uint32_t BTNS[] = {B_PLAY, B_REC, B_FX, B_ARP, B_SEQ, B_OCTDN, B_OCTUP};
++    uint32_t n = argc > 1 ? (uint32_t)atoi(argv[1]) : 2000u, i, a, k, v, ch;
++    fz = argc > 2 ? (uint32_t)atoi(argv[2]) : 1u;
++    web_nor_erase();
++    boot();
++    for (i = 0; i < n; i++) {
++        a = rnd(100);
++        if (a < 30)
++            web_enc(ENCS[rnd(7)], (int32_t)(rnd(12) + 1u) * (rnd(2) ? 1 : -1));
++        else if (a < 45) {
++            web_buttons(1u << BTNS[rnd(7)] | held_btn);
++            ms(40);
++            web_buttons(held_btn);
++        } else if (a < 49) {                        /* HOME + PLAY: the other mode */
++            web_buttons(1u << B_HOME);
++            ms(60);
++            web_buttons(1u << B_HOME | 1u << B_PLAY);
++            ms(60);
++            web_buttons(0);
++            held_btn = 0;
++            st_switch++;
++        } else if (a < 55) {                        /* SAVE or GLO held, a white key: a favourite */
++            held_btn = 1u << (rnd(2) ? B_SAVE : B_GLO);
++            web_buttons(held_btn);
++            ms(80);
++            k = key_of(0, rnd(16));
++            web_keys(1u << k | held_keys);
++            ms(60);
++            web_keys(held_keys);
++            ms(40);
++            if (rnd(2)) {
++                held_btn = 0;
++                web_buttons(0);
++            }
++        } else if (a < 70) {                        /* black keys: a tap, a hold, with GLO */
++            k = key_of(1, rnd(6));
++            if (rnd(3) == 0) {
++                held_btn = 1u << B_GLO;
++                web_buttons(held_btn);
++            }
++            held_keys ^= 1u << k;
++            web_keys(held_keys);
++            ms(rnd(2) ? 60 : 900);
++            if (rnd(2)) {
++                held_keys &= ~(1u << k);
++                web_keys(held_keys);
++            }
++        } else if (a < 82) {                        /* white keys: the lead */
++            k = key_of(0, rnd(16));
++            held_keys ^= 1u << k;
++            web_keys(held_keys);
++        } else if (a < 88) {                        /* MIDI in */
++            ch = rnd(16);
++            v = 36u + rnd(48);
++            web_midi(0x90u | ch, v, 1u + rnd(127));
++            ms(rnd(400));
++            web_midi(0x80u | ch, v, 0);
++        } else if (a < 91) {                        /* everything let go */
++            held_keys = held_btn = 0;
++            web_keys(0);
++            web_buttons(0);
++        } else if (a < 94) {                        /* the MENU: opened (HOME held), a knob there, closed */
++            web_buttons(1u << B_HOME);
++            ms(900);
++            web_buttons(0);
++            ms(100);
++            web_enc(ENCS[rnd(7)], (int32_t)rnd(5) - 2);
++            ms(200);
++            web_buttons(1u << B_HOME);
++            ms(60);
++            web_buttons(0);
++        } else if (a < 95) {                        /* a power cycle, the flash kept */
++            boot();
++            st_boot++;
++        } else
++            ms(2000 + rnd(20000));                  /* (a while: sections go by) */
++        ms(20 + rnd(780));
++        invariants(i);
++    }
++    web_keys(0);
++    web_buttons(0);
++    ms(200);
++    if (song.playing) {
++        web_buttons(1u << B_PLAY);
++        ms(40);
++        web_buttons(0);
++    }
++    ms(12000);
++    for (k = 0, v = 0; k < NTRK; k++)
++        for (i = 0; i < NVOICE; i++)
++            v += trk[k].v[i].active && trk[k].v[i].stage != 4u;
++    if (v)
++        fail("voices still sounding 12 s after STOP", v, 0);
++    for (ch = 0; ch < 16u; ch++)
++        for (k = 0; k < 128u; k++)
++            if (on[ch][k])
++                fail("a note left on on USB MIDI (channel, pitch)", ch + 1u, k);
++    boot();                                         /* a fresh device on the same flash */
++    if (vb_mode)
++        web_buttons(1u << B_PLAY);
++    else {
++        web_buttons(1u << B_HOME);
++        ms(60);
++        web_buttons(1u << B_HOME | 1u << B_PLAY);
++        ms(60);
++        web_buttons(0);
++        ms(200);
++        web_buttons(1u << B_PLAY);
++    }
++    ms(40);
++    web_buttons(0);
++    if (song.g[G_CLOCK])
++        ext_clock(6000);                            /* (the fuzzing left CLOCK on USB or TRS: a clock from outside) */
++    else
++        ms(6000);
++    if (!song.playing || !vb.own)
++        fail("a fresh device on that flash: the VIZZBOX does not play", song.playing, vb.own);
++    printf("vizzbox_fuzz: %u actions (seed %u): the producer playing %u s, %u sections, %u styles, %u mode switches, "
++           "%u power cycles, favourites written %u times; %u failed\n", n, argc > 2 ? (uint32_t)atoi(argv[2]) : 1u,
++           st_play * 128u / 44100u, st_secs, st_style, st_switch, st_boot, vb_fav.magic == VB_FMAGIC ? vb_fav.seq : 0u, fails);
++    return fails ? 1 : 0;
++}
+diff --git a/tests/vizzbox_inactive.c b/tests/vizzbox_inactive.c
+new file mode 100644
+index 0000000..ba9bedd
+--- /dev/null
++++ b/tests/vizzbox_inactive.c
+@@ -0,0 +1,104 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) The GROOVEBOX with the producer compiled in plays as Vizz 2.0 does (BRIEF-VIZZBOX.md 9: "GROOVEBOX,
++ * Produzent nicht aktiv"): the browser emulator's device (web/emu/felucca_web.c) built twice, VIZZBOX 0 (Skiff's
++ * sources as Vizz 2.0 builds them: the hooks empty) and VIZZBOX 1 (the producer and its screen in, the unit in the
++ * GROOVEBOX), each driven through the same gestures: native_check.c's heavy song played, keys, a knob, a track's
++ * MUTE on the black keys, MIDI in, STOP. Each scene's audio (16-bit, both channels), what went out on USB MIDI (notes,
++ * CC 102, CC 103, Start / Stop, the clock) and the screen hashed; tests/run_tests.sh compares the two builds' lines.
++ *   cc -O2 -ffp-contract=off -w [-DVIZZBOX=1] -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_inactive.c -lm */
++#include "../web/emu/felucca_web.c"
++#include <math.h>
++
++static uint32_t ahash, mhash, nmidi;
++static void drain(void)
++{
++    while (mo_r != mo_w) {
++        uint32_t pkt = midi_out_q[mo_r % MQ];
++        mo_r++;
++        mhash = (mhash ^ pkt) * 16777619u;
++        nmidi++;
++    }
++}
++static void ms(uint32_t n)                          /* the device runs n ms, in 128-frame calls */
++{
++    uint32_t f = n * 441u / 10u, k, i;
++    for (k = 0; k < f; k += 128u) {
++        uint32_t m = f - k < 128u ? f - k : 128u;
++        web_render(m);
++        for (i = 0; i < m; i++) {
++            int32_t s = (int32_t)lrintf(out_l[i] * 32767.0f) * 3 + (int32_t)lrintf(out_r[i] * 32767.0f);
++            ahash = (ahash ^ (uint32_t)s) * 16777619u;
++        }
++        drain();
++    }
++}
++static void scene(const char *name)
++{
++    uint32_t h = 2166136261u, i;
++    for (i = 0; i < 240u * 240u; i++)
++        h = (h ^ web_fb[i]) * 16777619u;
++    printf("inactive: %-34s audio %08x  midi %08x (%5u)  screen %08x\n", name, ahash, mhash, nmidi, h);
++    ahash = mhash = 2166136261u;
++    nmidi = 0;
++}
++static void press(uint32_t labels)
++{
++    web_buttons(labels);
++    ms(60);
++    web_buttons(0);
++    ms(60);
++}
++static uint32_t key_of(int black, uint32_t place)
++{
++    uint32_t k;
++    for (k = 0; k < 27u; k++)
++        if (key_black(k) == black && key_place(k) == place)
++            return k;
++    return 0;
++}
++
++int main(void)
++{
++    ahash = mhash = 2166136261u;
++    web_nor_erase();
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++#if VIZZBOX
++    CPU2_BYTE |= VB_MODE_BIT;                       /* (the unit in the GROOVEBOX, as one switched there before) */
++    vb_mode = 0;
++    ui.force = 1;
++#endif
++    ms(1500);
++    scene("boot, the splash, HOME");
++    web_test_heavy();
++    press(1u << B_PLAY);
++    ms(8000);
++    scene("the heavy song, 8 s");
++    web_keys(1u << key_of(0, 3));                   /* a white key: the selected track's note */
++    ms(400);
++    web_keys(1u << key_of(0, 3) | 1u << key_of(0, 5));
++    ms(400);
++    web_keys(0);
++    ms(1200);
++    scene("white keys over it");
++    web_enc(EN_K1, 6);
++    ms(300);
++    web_enc(EN_K2, -4);
++    ms(1500);
++    scene("knobs 1 and 2 turned");
++    web_keys(1u << key_of(1, 1));                   /* a black key tapped: T2's MUTE (CC 103) */
++    ms(80);
++    web_keys(0);
++    ms(2000);
++    scene("a black key: T2 muted");
++    web_midi(0x90u, 60, 100);                       /* MIDI in on channel 1: a note into the selected track */
++    ms(500);
++    web_midi(0x80u, 60, 0);
++    ms(1500);
++    scene("MIDI in");
++    press(1u << B_PLAY);
++    ms(3000);
++    scene("STOP, the tails");
++    return 0;
++}
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+new file mode 100644
+index 0000000..2eb7737
+--- /dev/null
++++ b/tests/vizzbox_mutants.py
+@@ -0,0 +1,212 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++"""(Vizzbox) The counter-check (BRIEF-VIZZBOX.md 9): each deliberate fault in the producer, its screen or its installer
++must make its tests fail, as tests/vizz_mutants.py does for Vizz 2.0's (which stays and must still catch all of
++its own). Run from the tree after ./build.sh (build/gen) and, for the installer's faults, with the installers and
++conv.wasm as tests/run_tests.sh makes them (build/host/vizzbox-installer.html, build/host/vizz-installer.html,
++build/conv/conv.wasm):
++
++  python3 tests/vizzbox_mutants.py [--no-installer] [--only TEXT]     (--only: the faults whose words hold TEXT)
++
++Each fault is put into a copy of the sources in a scratch folder, the test that should see it built from that copy
++and run (tests/producer_test.c with the case named, tests/vizzbox_inactive.c both ways, tests/vizzbox_ui.c against
++its golden); the report lists the checks that failed. A fault none fails is a hole in the tests: the run fails."""
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++P, ISR, UI, PRJ = "producer.c", "producer_isr.c", "ui_vizzbox.c", "project.c"
++# (what, file, [(old, new), ...], test): test ("producer", CASE[, SUBGENRE]), ("inactive",) or ("ui",)
++FAULTS = [
++    ("determinism: a song depends on the songs played before it", P, [
++        ("static void vb_stream(uint32_t what, uint32_t a, uint32_t b)\n{\n"
++         "    vb_r = vb_hash((uint32_t)vb.s.seed * 0x9E3779B1u ^ vb_hash(what << 24 ^ a << 12 ^ b)) | 1u;",
++         "static uint32_t vb_songs;\nstatic void vb_stream(uint32_t what, uint32_t a, uint32_t b)\n{\n"
++         "    vb_r = vb_hash((uint32_t)vb.s.seed * 0x9E3779B1u ^ vb_hash(what << 24 ^ a << 12 ^ b) ^ vb_songs) | 1u;"),
++        ("    vb.s = vb.k;\n    vb_song();\n    vb_load();", "    vb.s = vb.k;\n    vb_songs++;\n    vb_song();\n    vb_load();")],
++     ("producer", "favourites")),
++    ("determinism: the seed left out (another seed, the same song)", P, [
++        ("vb_hash((uint32_t)vb.s.seed * 0x9E3779B1u ^", "vb_hash(0x5EEDu * 0x9E3779B1u ^"),
++        ("(vb_hash(s->seed ^ 0x51u) %", "(vb_hash(0x5EEDu ^ 0x51u) %")],
++     ("producer", "determinism")),
++    ("CC 104 .. 109 a 1/16 late (on the bar's second step)", ISR, [
++        ("        if (!s || vb_out != o || vb_resend) {", "        if (s == 1u || vb_out != o || vb_resend) {")],
++     ("producer", "song", "0")),
++    ("CC 104 never sent (the six from 105 on)", ISR, [
++        ("            for (i = 0; i < 6u; i++)\n                vb_cc(VB_CC + i, i == 1u ? e : c->cc[i]);\n"
++         "            vb_out = (uint8_t)o;\n            vb_resend = 0;\n            vb_e = (uint8_t)e;",
++         "            for (i = 1; i < 6u; i++)\n                vb_cc(VB_CC + i, i == 1u ? e : c->cc[i]);\n"
++         "            vb_out = (uint8_t)o;\n            vb_resend = 0;\n            vb_e = (uint8_t)e;")],
++     ("producer", "song", "0")),
++    ("CC 104 not 0 at the stop", ISR, [
++        ("    if (song.playing)\n        vb_cc(VB_CC, 0);\n    vb_hold_fx(PF_N);", "    vb_hold_fx(PF_N);")],
++     ("producer", "transport")),
++    ("CC 104 .. 109 on channel 15", ISR, [("#define VB_CH 15u", "#define VB_CH 14u")], ("producer", "song", "0")),
++    ("CC 104 .. 109 with SEQ MIDI OUT OFF", ISR, [
++        ("    if (seq_midi_on)\n        midi_out_event(0x0Bu | (0xB0u | VB_CH) << 8", "    if (1)\n        midi_out_event(0x0Bu | (0xB0u | VB_CH) << 8")],
++     ("producer", "transport")),
++    ("the six not again when SEQ MIDI OUT turns on or USB comes up", ISR, [
++        ("    o = 1u | (seq_midi_on ? 2u : 0u) | (usb.config ? 4u : 0u);", "    o = 1u;")],
++     ("producer", "transport")),
++    ("no CC 104 0 into the GROOVEBOX (a unit whose producer never played)", UI, [
++        ("        vb_resend = 2;                              /* (BRIEF 5: into the GROOVEBOX, CC 104 0 once) */", "")],
++     ("producer", "switch")),
++    ("the producer's ISR part runs in the GROOVEBOX too (vb_run left out)", ISR, [
++        ("    if (!vb_run || !song.playing || c->bar != st >> 4)", "    if (!song.playing || c->bar != st >> 4)")],
++     ("inactive",)),
++    ("a DROP without its kick on its one", P, [
++        ("        if (lanes & 1u)\n            vb_hit(0, LN_KICK, 120u);\n    }",
++         "        vb_o[0].hit &= (uint8_t)~(1u << LN_KICK);\n    }")],
++     ("producer", "song", "0")),
++    ("a BUILD without its roll and without its riser", P, [
++        ("        roll = left <= 4u ? 5u - left : 0u;", "        roll = 0;"),
++        ("    if (c->type == VS_BUILD) {\n        if (!vb.sbar)\n            vb_put(0, 72u, 100u);\n"
++         "        vb_hold(vb.sbar ? 0u : 1u, 16u);\n    } else if (c->type == VS_DROP) {",
++         "    if (c->type == VS_BUILD) {\n    } else if (c->type == VS_DROP) {")],
++     ("producer", "song", "0")),
++    ("notes a semitone off the key (a scale degree's semitones)", P, [
++        ("            d--;\n        }\n    return o + (int32_t)i;\n}", "            d--;\n        }\n    return o + (int32_t)i + 1;\n}")],
++     ("producer", "song", "0")),
++    ("the voice budget off", P, [("    vb_budget(dst);\n", "    (void)vb_budget;\n")], ("producer", "song", "0")),
++    ("the arrangement through the user's MUTE", P, [
++        ("        vb_o = dst[k];\n        vb_clear();\n        if (!((m >> k) & 1u))",
++         "        vb_o = dst[k];\n        vb_clear();\n        trk[k].p[P_MUTE] = !((m >> k) & 1u);\n        if (!((m >> k) & 1u))")],
++     ("producer", "mute")),
++    ("ENERGY at once (not from the next section)", P, [
++        ("    return (uint32_t)clamp(e, 0, 100) * (35u + 65u * vb.s.energy / 100u) / 100u;",
++         "    return (uint32_t)clamp(e, 0, 100) * (35u + 65u * vb.k.energy / 100u) / 100u;")],
++     ("producer", "live")),
++    ("ENDLESS never moves to a related subgenre", P, [
++        ("        vb_related();                               /* (ENDLESS: after a DROP (ambient: a BREAK), now and then a",
++         "        (void)0;                                    /* (ENDLESS: after a DROP (ambient: a BREAK), now and then a")],
++     ("producer", "endless")),
++    ("a favourite stored but not written", UI, [
++        ("    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav))", "    if (st_erase(off))")],
++     ("producer", "favourites")),
++    ("a favourite written while playing (an erase stops the audio)", UI, [
++        ("    if (!vb_fav_dirty || song.playing || !flash_ok)", "    if (!vb_fav_dirty || !flash_ok)")],
++     ("producer", "favourites")),
++    ("the GROOVEBOX's music not given back", P, [
++        ("    vb_run = 0;\n    vb_resend = 2;\n    if (vb.kept) {", "    vb_run = 0;\n    vb_resend = 2;\n    if (0) {")],
++     ("producer", "modes")),
++    ("the autosave keeps the producer's song as the user's session", PRJ, [
++        ("    if (vb_owns())\n        return;                                    /* ((Vizzbox) the producer's song is no session to keep) */",
++         "    (void)vb_owns;")],
++     ("producer", "projects")),
++    ("the screen's bar counted from 0", UI, [("        p = vb_num(p, (uint32_t)vb.sbar + 1u);", "        p = vb_num(p, (uint32_t)vb.sbar);")],
++     ("ui",)),
++]
++INSTALLER = [
++    ("the installer: a Vizzbox told by its version (v1.0: before 2.0, a backup)",
++     "!before20(device.id, info)", "major(info.version) >= 2"),
++    ("the installer: no backup, as Skiff's page by the package's version (1.0)",
++     "  // (Vizzbox) its 1.0 is Skiff 2.0 inside: the backup and the conversion as 2.0's\n",
++     "  if (major(meta.version) < 2) return null;\n"),
++]
++CFLAGS = ["-O2", "-ffp-contract=off", "-w"]
++
++
++def run(cmd, **kw):
++    return subprocess.run(cmd, capture_output=True, text=True, **kw)
++
++
++def build(work, src, out, extra=()):
++    gen = os.path.join(ROOT, "build", "gen")
++    return run(["cc", *CFLAGS, *extra, "-I" + gen, "-I" + os.path.join(work, "firmware", "src"), "-o", out,
++                os.path.join(work, "tests", src), "-lm"])
++
++
++def check(work, test):
++    """the test on the copy in work: (built, [the checks that failed])"""
++    if test[0] == "producer":
++        exe = os.path.join(work, "producer_test")
++        r = build(work, "producer_test.c", exe)
++        if r.returncode:
++            return False, r.stderr[-400:]
++        out = run([exe, *test[1:]]).stdout
++        return True, [ln[5:] for ln in out.splitlines() if ln.startswith("FAIL ")]
++    if test[0] == "inactive":
++        res = []
++        for v in "01":
++            exe = os.path.join(work, "inactive" + v)
++            r = build(work, "vizzbox_inactive.c", exe, ["-DVIZZBOX=" + v])
++            if r.returncode:
++                return False, r.stderr[-400:]
++            res.append(run([exe]).stdout.splitlines())
++        return True, [f"{a.split('  audio')[0].strip()}: VIZZBOX 0 / 1 differ" for a, b in zip(*res) if a != b]
++    exe = os.path.join(work, "vizzbox_ui")
++    r = build(work, "vizzbox_ui.c", exe)
++    if r.returncode:
++        return False, r.stderr[-400:]
++    want = open(os.path.join(ROOT, "tests", "vizzbox_ui_golden.txt")).read().splitlines()
++    got = run([exe]).stdout.splitlines()
++    return True, [f"{a.split()[0]}: the screen changed" for a, b in zip(want, got) if a != b] + \
++        (["screens missing"] if len(got) != len(want) else [])
++
++
++def main():
++    work = tempfile.mkdtemp(prefix="vizzbox_mutants.")
++    holes = 0
++    try:
++        for d in ("firmware", "tests", "web"):
++            shutil.copytree(os.path.join(ROOT, d), os.path.join(work, d))
++        for t in [("producer", "song", "0"), ("producer", "transport"), ("inactive",), ("ui",)]:
++            ok, failed = check(work, t)
++            if not ok or failed:
++                sys.exit(f"vizzbox_mutants: {t} fails without a fault: {failed if ok else 'does not build'}")
++        only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
++        for what, f, pairs, test in FAULTS:
++            if only and only not in what:
++                continue
++            p = os.path.join(work, "firmware", "src", f)
++            src = bad = open(p, encoding="utf-8").read()
++            for old, new in pairs:
++                if bad.count(old) != 1:
++                    sys.exit(f"vizzbox_mutants: {what}: the place is not in {f} once; update the fault")
++                bad = bad.replace(old, new)
++            open(p, "w", encoding="utf-8").write(bad)
++            try:
++                built, failed = check(work, test)
++            finally:
++                open(p, "w", encoding="utf-8").write(src)
++            if not built:
++                print(f"vizzbox_mutants: {what}: does not build\n{failed}")
++                holes += 1
++                continue
++            print(f"vizzbox_mutants: {what} [{' '.join(test)}]: {len(failed)} checks fail"
++                  f"{'' if failed else '  <- a hole in the tests'}")
++            for x in failed[:3]:
++                print(f"vizzbox_mutants:     {x[:110]}")
++            holes += not failed
++        if "--no-installer" not in sys.argv and not only:
++            html = os.path.join(ROOT, "build", "host", "vizzbox-installer.html")
++            good = open(html, encoding="utf-8").read()
++            for what, old, new in INSTALLER:
++                if good.count(old) != 1:
++                    sys.exit(f"vizzbox_mutants: {what}: the place is not in the installer once; update the fault")
++                bad = os.path.join(work, "vizzbox-installer.html")
++                open(bad, "w", encoding="utf-8").write(good.replace(old, new))
++                r = run(["node", os.path.join(ROOT, "web", "test_vizzbox_installer.mjs"), bad,
++                         os.path.join(ROOT, "tests", "vizz10_unit.json"), os.path.join(ROOT, "build", "conv", "conv.wasm"),
++                         os.path.join(ROOT, "build", "host", "vizz-installer.html")])
++                if "skipped (no Playwright)" in r.stdout:
++                    print(f"vizzbox_mutants: {what}: skipped (no Playwright)")
++                    continue
++                failed = [ln.replace("vizzbox installer: ", "").rsplit(" FAIL", 1)[0].strip()
++                          for ln in r.stdout.splitlines() if ln.endswith("FAIL")]
++                print(f"vizzbox_mutants: {what}: {len(failed)} checks fail{'' if failed else '  <- a hole in the tests'}")
++                for x in failed[:3]:
++                    print(f"vizzbox_mutants:     {x[:110]}")
++                holes += not failed
++    finally:
++        shutil.rmtree(work, ignore_errors=True)
++    print("vizzbox_mutants: " + ("every fault caught" if not holes else f"{holes} faults not caught"))
++    sys.exit(1 if holes else 0)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/web/emu/make_vizzbox_emu.py b/web/emu/make_vizzbox_emu.py
+new file mode 100644
+index 0000000..062f64d
+--- /dev/null
++++ b/web/emu/make_vizzbox_emu.py
+@@ -0,0 +1,79 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++# (Vizzbox, BRIEF-VIZZBOX.md 8: "eine Vizzbox-Fassung als eine HTML-Datei in demos/")
++"""The Vizzbox in the browser as one file: Skiff's browser emulator (web/emu: the firmware's own sources in
++WebAssembly, played in an AudioWorklet, the panel drawn by web/panel.js) built with VIZZBOX=1, its page with the
++WebAssembly, the worklet, the panel's script and the font inside, so the file works opened from the disk.
++
++  emcc ... -DVIZZBOX=1 -o build/emu_vizzbox/felucca.wasm web/emu/felucca_web.c     (as web/emu/build.sh, see below)
++  web/emu/make_vizzbox_emu.py build/emu_vizzbox/felucca.wasm VERSION OUT.html
++
++A new unit starts in the VIZZBOX: knob 1 GENRE, 2 SUBGENRE, 3 ENERGY, 4 VARIATION, PLAY. Its saves stay in the
++browser (its own key, apart from Skiff's page). The page's words: Skiff's, with the Vizzbox's name, its controls in
++German, and the credits of Skiff, Felucca, X0X and the font kept."""
++import base64
++import sys
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++
++
++def sub(html, old, new, n=1):
++    if html.count(old) != n:
++        raise SystemExit(f"web/emu/index.html must contain {old[:60]!r} {n} time(s); update make_vizzbox_emu.py")
++    return html.replace(old, new)
++
++
++def page(wasm_path, version):
++    html = (HERE / "index.html").read_text(encoding="utf-8")
++    worklet = (HERE / "worklet.js").read_text(encoding="utf-8")
++    panel = (HERE.parent / "panel.js").read_text(encoding="utf-8")
++    font = base64.b64encode((HERE / "fonts" / "DotGothic16-subset.woff").read_bytes()).decode()
++    ofl = (HERE / "fonts" / "OFL.txt").read_text(encoding="utf-8")
++    wasm = base64.b64encode(Path(wasm_path).read_bytes()).decode()
++    if "</script" in worklet or "</script" in panel:
++        raise SystemExit("a script holds </script: it cannot go inline")
++    html = sub(html, "<title>Try Skiff</title>", "<title>Vizzbox im Browser</title>")
++    html = sub(html, 'content="Skiff, the six-track groovebox firmware for the M-VAVE FM-1, running in your browser: '
++                     'the same code the unit runs."',
++               'content="Die Vizzbox – ein Produzent für die M-VAVE FM-1, der die Musik selbst macht – im Browser: '
++                     'derselbe Code wie auf dem Gerät."')
++    html = sub(html, 'url("fonts/DotGothic16-subset.woff")', f'url("data:font/woff;base64,{font}")')
++    html = sub(html, '<small class="version">@VERSION@@PREVIEW@</small><br>',
++               f'<small class="version">Vizzbox {version}</small><br>\n'
++               '  <b>VIZZBOX:</b> Regler 1 GENRE · 2 SUBGENRE · 3 ENERGIE · 4 VARIATION · SELECT TEMPO · ALGORITHM LÄNGE · '
++               'PRESETS Seed · PLAY Start/Stopp · REC neuer Seed · FX DROP JETZT · ARP BREAK JETZT · SEQ HALTEN · '
++               'HOME + PLAY GROOVEBOX (dort HOME + PLAY zurück)<br>\n'
++               '  Die Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (Vizz 2.0 und ein Produzent), GPL-3.0; '
++               'nicht von Skiff veröffentlicht.<br>')
++    html = sub(html, '<a href="fonts/OFL.txt">SIL OFL 1.1</a>', '<a href="#ofl">SIL OFL 1.1</a>')
++    html = sub(html, '<nav><a href="../webapp/installer/">Install</a><a href="../webapp/editor/">Editor</a>'
++                     '<a href="../learn/">Learn</a><a href="https://github.com/illuminus5/skiff">Source</a></nav>',
++               '<nav><a href="https://github.com/illuminus5/skiff">Skiff source</a></nav>')
++    html = sub(html, "Skiff is not affiliated with or endorsed by them.</small>",
++               "Skiff and the Vizzbox are not affiliated with or endorsed by them.</small>\n"
++               f'  <details id="ofl"><summary>DotGothic16: SIL Open Font License 1.1</summary><pre>{ofl}</pre></details>')
++    html = sub(html, '<script src="../panel.js"></script>', f"<script>\n{panel}\n</script>")
++    html = sub(html, 'const STORE = "skiff-emu-flash";', 'const STORE = "vizzbox-emu-flash";   // (Vizzbox: its own saves)')
++    html = sub(html, 'fetch("felucca.wasm").then((r) => { if (!r.ok) throw new Error(`felucca.wasm: ${r.status}`); '
++                     'return r.arrayBuffer(); }),',
++               'Promise.resolve(Uint8Array.from(atob(document.getElementById("wasm").textContent), '
++               '(c) => c.charCodeAt(0)).buffer),')
++    # (the worklet from a data: URL: under file://, an opaque origin, a blob: URL does not load as a module)
++    html = sub(html, 'ac.audioWorklet.addModule("worklet.js")',
++               'ac.audioWorklet.addModule("data:text/javascript;base64," + '
++               'btoa(unescape(encodeURIComponent(document.getElementById("worklet").textContent))))')
++    html = sub(html, "</body>", f'<script type="application/octet-stream" id="wasm">{wasm}</script>\n'
++                                f'<script type="text/plain" id="worklet">{worklet}</script>\n</body>')
++    for w in ("@VERSION@", "@PREVIEW@", '"felucca.wasm"', '"worklet.js"', 'src="../panel.js"'):
++        if w in html:
++            raise SystemExit(f"left in the page: {w}")
++    return html
++
++
++if __name__ == "__main__":
++    if len(sys.argv) != 4:
++        sys.exit("usage: make_vizzbox_emu.py FELUCCA.wasm VERSION OUT.html")
++    out = Path(sys.argv[3])
++    out.write_text(page(sys.argv[1], sys.argv[2]), encoding="utf-8")
++    print(f"vizzbox emu: {out} ({out.stat().st_size} B), Vizzbox {sys.argv[2]}")
+diff --git a/web/emu/test_vizzbox_emu.mjs b/web/emu/test_vizzbox_emu.mjs
+new file mode 100644
+index 0000000..f238478
+--- /dev/null
++++ b/web/emu/test_vizzbox_emu.mjs
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: GPL-3.0-only
++// (Vizzbox) The one-file Vizzbox in the browser (web/emu/make_vizzbox_emu.py) in Chromium (Playwright), opened from
++// the disk as a user would: it switches on (the WebAssembly and the worklet from inside the page), boots into the
++// VIZZBOX (its screen drawn), KNOB 1 turned with the mouse wheel changes the genre on the screen, PLAY plays (the
++// screen moves on bar by bar, the audio is not silent: an AnalyserNode on the output), PLAY again stops; no script
++// errors. Screenshots of the screen to OUT when given.
++//   node web/emu/test_vizzbox_emu.mjs VIZZBOX-EMU.html [OUT]
++import { createRequire } from "module";
++import { mkdirSync, writeFileSync } from "fs";
++import { pathToFileURL } from "url";
++
++const [htmlPath, outDir] = process.argv.slice(2);
++if (!htmlPath) { console.log("usage: test_vizzbox_emu.mjs VIZZBOX-EMU.html [OUT]"); process.exit(2); }
++let chromium;
++try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
++catch { console.log("vizzbox emu: skipped (no Playwright)"); process.exit(0); }
++
++let fails = 0;
++const ok = (c, what) => { console.log(`vizzbox emu: ${what.padEnd(84)} ${c ? "ok" : "FAIL"}`); if (!c) fails++; };
++const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
++const page = await (await browser.newContext({ locale: "de-DE" })).newPage();
++const errors = [];
++page.on("pageerror", (e) => errors.push(String(e)));
++page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
++/* a tap on the output: the page's AudioWorkletNode connects to the destination; an AnalyserNode beside it */
++await page.addInitScript(() => {
++  const connect = AudioNode.prototype.connect;
++  AudioNode.prototype.connect = function (dst, ...rest) {
++    if (this instanceof AudioWorkletNode && dst instanceof AudioDestinationNode) {
++      const an = new AnalyserNode(this.context, { fftSize: 2048 });
++      connect.call(this, an);
++      window.__peak = () => { const b = new Float32Array(an.fftSize); an.getFloatTimeDomainData(b); return Math.max(...b.map(Math.abs)); };
++    }
++    return connect.call(this, dst, ...rest);
++  };
++});
++await page.goto(pathToFileURL(htmlPath).href);
++ok(await page.title() === "Vizzbox im Browser", "the page: Vizzbox im Browser");
++await page.click("#go");
++await page.waitForFunction(() => document.getElementById("start").hidden, null, { timeout: 30000 });
++const screen = async (name) => {
++  const png = await page.locator("#screen").screenshot();
++  if (outDir) { mkdirSync(outDir, { recursive: true }); writeFileSync(`${outDir}/${name}.png`, png); }
++  return png.toString("base64");
++};
++await page.waitForTimeout(2500);                  /* (the splash, then the VIZZBOX) */
++const ready = await screen("ready");
++const lit = await page.evaluate(() => {
++  const c = document.getElementById("screen"), d = c.getContext("2d").getImageData(0, 0, 240, 240).data;
++  let n = 0;
++  for (let i = 0; i < d.length; i += 4) n += d[i] + d[i + 1] + d[i + 2] > 120;
++  return n;
++});
++ok(lit > 2000, `switched on: the screen drawn (${lit} lit pixels)`);
++const k1 = page.getByRole("slider", { name: "KNOB 1" }).or(page.locator('[aria-label="KNOB 1"]')).first();
++await k1.hover();
++await page.mouse.wheel(0, -100);
++await page.waitForTimeout(400);
++const genre = await screen("genre");
++ok(genre !== ready, "KNOB 1 (the mouse wheel): the screen shows the next genre");
++await page.waitForTimeout(1600);
++await page.keyboard.press("Minus");               /* (PLAY: the key under '-') */
++await page.waitForTimeout(6000);
++const a = await screen("playing-a");
++const peak = await page.evaluate(async () => {   /* (the loudest 46 ms window over 3 s: a sparse intro has gaps) */
++  let p = -1;
++  for (let i = 0; i < 75 && window.__peak; i++) { p = Math.max(p, window.__peak()); await new Promise((r) => setTimeout(r, 40)); }
++  return p;
++});
++await page.waitForTimeout(3000);
++const b = await screen("playing-b");
++ok(a !== b, "PLAY: the screen moves on while it plays");
++ok(peak > 0.01, `PLAY: the audio is not silent (peak ${peak.toFixed(3)})`);
++await page.keyboard.press("Minus");
++await page.waitForTimeout(4000);
++const c1 = await screen("stopped-a");
++await page.waitForTimeout(1500);
++const c2 = await screen("stopped-b");
++ok(c1 === c2, "PLAY again: stopped (the screen still)");
++ok(!errors.length, `no script errors${errors.length ? ": " + errors.join(" | ").slice(0, 300) : ""}`);
++await browser.close();
++console.log(fails ? `vizzbox emu: ${fails} FAILED` : "vizzbox emu: all ok");
++process.exit(fails ? 1 : 0);
+-- 
+2.43.0
+

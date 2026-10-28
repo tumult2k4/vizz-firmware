@@ -1,12 +1,11 @@
 # Vizzbox 1.0 – Änderungen gegenüber Skiff 2.0.1
 
-> **Zwischenstand: Etappe 6 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
-> Flash ist gemessen, der Produzent spielt ganze Songs in allen 36 Subgenres (Patch 0007), ist über Messungen getunt
-> (0008), hat seine Bedienung: VIZZBOX-Bildschirm, Regler und Tasten, 16 Favoriten, Stilwechsel während der
-> Wiedergabe, ENDLOS (0009–0011), und heißt Vizzbox: Kennung `FM-1_850`, Paket `vizzbox-1.0.fwsc`, Installer
-> `vizzbox-installer.html`, MIDI CC 104–109 beschrieben in `docs/VIZZBOX-MIDI.md` (0012). Noch nicht da: die
-> restlichen Tests (Gegenprobe, Fuzzer, Lesetest alter Firmware, Budget-Messfall), die Demos, die Anleitung. Was steht,
-> was getestet ist und was als Nächstes kommt: unten, „Stand“.
+> **Zwischenstand: Etappe 7 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Produzent
+> spielt alle 36 Subgenres (0007), getunt (0008), mit Bedienung, Favoriten und ENDLOS (0009–0011), als Vizzbox mit
+> Kennung `FM-1_850` und Installer (0012), und die Tests des Auftrags sind da (0013): Gegenprobe, Fuzzer, Lesetest von
+> Skiff 2.0.1 und Vizz 2.0, GROOVEBOX bitgleich, Budget-Messfall. Noch offen: der volle Abschlusslauf von
+> `build-vizzbox.sh` aus einem frischen Klon, die Demos, das endgültige `CHANGES.md`. Was steht, was getestet ist und
+> was als Nächstes kommt: unten, „Stand“.
 
 Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (illuminus5, <https://github.com/illuminus5/skiff>, GPL-3.0; Skiff
 baut auf Felucca von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf (Branch `vizz-2.0` dieses
@@ -24,6 +23,7 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 | 0010 | `tools/build.py`: der Entwicklungs-Build der FM-1 ohne serielle Konsole (sie passt nicht mehr neben den Produzenten; `FELUCCA_CDC=1` holt sie zurück) |
 | 0011 | `tests/target_budget_cdc0.txt`: das Kostenmaß eines Builds ohne Konsole gegen Vizz 2.0s eigenes, ebenso gebaut |
 | 0012 | **Name und Kennung:** Vizzbox, `FM-1_850`, `vizzbox-1.0.fwsc`; `web/make_vizzbox_installer.py` und `web/test_vizzbox_installer.mjs`; CC 104–109 auch beim Einschalten von SEQ MIDI OUT und wenn USB wiederkommt geprüft |
+| 0013 | **Tests:** `tests/vizzbox_mutants.py`, `vizzbox_fuzz.c`, `vizzbox_compat.c`, `vizzbox_inactive.c`, `vizzbox_budget.c`, die Projekte des Nutzers in `producer_test.c`; die Vizzbox im Browser als eine Datei (`web/emu/make_vizzbox_emu.py`, `test_vizzbox_emu.mjs`) |
 
 ## Stand
 
@@ -225,14 +225,46 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
     (72), das Kostenmaß ohne Konsole (`fm1_alnk0_irq` 24 543 bei Budget 24 542), „vizz installer: all ok“,
     „vizzbox installer: all ok“.
 
+13. **Tests (Etappe 7, Patch 0013).**
+    - **Gegenprobe `tests/vizzbox_mutants.py`:** 22 absichtliche Fehler (Determinismus gebrochen, Seed ignoriert,
+      CC 104–109 zu spät / nie / ohne 0 beim Stopp und beim Wechsel / falscher Kanal / trotz SEQ MIDI OUT OFF / nicht
+      neu bei SEQ MIDI OUT ON und USB, Interrupt-Teil in der GROOVEBOX aktiv, Drop ohne Kick, Aufbau ohne Roll und
+      Riser, Noten neben der Tonart, Stimmenbudget aus, Arrangement über das Nutzer-MUTE, ENERGIE sofort, ENDLOS ohne
+      Wechsel, Favorit nicht geschrieben oder beim Spielen geschrieben, GROOVEBOX-Musik nicht zurück, Autosave
+      speichert den Song des Produzenten, Taktzähler) und 2 im Installer. Der erste Lauf fand **zwei Lücken**: „kein
+      CC 104 = 0 beim Wechsel in die GROOVEBOX“ fiel nicht auf, weil im Test der Produzent vorher gespielt hatte (dann
+      sendet ein zweiter Weg die 0) – neuer Fall `switch` (ein Gerät, das nie gespielt hat); „Noten neben der Tonart“
+      traf eine Funktion, die nie aufgerufen wird (`vb_note`, entfernt) – der Fehler sitzt jetzt in `vb_semi`, durch
+      die alle Noten gehen. Danach: **jeder Fehler erkannt**. `tests/vizz_mutants.py` (Vizz 2.0s Gegenprobe) auf
+      diesem Stand: **every fault caught**.
+    - **Neue Prüfungen in `producer_test.c`:** die Projekte des Nutzers (Slot 1, Autosave, Pattern-Pool nach 70 s
+      Produzent mit Stilwechsel byteweise gleich; nach Aus/Ein die GROOVEBOX mit der eigenen Musik); ein Favorit beim
+      Spielen gespeichert wird erst im Stillstand geschrieben; CC 104 = 0 beim Wechsel auf einem Gerät, das nie
+      gespielt hat.
+    - **`tests/vizzbox_inactive.c`:** GROOVEBOX mit eingebautem, inaktivem Produzenten gegen ohne: Audio, USB-MIDI und
+      Bildschirm in 7 Szenen **bitgleich**.
+    - **`tests/vizzbox_compat.c`:** Skiff 2.0.1 und Vizz 2.0 (aus git) auf einer Vizzbox mit Favoriten: booten, laden,
+      speichern, Autosave – Favoriten byteweise unberührt, zurück auf der Vizzbox alles da. `ldr_test`: Favoriten
+      über ein Update erhalten.
+    - **`tests/vizzbox_fuzz.c`** (ASan/UBSan): vorab 20 Seeds × 3 000 Aktionen; der erste Durchgang meldete in 5 Seeds
+      „spielt nach dem Einschalten nicht“ – das MENU-Fuzzing hatte CLOCK auf USB/TRS gestellt, und PLAY wartet dann
+      richtig auf die Clock von außen; der Test gibt jetzt eine. Danach alle grün.
+    - **`tests/vizzbox_budget.c`:** schwerster Drop 0,6–0,8 × Skiffs heavy song, mit allen Effekten 0,65–0,75 × (über
+      mehrere Läufe; die CPU-Zeit dieses VM-Rechners schwankt, deshalb Messung Seite an Seite). Kein Befehlszähler auf
+      diesem Linux-Rechner (`perf_event_open`: nicht vorhanden).
+    - **Die Vizzbox im Browser** (`web/emu/make_vizzbox_emu.py`): eine Datei, in Chromium von der Festplatte
+      geöffnet geprüft (`test_vizzbox_emu.mjs`). Unter `file://` lädt ein Worklet nicht aus einer `blob:`-URL, deshalb
+      kommt es als `data:`-URL.
+    - **Lauf von `tests/run_tests.sh`** auf diesem Stand: grün bis einschließlich Budget-Messfall, dann brach er ab –
+      der Lesetest gab dem Compiler einen relativen Pfad für `#include`, und `set -e` beendete das Skript. Behoben
+      (absoluter Pfad), der Schritt einzeln geprüft: alle 16 Prüfungen ok. Der volle Lauf kommt mit dem
+      Abschlusslauf von `build-vizzbox.sh` (Etappe 8).
+
 ### Als Nächstes
 
-- Etappe 7 (läuft): `tests/vizzbox_mutants.py` (Gegenprobe, die Vizz-Mutanten weiter erkannt), Fuzzer für die
-  VIZZBOX-Bedienung unter ASan/UBSan, Lesetest von Vizz 2.0 und Skiff 2.0.1 auf einem Gerät mit Favoriten (und die
-  Favoriten über ein Update), Budget-Messfall im schwersten Drop, GROOVEBOX mit eingebautem, aber inaktivem
-  Produzenten bitgleich zu Vizz 2.0.
-- Etappe 8: Release, Demos (MP3 und MIDI je Subgenre, `demos/README.md`), Anleitung `docs/VIZZBOX-ANLEITUNG.md`,
-  `build-vizzbox.sh` für die Vizzbox, endgültiges `CHANGES.md`.
+- Etappe 8: `build-vizzbox.sh` (umgestellt auf Release 1.0, den Vizzbox-Installer, beide Gegenproben, `DEMOS=1`) aus
+  einem frischen Klon ganz durchlaufen lassen; dabei entstehen `out/` und `demos/` (36 MP3 und MIDI, die Vizzbox im
+  Browser); `docs/VIZZBOX-ANLEITUNG.md`; das endgültige `CHANGES.md`.
 
 ## Platz im Flash
 

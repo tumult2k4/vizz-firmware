@@ -1,7 +1,7 @@
 From 31a1842b1d26caf6558a6f7e1aeed64b5430fc3f Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Mon, 26 Oct 2026 03:02:24 +0000
-Subject: [PATCH 02/12] SEQ MIDI OUT: the tracks' mutes as CC 103; a silent
+Subject: [PATCH 02/13] SEQ MIDI OUT: the tracks' mutes as CC 103; a silent
  track sends no note-on
 
 Vizz 1.0's mute and solo report (patches 0003, 0004 on Skiff 1.4) on

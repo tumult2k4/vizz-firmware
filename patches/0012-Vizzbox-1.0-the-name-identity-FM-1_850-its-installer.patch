@@ -1,7 +1,7 @@
 From f5920123a75d23d3b434115b119726d354845317 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 21:14:10 +0000
-Subject: [PATCH 12/12] Vizzbox 1.0: the name, identity FM-1_850, its
+Subject: [PATCH 12/13] Vizzbox 1.0: the name, identity FM-1_850, its
  installer; CC 104..109 when SEQ MIDI OUT or USB comes back
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
