@@ -1,7 +1,9 @@
 # vizz-firmware
 
 Zutaten für **Vizz**, einen persönlichen Fork der Skiff-Firmware (<https://github.com/illuminus5/skiff>, GPL-3.0)
-für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ:
+für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ. Dieser Branch: **Vizzbox 1.0** (in Arbeit, Stand in
+[CHANGES.md](CHANGES.md)) auf Vizz 2.0 / Skiff 2.0.1; `patches/` ist die Serie ab Skiff `v2.0.1`, gebaut wird mit
+`./build-vizzbox.sh`.
 
 - **SEQ MIDI OUT**: der Sequencer spielt über USB-MIDI mit (Noten je Spur auf ihrem Kanal, CC 102 = Step-Index,
   MIDI Clock, Start/Stop) – `patches/0001`, `patches/0002`

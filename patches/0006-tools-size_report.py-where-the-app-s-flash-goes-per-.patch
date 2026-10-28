@@ -1,0 +1,83 @@
+From e59960cc710b7ee47dd9b663d50284859f5eb57b Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 16:21:52 +0000
+Subject: [PATCH 6/6] tools/size_report.py: where the app's flash goes, per
+ source file and symbol
+
+(Vizzbox) One release ELF: the image (.text + .ram_text + .data) by the
+file that defines each symbol (the generated tables as gen/NAME) and the
+biggest symbols. Measures the room before the producer, and what it
+costs after.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ tools/size_report.py | 56 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+ create mode 100755 tools/size_report.py
+
+diff --git a/tools/size_report.py b/tools/size_report.py
+new file mode 100755
+index 0000000..d43724c
+--- /dev/null
++++ b/tools/size_report.py
+@@ -0,0 +1,56 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++"""(Vizzbox) Where the app's flash goes: one release ELF, per source file and the biggest symbols. A symbol is put to
++the file defining it (a function or a table at column 0; the generated headers of build/gen as gen/NAME); what the
++compiler inlined counts where it lands.
++  size_report.py ELF [N]"""
++import re
++import sys
++from collections import Counter, defaultdict
++from pathlib import Path
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++import size_diff, size_fns  # noqa: E402
++
++DEF = re.compile(r"^(?:static|const|void|int|uint\w*|int\w*|AUDIO_RAM)\b[^;=(\n]*?\b([A-Za-z_]\w*)\s*(?:\(|\[)", re.M)
++
++
++def file_map(root):
++    m = {}
++    srcs = sorted(size_fns.SRC.glob("*.c")) + sorted(size_fns.SRC.glob("*.h"))
++    gen = Path(root) / "build" / "gen"
++    srcs += sorted(gen.glob("*.h")) if gen.is_dir() else []
++    srcs += sorted((size_fns.SRC.parent / "hal").glob("*.h"))
++    for f in srcs:
++        text = re.sub(r"/\*.*?\*/|//[^\n]*", " ", f.read_text(errors="replace"), flags=re.S)
++        text = re.sub(r"__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)", " ", text)
++        name = ("gen/" if f.parent.name == "gen" else "hal/" if f.parent.name == "hal" else "") + f.name
++        for mm in DEF.finditer(text):
++            m.setdefault(mm.group(1), name)
++    return m
++
++
++def main(elf, n=40):
++    sec, syms = size_diff.load(elf)
++    img = sum(sec.get(s, 0) for s in size_diff.IMAGE)
++    print("sections:", ", ".join(f"{k} {v}" for k, v in sec.items()), f"| image {img} B (.text + .ram_text + .data)")
++    fm = file_map(Path(elf).resolve().parents[1])
++    per, kinds = Counter(), defaultdict(Counter)
++    for k, (s, v) in syms.items():
++        if s not in size_diff.IMAGE:
++            continue
++        f = fm.get(k.split(".")[0], "?")
++        per[f] += v
++        kinds[f][s] += v
++    tot = sum(per.values())
++    print(f"sized symbols in the image: {tot} B (the rest: alignment, literal pools, unsized labels)\n")
++    print("per source file:")
++    for f, v in per.most_common(n):
++        print(f"  {v:7d}  {f}")
++    print("\nbiggest symbols:")
++    big = sorted(((v, k, s) for k, (s, v) in syms.items() if s in size_diff.IMAGE), reverse=True)[:n]
++    for v, k, s in big:
++        print(f"  {v:7d}  {k}  ({s}, {fm.get(k.split('.')[0], '?')})")
++
++
++if __name__ == "__main__":
++    main(sys.argv[1], *(int(a) for a in sys.argv[2:3]))
+-- 
+2.43.0
+
