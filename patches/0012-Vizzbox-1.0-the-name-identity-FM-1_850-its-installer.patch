@@ -1,0 +1,1162 @@
+From f5920123a75d23d3b434115b119726d354845317 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 21:14:10 +0000
+Subject: [PATCH 12/12] Vizzbox 1.0: the name, identity FM-1_850, its
+ installer; CC 104..109 when SEQ MIDI OUT or USB comes back
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The name where Vizz had it: the splash (Vizzbox / v1.0 / on Skiff 2.0.1 / Hügelton + community), ABOUT
+(VIZZBOX, based on Vizz 2.0 / Skiff 2.0.1 / Felucca), the credits beginning with VIZZBOX (all of Skiff's and
+Vizz's kept), the crash screen, the update loader (THE VIZZBOX INSTALLER: its 5 x 7 letters gain X), THEME's
+default. USB names and descriptors as they were. A release X.Y is FM-1_8(X+4)Y, Vizzbox 1.0 FM-1_850 (Vizz's
+family 8XY, where the installers take X >= 2 for Skiff 2.0 inside), its package vizzbox-X.Y.fwsc; a
+development build FM-1_800 as Vizz's.
+
+web/make_vizzbox_installer.py: the one-file installer as Vizz 2.0's, the Vizzbox's words; Skiff's page backs
+up only when what it installs is 2.0 or later by its version, and the Vizzbox's 1.0 is Skiff 2.0 inside, so
+always. web/test_vizzbox_installer.mjs in Chromium: over Vizz 1.0, a Vizz 1.x, Skiff 1.4 and a development
+build the backup, the install, the conversion; over Vizz 2.0, Skiff 2.0.1 and a Vizzbox installed only; Vizz
+2.0's installer over a Vizzbox the same; Skiff's own page over a Vizzbox (by its version v1.0) runs the
+converter, which writes nothing back to a 2.0 store.
+
+tests/producer_test.c: all six CC 104..109 at once when SEQ MIDI OUT turns on while playing and when USB comes
+up again; into the GROOVEBOX CC 104 0 once. The tests that name the firmware follow the name; tests/ui_golden.txt
+changes only on splash, ABOUT (and its REC, credits and end) and, in the SKIFF palette, MENU's THEME row.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ firmware/loader/ldr_screen.c   |  12 +-
+ firmware/src/felucca.c         |   7 +-
+ firmware/src/main.c            |   2 +-
+ firmware/src/menu_items.c      |   5 +-
+ firmware/src/ui_draw.c         |   4 +-
+ firmware/src/ui_menu.c         |   7 +-
+ tests/editor_test.c            |   4 +-
+ tests/producer_test.c          |  30 +++-
+ tests/run_tests.sh             |   9 +-
+ tests/ui_golden.txt            | 152 ++++++++++-----------
+ tests/ui_render.c              |   2 +-
+ tests/ui_test.c                |   2 +-
+ tools/build.py                 |  15 +-
+ web/make_vizzbox_installer.py  | 138 +++++++++++++++++++
+ web/test_vizzbox_installer.mjs | 243 +++++++++++++++++++++++++++++++++
+ web/test_web.mjs               |   4 +-
+ 16 files changed, 531 insertions(+), 105 deletions(-)
+ create mode 100644 web/make_vizzbox_installer.py
+ create mode 100644 web/test_vizzbox_installer.mjs
+
+diff --git a/firmware/loader/ldr_screen.c b/firmware/loader/ldr_screen.c
+index 1e78113..e4f68db 100644
+--- a/firmware/loader/ldr_screen.c
++++ b/firmware/loader/ldr_screen.c
+@@ -4,8 +4,8 @@
+  * and what it waits for, then WRITING and a bar while the app area is written. Drawn with the loader's own 5 x 7
+  * letters (the app area may be half written: never read), before USB starts (USB is polled: the panel's ~0.3 s init
+  * would leave the host's enumeration unanswered) */
+-static const char LDR_CH[] = "ABCDEFGHIKLMNOPRSTUVWZ";          /* the letters the screens use; others: a space
+-                                                                 * ((Vizz) V Z: its name) */
++static const char LDR_CH[] = "ABCDEFGHIKLMNOPRSTUVWXZ";         /* the letters the screens use; others: a space
++                                                                 * ((Vizz) V Z, (Vizzbox) X: the names) */
+ static const uint8_t LDR_FONT[sizeof LDR_CH - 1u][7] = {         /* rows, bit 4 the left dot */
+     {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}, {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E},   /* A B */
+     {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}, {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E},   /* C D */
+@@ -17,7 +17,8 @@ static const uint8_t LDR_FONT[sizeof LDR_CH - 1u][7] = {         /* rows, bit 4
+     {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}, {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11},   /* P R */
+     {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}, {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},   /* S T */
+     {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04},   /* U V */
+-    {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F},   /* W Z */
++    {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}, {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11},   /* W X */
++    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F},                                               /* Z */
+ };
+ #define LDR_INK 0xFFFFu
+ #define LDR_TITLE 0x2616u                /* teal, #22C3B4: calm (the orange read as an error) */
+@@ -64,7 +65,7 @@ static void ldr_screen(void)
+ {
+     lcd_init();                                     /* (the panel cleared, on) */
+     ldr_text(70, 3, LDR_TITLE, "UPDATE MODE");
+-    ldr_lines("WAITING FOR THE", "VIZZ INSTALLER", "KEEP USB CONNECTED");    /* (an install on its way, or one cut
++    ldr_lines("WAITING FOR THE", "VIZZBOX INSTALLER", "KEEP USB CONNECTED");   /* (an install on its way, or one cut
+                                                                               * off: words for both, no alarm) */
+     lcd_sync();
+ }
+@@ -87,7 +88,8 @@ static void ldr_bar(uint32_t done, uint32_t total)
+ }
+ static void ldr_failed(void)                        /* a session that wrote nothing or stopped: the way out */
+ {
+-    ldr_lines("UPDATE FAILED", "INSTALL AGAIN WITH", "THE VIZZ INSTALLER");
++    ldr_lines("UPDATE FAILED", "INSTALL AGAIN WITH", "VIZZBOX INSTALLER");   /* ((Vizzbox) THE VIZZBOX INSTALLER:
++                                                                                * 21 letters, wider than a line) */
+     lcd_fill(LDR_BAR_X, LDR_BAR_Y, LDR_BAR_W, 8, 0);
+     lcd_sync();
+     ldr_writing = 0;
+diff --git a/firmware/src/felucca.c b/firmware/src/felucca.c
+index ecc2b41..fa8474b 100644
+--- a/firmware/src/felucca.c
++++ b/firmware/src/felucca.c
+@@ -42,12 +42,13 @@
+ #if BOARD_SMK37
+ #define FELUCCA_ID SMK_MODEL "_700"   /* package identity (build.py: the .fwsc marker string) */
+ #else
+-#define FELUCCA_ID "FM-1_800"    /* package identity (build.py: the .fwsc marker string; (Vizz) its 8XY) */
++#define FELUCCA_ID "FM-1_800"    /* package identity (build.py: the .fwsc marker string; (Vizz) its 8XY; (Vizzbox) a
++                                  * development build's as Vizz's, a release FM-1_8(X+4)Y: build.py) */
+ #endif
+ #endif
+ #ifndef FELUCCA_VERSION
+-#define FELUCCA_VERSION "v2.0"     /* (Vizz) Vizz's (Skiff 2.0.1's v2.0.1); shown in the menu, the console and the editor;
+-                                    * build.py --release X.Y */
++#define FELUCCA_VERSION "v1.0"     /* (Vizzbox) the Vizzbox's (Vizz 2.0's v2.0, Skiff 2.0.1's v2.0.1); shown in the menu,
++                                    * the console and the editor; build.py --release X.Y */
+ #endif
+ #if FELUCCA_OTA && !FELUCCA_FLASH
+ #error "FELUCCA_OTA needs FELUCCA_FLASH"
+diff --git a/firmware/src/main.c b/firmware/src/main.c
+index f47c1ae..bd2c17e 100644
+--- a/firmware/src/main.c
++++ b/firmware/src/main.c
+@@ -81,7 +81,7 @@ static void fm1_fault(const fm1_crash_t *c)
+     fm1_audio_stop();
+     scr_wake_now();                                   /* (MENU > SCREEN OFF: the panel on first) */
+     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
+-    draw_text_line(0, 8, 240, &AF_M, "VIZZ CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
++    draw_text_line(0, 8, 240, &AF_M, "VIZZBOX CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
+     hexs(b, c->vec);
+     draw_text_line(10, 40, 220, &AF_M, b, UI_CRASH_INK, UI_CRASH_BG, 0);
+     hexs(b, c->pc);
+diff --git a/firmware/src/menu_items.c b/firmware/src/menu_items.c
+index b8c2a22..1009afe 100644
+--- a/firmware/src/menu_items.c
++++ b/firmware/src/menu_items.c
+@@ -217,8 +217,9 @@ static const char *menu_vname(uint32_t row, uint32_t v)
+     if (f)
+         return f->name[v & 1u];
+     switch (row) {
+-    /* ((Vizz) the default THEME shown as VIZZ; UI_PALETTES keeps "SKIFF", the name the editor knows its look by) */
+-    case MI_COLOR: return v == UI_SKIFF_INDEX ? "VIZZ" : v < NPALETTES ? UI_PALETTES[v].name : "CUSTOM";
++    /* ((Vizz, Vizzbox) the default THEME shown by the name; UI_PALETTES keeps "SKIFF", the name the editor knows its
++     * look by) */
++    case MI_COLOR: return v == UI_SKIFF_INDEX ? "VIZZBOX" : v < NPALETTES ? UI_PALETTES[v].name : "CUSTOM";
+     case MI_PHEAD: return v & 1u ? "LINE" : "THEME";
+     case MI_LOWCUT: return SPK_EQ[v % 3u];
+     case MI_HOLD: return HOLD_N[v & 3u];
+diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
+index e9fa574..d4e2186 100644
+--- a/firmware/src/ui_draw.c
++++ b/firmware/src/ui_draw.c
+@@ -1136,8 +1136,8 @@ static void draw_columns(void)
+ #define SPL_X0 ((240u - SPL_SQ) / 2u)               /* its top-left on the screen (x and y) */
+ #define SPL_PAD 16                                  /* the text's inset: left (its ink), top and bottom (the capitals) */
+ #define SPL_PITCH 20                                /* line to line */
+-/* ((Vizz) its name and version, then what it comes from: Skiff 2.0.1, on Felucca 1.1.5) */
+-static const char *const SPLASH_LINES[] = {"Vizz", FELUCCA_VERSION, "on Skiff 2.0.1", "H\xFCgelton + community"};
++/* ((Vizz, Vizzbox) its name and version, then what it comes from: Skiff 2.0.1, on Felucca 1.1.5) */
++static const char *const SPLASH_LINES[] = {"Vizzbox", FELUCCA_VERSION, "on Skiff 2.0.1", "H\xFCgelton + community"};
+ /* a band of two lines, h tall, at y on the screen: the first line's top at ly; the two lines' capitals declared
+  * against al0..al1 (mode: AL_V the band centred there, AL_B the last baseline on al1) */
+ static void splash_band(uint32_t y, uint32_t h, int32_t ly, const char *const *l, uint32_t mode, int32_t al0,
+diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
+index 6559494..1475855 100644
+--- a/firmware/src/ui_menu.c
++++ b/firmware/src/ui_menu.c
+@@ -34,6 +34,9 @@ static void draw_about_qr(int32_t x, int32_t y)
+ enum { MC_TEXT, MC_TITLE, MC_URL };
+ typedef struct { const char *text; uint8_t kind; } menu_credit_t;
+ static const menu_credit_t MENU_CREDITS[] = {
++    {"VIZZBOX", MC_TITLE},                     /* (Vizzbox) what it adds to Vizz 2.0 */
++    {"A producer on Vizz 2.0: it makes the music itself, 10 genres, 36 subgenres; its CC 104..109 / GPL-3.0", MC_TEXT},
++    {"", MC_TEXT},
+     {"VIZZ", MC_TITLE},                        /* (Vizz) what it is: Skiff 2.0.1, changed */
+     {"A modified version of Skiff 2.0.1 for the VIZZ visualizer: SEQ MIDI OUT (the sequencer on USB MIDI, its mutes as CC 103) / GPL-3.0", MC_TEXT},
+     {"", MC_TEXT},
+@@ -138,8 +141,8 @@ static int32_t menu_document(int32_t y, int draw)
+ {
+     uint32_t i;
+     if (draw) {
+-        cv_text(6, y + 2, &AF_L, "VIZZ", T_THEME);                      /* ((Vizz) a modified Skiff: its name, */
+-        cv_text(6, y + 38, &AF_S, "based on Skiff 2.0.1 / Felucca", T_TEXT);   /* where it comes from) */
++        cv_text(6, y + 2, &AF_L, "VIZZBOX", T_THEME);                   /* ((Vizz, Vizzbox) a modified Skiff: its */
++        cv_text(6, y + 38, &AF_S, "based on Vizz 2.0 / Skiff 2.0.1 / Felucca", T_TEXT);   /* name, where it comes from) */
+         cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
+         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
+         {   /* (Skiff) the core clock now, from the PLL (hal/fm1_clk.h; MENU > SYSTEM > CPU CLOCK) */
+diff --git a/tests/editor_test.c b/tests/editor_test.c
+index 944088a..ad28583 100644
+--- a/tests/editor_test.c
++++ b/tests/editor_test.c
+@@ -958,8 +958,8 @@ static int menu_protocol(void)
+               (WANT[w][1] ? !strcmp(joined, WANT[w][1]) : it.nnames == NPALETTES) &&
+               it.value == (DEF[w] < 0 ? (int32_t)settings.palette : DEF[w]) &&
+               it.tab == TAB[w] && !strcmp(it.tabname, TABN[TAB[w]]) && !it.rest;
+-        if (i == 0)                                 /* ((Vizz) THEME shows the default as VIZZ; UI_PALETTES keeps SKIFF) */
+-            for (k = 0; k < NPALETTES; k++) ok &= !strcmp(it.names[k], k == UI_SKIFF_INDEX ? "VIZZ" : UI_PALETTES[k].name);
++        if (i == 0)                                 /* ((Vizzbox) THEME shows the default as VIZZBOX; UI_PALETTES keeps SKIFF) */
++            for (k = 0; k < NPALETTES; k++) ok &= !strcmp(it.names[k], k == UI_SKIFF_INDEX ? "VIZZBOX" : UI_PALETTES[k].name);
+         if (!ok) { printf("  MENU_DESC %u: %s [%s] value %d max %d tab %u %s\n", i, it.name, joined, it.value, it.max, it.tab, it.tabname); break; }
+         if (jf) {
+             fprintf(jf, "%s\n {\"id\":%u,\"kind\":%u,\"min\":%d,\"max\":%d,\"value\":%d,\"name\":\"%s\",\"names\":[", i ? "," : "",
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index 08cad5b..7247b20 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -299,7 +299,19 @@ static void case_determinism(void)
+     ok(r[3].midi != r[0].midi && r[3].audio != r[0].audio, "another seed, the same song");
+ }
+ 
+-/* PLAY and stop; SEQ MIDI OUT OFF; the GROOVEBOX */
++/* how many of CC 104 .. 109 (channel 16) came in order from event `from` on */
++static uint32_t six_at(uint32_t from)
++{
++    uint32_t i, n = 0;
++    for (i = from; i < nev && n < 6u; i++)
++        if (ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u) {
++            if (ev[i].d1 != 104u + n)
++                return n;
++            n++;
++        }
++    return n;
++}
++/* PLAY and stop; SEQ MIDI OUT OFF, then on while playing; USB coming up; the GROOVEBOX */
+ static void case_transport(void)
+ {
+     uint32_t i, n103 = 0, fa = 0, first104 = 0, any = 0;
+@@ -333,9 +345,20 @@ static void case_transport(void)
+     for (i = 0, any = 0; i < nev; i++)
+         any |= ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u;
+     ok(!any, "SEQ MIDI OUT OFF: CC 104 .. 109 sent");
++    nev = 0;
++    CPU2_BYTE &= ~8u;                               /* SEQ MIDI OUT on while playing: the six at once (BRIEF 5) */
++    run_s(0.01);
++    ok(six_at(0) == 6u, "SEQ MIDI OUT turned on: %u of the six in 10 ms", six_at(0));
++    nev = 0;
++    usb.config = 0;                                 /* USB gone and back: the six at once */
++    run_s(0.01);
++    usb.config = 1;
++    nev = 0;
++    run_s(0.01);
++    ok(six_at(0) == 6u, "USB up again: %u of the six in 10 ms", six_at(0));
+     press(1u << B_PLAY);
+-    CPU2_BYTE &= ~8u;
+     run_s(0.5);
++    nev = 0;
+     web_buttons(1u << B_HOME);                      /* the GROOVEBOX: its own music, none of it */
+     run_s(0.06);
+     web_buttons(1u << B_HOME | 1u << B_PLAY);
+@@ -343,6 +366,9 @@ static void case_transport(void)
+     web_buttons(0);
+     run_s(0.5);
+     ok(!vb_mode, "HOME + PLAY: still the VIZZBOX");
++    for (i = 0, any = 0; i < nev; i++)
++        any += ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u ? (ev[i].d1 == 104u && !ev[i].d2 ? 1u : 100u) : 0u;
++    ok(any == 1u, "into the GROOVEBOX: not CC 104 0 once (%u)", any);
+     nev = 0;
+     press(1u << B_PLAY);
+     run_s(20.0);
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index e2cc4e3..38d09de 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -84,6 +84,9 @@
+ #                   over a unit running Vizz 1.0 (tests/vizz10_unit.json, made by Vizz 1.0's own code:
+ #                   tests/vizz10_fixture.sh): the backup first, the install, the conversion of what 2.0 can't read;
+ #                   a Vizz 1.x by its identity, Skiff 1.4 and a development build by the version; 2.0 installed as it is
++# VIZZBOX INSTALLER (web/test_vizzbox_installer.mjs, the same way): the Vizzbox's installer over the same units, over
++#                   Vizz 2.0, Skiff 2.0.1 and a Vizzbox (FM-1_850, v1.0: by its identity) installed only; Vizz 2.0's
++#                   installer over a Vizzbox the same; Skiff's own page over one (by the version) writes nothing back
+ # Browser emulator (web/emu, when emcc is there): the firmware in WebAssembly (build/emu) boots, plays keys and MIDI,
+ #                   draws, lights its LEDs, keeps a save across instances, plays a song bit for bit as the same file
+ #                   built with cc (web/emu/native_check.c); the cost of 1 s of a heavy song against real time.
+@@ -268,7 +271,7 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (2.0) own lengths, overlaps, ties, chains, SONG ONCE; (Vizz) mutes, held MUTE and solo as CC 103" "$OUT/seqmidi_test"
+     # (Vizzbox) the producer and its screens, on the browser emulator's device built natively with VIZZBOX=1
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/producer_test" tests/producer_test.c -lm
+-    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF / GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX" "$OUT/producer_test"
++    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX" "$OUT/producer_test"
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_ui" tests/vizzbox_ui.c -lm
+     run "(Vizzbox) the VIZZBOX's screens in every palette, as tests/vizzbox_ui_golden.txt has them" \
+         sh -c "\"$OUT/vizzbox_ui\" > \"$OUT/vizzbox_ui.txt\" && diff tests/vizzbox_ui_golden.txt \"$OUT/vizzbox_ui.txt\""
+@@ -517,6 +520,10 @@ else
+         python3 web/make_vizz_installer.py build/felucca.fwsc 2.0 "$OUT/vizz-installer.html" build/conv/conv.wasm
+     run "(Vizz) the installer in Chromium over a unit running Vizz 1.0 (tests/vizz10_unit.json): backup, install, conversion; Vizz 1.x by its identity, 2.0 as it is" \
+         node web/test_vizz_installer.mjs "$OUT/vizz-installer.html" tests/vizz10_unit.json build/conv/conv.wasm
++    run "(Vizzbox) the one-file installer (web/make_vizzbox_installer.py): the package and conv.wasm in it" \
++        python3 web/make_vizzbox_installer.py build/felucca.fwsc 1.0 "$OUT/vizzbox-installer.html" build/conv/conv.wasm
++    run "(Vizzbox) the installer over Vizz 1.0 / 1.x, Skiff 1.4, a dev build: backup, conversion; over 2.0 and a Vizzbox installed only; Vizz 2.0's over a Vizzbox the same" \
++        node web/test_vizzbox_installer.mjs "$OUT/vizzbox-installer.html" tests/vizz10_unit.json build/conv/conv.wasm "$OUT/vizz-installer.html"
+ fi
+ 
+ [ $fail -eq 0 ] && echo "ALL HOST TESTS PASSED" || { echo "HOST TESTS FAILED"; exit 1; }
+diff --git a/tests/ui_golden.txt b/tests/ui_golden.txt
+index 81bc4f7..a78b615 100644
+--- a/tests/ui_golden.txt
++++ b/tests/ui_golden.txt
+@@ -1,9 +1,9 @@
+ # Skiff UI golden (tests/ui_render.c): FNV-1a 64 of every picture ui_render writes, then its name.
+ # Rewritten by UI_GOLDEN_UPDATE=1 tests/run_tests.sh -- only for an intended change of the look.
+-d018769077aa3a42 CRYPT_about
+-c9014e5c58120e3d CRYPT_about_credits
+-a5c1e01dc08a71a4 CRYPT_about_end
+-933463b82d28a11a CRYPT_about_rec
++25c1d98f2e3614ce CRYPT_about
++812d1c5ea03b4902 CRYPT_about_credits
++97c985bd05100fac CRYPT_about_end
++0d0f492c24209a56 CRYPT_about_rec
+ d14a071f275c6385 CRYPT_arp
+ 5ffd1ed622497098 CRYPT_arp_2
+ 5efde6d80f6c8aa7 CRYPT_arp_on
+@@ -227,7 +227,7 @@ a640211c5b3b79d0 CRYPT_song_copyplus
+ ac3785bdfa5b2f17 CRYPT_song_rest_pick
+ eda8d013d956b2bc CRYPT_song_sound
+ bc35c7c0c3ecc61c CRYPT_song_sounds
+-404da5b21054d0e1 CRYPT_splash
++8d7acce5155c8e89 CRYPT_splash
+ ae37ac6fa7460cb3 CRYPT_step
+ 67e3229e84561509 CRYPT_step_mark
+ b722e4598b782da3 CRYPT_step_tiles
+@@ -243,10 +243,10 @@ e28a10113a015c17 CRYPT_user_foot
+ 70347bc09e514016 CRYPT_voice_2
+ c7a0c74aaa23b4b6 CRYPT_voice_2_uni
+ e5f489b7140e9950 CRYPT_voice_glide
+-c1ec1610715d04c7 CUSTOM_CRYPT_about
+-9464b9ba2df7cf60 CUSTOM_CRYPT_about_credits
+-f91440930a8dd617 CUSTOM_CRYPT_about_end
+-0be427e860c27cad CUSTOM_CRYPT_about_rec
++2ec574e1d2a7f001 CUSTOM_CRYPT_about
++5d3f505d87143c83 CUSTOM_CRYPT_about_credits
++abad782c9b1cb1a7 CUSTOM_CRYPT_about_end
++2844c3908fc6afdb CUSTOM_CRYPT_about_rec
+ b6a7880a42a5cbcb CUSTOM_CRYPT_arp
+ 618fbbc0f8288bfc CUSTOM_CRYPT_arp_2
+ 13c6ffe8947bed6f CUSTOM_CRYPT_arp_on
+@@ -468,7 +468,7 @@ d9610d28c70ba071 CUSTOM_CRYPT_song_playing
+ faa76a7454080148 CUSTOM_CRYPT_song_rest_pick
+ 816344c11d678d19 CUSTOM_CRYPT_song_sound
+ 86e5a7834c8be426 CUSTOM_CRYPT_song_sounds
+-5c458f03fe806fad CUSTOM_CRYPT_splash
++d95f62be566e4545 CUSTOM_CRYPT_splash
+ 218eb199b74ad5f7 CUSTOM_CRYPT_step
+ d413efa0663ef3c3 CUSTOM_CRYPT_step_mark
+ 468ba1b0c80a5bcb CUSTOM_CRYPT_step_tiles
+@@ -484,10 +484,10 @@ d2d37ef6e92f98ce CUSTOM_CRYPT_take_partial
+ 79ff34823edf6265 CUSTOM_CRYPT_voice_2
+ b2635aa7e5036074 CUSTOM_CRYPT_voice_2_uni
+ 9c3771c1bbcdb617 CUSTOM_CRYPT_voice_glide
+-c1ec1610715d04c7 CUSTOM_NEON_about
+-9464b9ba2df7cf60 CUSTOM_NEON_about_credits
+-f91440930a8dd617 CUSTOM_NEON_about_end
+-0be427e860c27cad CUSTOM_NEON_about_rec
++2ec574e1d2a7f001 CUSTOM_NEON_about
++5d3f505d87143c83 CUSTOM_NEON_about_credits
++abad782c9b1cb1a7 CUSTOM_NEON_about_end
++2844c3908fc6afdb CUSTOM_NEON_about_rec
+ 52c6c53eff824652 CUSTOM_NEON_arp
+ 4ace9b2cc148a5f9 CUSTOM_NEON_arp_2
+ c1116ebb9b27fe92 CUSTOM_NEON_arp_on
+@@ -709,7 +709,7 @@ d69ca969f5dde57e CUSTOM_NEON_song_rest
+ 87962efe4b81985b CUSTOM_NEON_song_rest_pick
+ b4a7f6c7fbd2e5ff CUSTOM_NEON_song_sound
+ 5d370fc26da90fcf CUSTOM_NEON_song_sounds
+-f4450fe655ab91da CUSTOM_NEON_splash
++fb295bb05becac82 CUSTOM_NEON_splash
+ c96606d07ca04eeb CUSTOM_NEON_step
+ 6e60d7c871c8b5b3 CUSTOM_NEON_step_mark
+ dcc8ea6095b6df63 CUSTOM_NEON_step_tiles
+@@ -725,10 +725,10 @@ eaa3b2e1cb06be20 CUSTOM_NEON_voice
+ 4dbaba5b961109f3 CUSTOM_NEON_voice_2
+ 651539f2321d70a4 CUSTOM_NEON_voice_2_uni
+ d6323b948ce89067 CUSTOM_NEON_voice_glide
+-769c0eed69969ec0 CUSTOM_QUARK_about
+-8db154fc2b25aef8 CUSTOM_QUARK_about_credits
+-da9931f4388975bd CUSTOM_QUARK_about_end
+-e389fc969de3fb8f CUSTOM_QUARK_about_rec
++cf27dd97063f1638 CUSTOM_QUARK_about
++52695c82401f6fc3 CUSTOM_QUARK_about_credits
++6a779e93b65e746d CUSTOM_QUARK_about_end
++4b371c263a3862c3 CUSTOM_QUARK_about_rec
+ efe5e51233d71449 CUSTOM_QUARK_arp
+ e10fb303a730524f CUSTOM_QUARK_arp_2
+ 9e10f12181c45d69 CUSTOM_QUARK_arp_on
+@@ -950,7 +950,7 @@ db488cc8ce9ceef9 CUSTOM_QUARK_song_new
+ bd432096a6a20621 CUSTOM_QUARK_song_rest_pick
+ 26243b9b43eb852c CUSTOM_QUARK_song_sound
+ d2920a5a7eb34efa CUSTOM_QUARK_song_sounds
+-6be79abcb573db7a CUSTOM_QUARK_splash
++9659fc816580ad32 CUSTOM_QUARK_splash
+ d6775a2aa5adbff3 CUSTOM_QUARK_step
+ 9e71c2f5d855a5d3 CUSTOM_QUARK_step_mark
+ faee4a12413b21f8 CUSTOM_QUARK_step_tiles
+@@ -966,10 +966,10 @@ cc651918769c3748 CUSTOM_QUARK_user_foot
+ 5a801550b92937f4 CUSTOM_QUARK_voice_2
+ 068dd573bdd07ff2 CUSTOM_QUARK_voice_2_uni
+ 63b197c71fe4c8b1 CUSTOM_QUARK_voice_glide
+-769c0eed69969ec0 CUSTOM_SKIFF_about
+-8db154fc2b25aef8 CUSTOM_SKIFF_about_credits
+-da9931f4388975bd CUSTOM_SKIFF_about_end
+-e389fc969de3fb8f CUSTOM_SKIFF_about_rec
++cf27dd97063f1638 CUSTOM_SKIFF_about
++52695c82401f6fc3 CUSTOM_SKIFF_about_credits
++6a779e93b65e746d CUSTOM_SKIFF_about_end
++4b371c263a3862c3 CUSTOM_SKIFF_about_rec
+ dcd45277c15630cb CUSTOM_SKIFF_arp
+ c0ed127f6a749547 CUSTOM_SKIFF_arp_2
+ dc67b31cacd0356d CUSTOM_SKIFF_arp_on
+@@ -1191,7 +1191,7 @@ b5402ebb5c3a9cea CUSTOM_SKIFF_song_chains
+ b7ed969e42ab8a4c CUSTOM_SKIFF_song_rest_pick
+ 2d947dc4a79bd0e7 CUSTOM_SKIFF_song_sound
+ 5a1ab8994af1c9f4 CUSTOM_SKIFF_song_sounds
+-9d4bc2cf1f93ca8e CUSTOM_SKIFF_splash
++1be8ffb087c7fb16 CUSTOM_SKIFF_splash
+ c0dcc0f897d1c2cc CUSTOM_SKIFF_step
+ 16b61816279b43ac CUSTOM_SKIFF_step_mark
+ 531aff2799de09c3 CUSTOM_SKIFF_step_tiles
+@@ -1207,10 +1207,10 @@ d5b13ce57b9ecd56 CUSTOM_SKIFF_undo_box
+ 43649eb56a3c94f3 CUSTOM_SKIFF_voice_2
+ b58462d0f4241bb9 CUSTOM_SKIFF_voice_2_uni
+ 800d38984ddbf29b CUSTOM_SKIFF_voice_glide
+-b3e841da595c8212 HI-CON_about
+-7fb14b10603525f1 HI-CON_about_credits
+-5263167172e79a40 HI-CON_about_end
+-d1f47e977b6be70c HI-CON_about_rec
++b53d9be2b7303033 HI-CON_about
++e0bc28fc8040fc35 HI-CON_about_credits
++70e0da86c3d97b00 HI-CON_about_end
++31488b1f33fd8ca5 HI-CON_about_rec
+ 203ab4886e85143a HI-CON_arp
+ 27e02597c98cdc98 HI-CON_arp_2
+ 6fb0450b7452a4f4 HI-CON_arp_on
+@@ -1432,7 +1432,7 @@ ba6f4087ed60e50d HI-CON_song_rest
+ d33abb68ef9d2d1e HI-CON_song_rest_pick
+ 302a778271f844ba HI-CON_song_sound
+ 862ae52c06a7c73f HI-CON_song_sounds
+-70fc6eac87d9112c HI-CON_splash
++da469c38d333b75c HI-CON_splash
+ 32f948fe2b3e98ac HI-CON_step
+ fe5ab9ee7a712de5 HI-CON_step_mark
+ c10a511522eda44a HI-CON_step_tiles
+@@ -1448,10 +1448,10 @@ bc2e7261b5777a48 HI-CON_voice
+ 47478084fed9ef19 HI-CON_voice_2
+ ee972cec5a663aec HI-CON_voice_2_uni
+ 54da1a184cfdc290 HI-CON_voice_glide
+-d018769077aa3a42 LARGE_CRYPT_about
+-c9014e5c58120e3d LARGE_CRYPT_about_credits
+-a5c1e01dc08a71a4 LARGE_CRYPT_about_end
+-933463b82d28a11a LARGE_CRYPT_about_rec
++25c1d98f2e3614ce LARGE_CRYPT_about
++812d1c5ea03b4902 LARGE_CRYPT_about_credits
++97c985bd05100fac LARGE_CRYPT_about_end
++0d0f492c24209a56 LARGE_CRYPT_about_rec
+ 1c9326db96758c6b LARGE_CRYPT_arp
+ 478ba083442d973d LARGE_CRYPT_arp_2
+ f61b8db2d231076a LARGE_CRYPT_arp_on
+@@ -1673,7 +1673,7 @@ cab1b6f37c9f98f6 LARGE_CRYPT_song_playing
+ 066dc5b420adc706 LARGE_CRYPT_song_rest_pick
+ aebc2d83c56358c9 LARGE_CRYPT_song_sound
+ 2f95bf3f5de28ff5 LARGE_CRYPT_song_sounds
+-404da5b21054d0e1 LARGE_CRYPT_splash
++8d7acce5155c8e89 LARGE_CRYPT_splash
+ fa365a152e3ba8b9 LARGE_CRYPT_step
+ 85f824d9dbd15136 LARGE_CRYPT_step_mark
+ 07a6740887431a84 LARGE_CRYPT_step_tiles
+@@ -1689,10 +1689,10 @@ bbb43f324795cb65 LARGE_CRYPT_user_foot
+ ac2ad311307c3d85 LARGE_CRYPT_voice_2
+ ac2ad311307c3d85 LARGE_CRYPT_voice_2_uni
+ 24fcb384a7d679f2 LARGE_CRYPT_voice_glide
+-5c17743b67636c9d LARGE_NEON_about
+-c001ab9f63a140aa LARGE_NEON_about_credits
+-21a03f6bbdde5b8e LARGE_NEON_about_end
+-bb20436b155bffa8 LARGE_NEON_about_rec
++5e29b38790c2e7e0 LARGE_NEON_about
++876d3826f0d11fa1 LARGE_NEON_about_credits
++532b1ef8196f9f9a LARGE_NEON_about_end
++90f8be6189036901 LARGE_NEON_about_rec
+ 905818ddd255b125 LARGE_NEON_arp
+ c5393b8718ace45e LARGE_NEON_arp_2
+ 9d399d4ecff68cd1 LARGE_NEON_arp_on
+@@ -1914,7 +1914,7 @@ aa3599e7dfb372dd LARGE_NEON_song_playing
+ 0495a0ae7ecc90cc LARGE_NEON_song_rest_pick
+ 957f412a8cff0bea LARGE_NEON_song_sound
+ 3a2d1eeedc7929e3 LARGE_NEON_song_sounds
+-e92f679463e196bc LARGE_NEON_splash
++437f1c26ab7fccdc LARGE_NEON_splash
+ ce0efa55e9a5badd LARGE_NEON_step
+ c3a8dbb50284e4da LARGE_NEON_step_mark
+ d2292648cb5f302f LARGE_NEON_step_tiles
+@@ -1930,10 +1930,10 @@ abbf9442d25e44a7 LARGE_NEON_voice
+ 26bdd7343f88c7a9 LARGE_NEON_voice_2
+ 26bdd7343f88c7a9 LARGE_NEON_voice_2_uni
+ d255565ab2ad528a LARGE_NEON_voice_glide
+-7a9c9a987007c081 LARGE_QUARK_about
+-a205f0a5d656a859 LARGE_QUARK_about_credits
+-3426d42b3156902d LARGE_QUARK_about_end
+-afc6b5df541d1195 LARGE_QUARK_about_rec
++89730bc4ccfd788f LARGE_QUARK_about
++6e02e44fcd38b6d4 LARGE_QUARK_about_credits
++908f3cc91b66f27d LARGE_QUARK_about_end
++364d0a031c1adcfb LARGE_QUARK_about_rec
+ a7699759b913f311 LARGE_QUARK_arp
+ 81108550b004456c LARGE_QUARK_arp_2
+ 5367479d9732769f LARGE_QUARK_arp_on
+@@ -2155,7 +2155,7 @@ a7c442c0632f685a LARGE_QUARK_song_rest
+ 69b55362ce1fafe5 LARGE_QUARK_song_rest_pick
+ a8ceba3646380666 LARGE_QUARK_song_sound
+ 9c9b9f162dc9e49d LARGE_QUARK_song_sounds
+-d78c78a31800d033 LARGE_QUARK_splash
++07e2cee512e023b8 LARGE_QUARK_splash
+ 43da5727dddf3fca LARGE_QUARK_step
+ f5d91e3dff1792f8 LARGE_QUARK_step_mark
+ 50e282501c0e0736 LARGE_QUARK_step_tiles
+@@ -2171,10 +2171,10 @@ df9d996b8d3f4877 LARGE_QUARK_step_tiles_drum
+ f97c6504e19631a7 LARGE_QUARK_voice_2
+ f97c6504e19631a7 LARGE_QUARK_voice_2_uni
+ e62595409207f4b4 LARGE_QUARK_voice_glide
+-9cd0d42e8bcd742d LARGE_SKIFF_about
+-31dad793ef9b7ffd LARGE_SKIFF_about_credits
+-8a8780747728bd5a LARGE_SKIFF_about_end
+-64829da694489dfc LARGE_SKIFF_about_rec
++87b364b47f143685 LARGE_SKIFF_about
++a0a63cccb102fd7d LARGE_SKIFF_about_credits
++600c4ef4d084815a LARGE_SKIFF_about_end
++7304464ade0867a0 LARGE_SKIFF_about_rec
+ 1919218073432383 LARGE_SKIFF_arp
+ 441d399f110914fd LARGE_SKIFF_arp_2
+ a0231cd49666b90b LARGE_SKIFF_arp_on
+@@ -2295,11 +2295,11 @@ f33b07f03f3a3e6f LARGE_SKIFF_learn_cc
+ 085f0b8f37b33719 LARGE_SKIFF_lfo
+ f3fe49eba858609c LARGE_SKIFF_lfo_2
+ 5f1e0fd603b31c8c LARGE_SKIFF_lfo_run
+-748f4824561143ec LARGE_SKIFF_menu
++b6f53c57bb4b8251 LARGE_SKIFF_menu
+ 052f29050ddabbcd LARGE_SKIFF_menu_audio
+ f27412ab6d3f8348 LARGE_SKIFF_menu_end
+ b717a2e7d9e1bada LARGE_SKIFF_menu_hold
+-c97a3389bb0e1915 LARGE_SKIFF_menu_leds
++3f258830880101b7 LARGE_SKIFF_menu_leds
+ 788cba9921b0eb26 LARGE_SKIFF_menu_midi
+ 2210c3d59c304b63 LARGE_SKIFF_menu_midi_scroll
+ eaa207c7f3c952d1 LARGE_SKIFF_menu_slide
+@@ -2313,7 +2313,7 @@ d07c40f5fc87121b LARGE_SKIFF_mixer_pan
+ c7f14b07f2f6675b LARGE_SKIFF_mock_dialog
+ 7f41cbe531eaebd1 LARGE_SKIFF_mock_drum
+ 5835d6b42bfef3fd LARGE_SKIFF_mock_home
+-a75dfb4db57a204c LARGE_SKIFF_mock_menu
++40b10a2c63ab81f1 LARGE_SKIFF_mock_menu
+ bd99e82fd6467b2b LARGE_SKIFF_mock_mixer
+ 1b4fcdd57ac7969f LARGE_SKIFF_mock_presets
+ 5478afed4e5c9f7b LARGE_SKIFF_mock_seq
+@@ -2396,7 +2396,7 @@ bbc842775f6d9f83 LARGE_SKIFF_song_new
+ 5a7fec981e7986d4 LARGE_SKIFF_song_rest_pick
+ 56c97d7277279ec0 LARGE_SKIFF_song_sound
+ 4d8d2e3b449c5ff7 LARGE_SKIFF_song_sounds
+-a2f0cd963d827d8d LARGE_SKIFF_splash
++e96d9d68c0313cce LARGE_SKIFF_splash
+ 172bc29d75427d91 LARGE_SKIFF_step
+ 29ac214b55edfbc1 LARGE_SKIFF_step_mark
+ 58e4e02e6922f804 LARGE_SKIFF_step_tiles
+@@ -2412,10 +2412,10 @@ fed8ac467c6c1e53 LARGE_SKIFF_user_foot
+ d7d818ddc0431686 LARGE_SKIFF_voice_2
+ d7d818ddc0431686 LARGE_SKIFF_voice_2_uni
+ 35bd27d867b2fb82 LARGE_SKIFF_voice_glide
+-5c17743b67636c9d NEON_about
+-c001ab9f63a140aa NEON_about_credits
+-21a03f6bbdde5b8e NEON_about_end
+-bb20436b155bffa8 NEON_about_rec
++5e29b38790c2e7e0 NEON_about
++876d3826f0d11fa1 NEON_about_credits
++532b1ef8196f9f9a NEON_about_end
++90f8be6189036901 NEON_about_rec
+ 8d6c256cf16cc50b NEON_arp
+ ebf41f5e870cbcc2 NEON_arp_2
+ f0c4b8727105eded NEON_arp_on
+@@ -2639,7 +2639,7 @@ f87f243860031880 NEON_song_rest
+ 8b3e54bd8ef84b97 NEON_song_rest_pick
+ c9538febf77d200d NEON_song_sound
+ 14f3ce37265a2048 NEON_song_sounds
+-e92f679463e196bc NEON_splash
++437f1c26ab7fccdc NEON_splash
+ 3c8db93bc277ea61 NEON_step
+ e40cffb1683e4d0d NEON_step_mark
+ b732c46b74f18b40 NEON_step_tiles
+@@ -2655,10 +2655,10 @@ b14c486a5002c5e0 NEON_voice
+ 62fbe098ac9dae46 NEON_voice_2
+ 24d9e62ca68159c6 NEON_voice_2_uni
+ 5d12230b57fe543d NEON_voice_glide
+-083acbad2049d677 PAPER_about
+-6d066d1d0357ffda PAPER_about_credits
+-bf7a4d13e10e0f58 PAPER_about_end
+-0d595f855682a844 PAPER_about_rec
++44d718d34cd601f9 PAPER_about
++c102cce9f93993b9 PAPER_about_credits
++8526615db7dc6630 PAPER_about_end
++9fb618dc3beab4ea PAPER_about_rec
+ ce8d3d20f8571dc7 PAPER_arp
+ e3c990b8a98bc689 PAPER_arp_2
+ 927d7a0bc22ffe3d PAPER_arp_on
+@@ -2880,7 +2880,7 @@ dca3358b84b45c85 PAPER_song_rest
+ d233176bd7ad4bb6 PAPER_song_rest_pick
+ 5eee041417a65e04 PAPER_song_sound
+ eba5612a222bf378 PAPER_song_sounds
+-c43e4d72c482b31d PAPER_splash
++79471039d6fa7ff9 PAPER_splash
+ b65c86687b14d83e PAPER_step
+ db7f00ec95560ca3 PAPER_step_mark
+ df2a768ad8152660 PAPER_step_tiles
+@@ -2902,10 +2902,10 @@ dd2c60d0a0f712a6 PAPER_voice_glide
+ fee43c6ce8c54275 PHLINE_NEON_six_home
+ 4e7899be754154c0 PHLINE_QUARK_home
+ cb7963f36bafe78c PHLINE_QUARK_six_home
+-7a9c9a987007c081 QUARK_about
+-a205f0a5d656a859 QUARK_about_credits
+-3426d42b3156902d QUARK_about_end
+-afc6b5df541d1195 QUARK_about_rec
++89730bc4ccfd788f QUARK_about
++6e02e44fcd38b6d4 QUARK_about_credits
++908f3cc91b66f27d QUARK_about_end
++364d0a031c1adcfb QUARK_about_rec
+ f0f31931553bdc98 QUARK_arp
+ 68c62c149b7a0502 QUARK_arp_2
+ adfaa1a7032e76da QUARK_arp_on
+@@ -3129,7 +3129,7 @@ e3cf3a9e107fd4bc QUARK_song_playing
+ 86a7cf988e0bd725 QUARK_song_rest_pick
+ ecf95f643f1617a6 QUARK_song_sound
+ 93761f7ec3bd7004 QUARK_song_sounds
+-d78c78a31800d033 QUARK_splash
++07e2cee512e023b8 QUARK_splash
+ b8860221a86e098e QUARK_step
+ 18d52a1157ae7dca QUARK_step_mark
+ 9f85569f187231ec QUARK_step_tiles
+@@ -3145,10 +3145,10 @@ d5987ab09a28a806 QUARK_voice
+ 893b270ea5327b18 QUARK_voice_2
+ b44c8316939b74d2 QUARK_voice_2_uni
+ 95a643bb842f71e3 QUARK_voice_glide
+-9cd0d42e8bcd742d SKIFF_about
+-31dad793ef9b7ffd SKIFF_about_credits
+-8a8780747728bd5a SKIFF_about_end
+-64829da694489dfc SKIFF_about_rec
++87b364b47f143685 SKIFF_about
++a0a63cccb102fd7d SKIFF_about_credits
++600c4ef4d084815a SKIFF_about_end
++7304464ade0867a0 SKIFF_about_rec
+ dabc0c9d6e5f58a0 SKIFF_arp
+ 865c84d6c5f448ba SKIFF_arp_2
+ c3ed8808d3c1f6ef SKIFF_arp_on
+@@ -3271,11 +3271,11 @@ eca95cdb84e4fcf1 SKIFF_learn
+ abd2bc9e09b83e45 SKIFF_lfo
+ 6b25aaebe406a6f1 SKIFF_lfo_2
+ a26dcca10a7c3264 SKIFF_lfo_run
+-91356b5ed5b35d35 SKIFF_menu
++4a097db5b40748a4 SKIFF_menu
+ 2bf18d6c666dc45e SKIFF_menu_audio
+ f27412ab6d3f8348 SKIFF_menu_end
+ 5d724a36a7aba061 SKIFF_menu_hold
+-0fe5b6d635bcdbb7 SKIFF_menu_leds
++7b092a46eb16120d SKIFF_menu_leds
+ a7abb9df8bdb1a1b SKIFF_menu_midi
+ 9bcd8d3149f28481 SKIFF_menu_midi_scroll
+ c3a72048c8cf168d SKIFF_menu_slide
+@@ -3289,7 +3289,7 @@ b21a93ae0ffdfbd8 SKIFF_message_nofile
+ 31a9912a5ec9a89f SKIFF_mock_dialog
+ ff281f1c023fce4d SKIFF_mock_drum
+ a4446aabb73bc7ff SKIFF_mock_home
+-1ddbaa808cea7abc SKIFF_mock_menu
++89303aaa1af31929 SKIFF_mock_menu
+ f9708271ca137c50 SKIFF_mock_mixer
+ 01164a2ac2b780cc SKIFF_mock_presets
+ 03479d4cc24cf102 SKIFF_mock_seq
+@@ -3372,7 +3372,7 @@ a023a74732e85dc0 SKIFF_song_rest
+ 1e49e6996b18fe78 SKIFF_song_rest_pick
+ 371ba4044a27ca4c SKIFF_song_sound
+ e12bfd4253c44d60 SKIFF_song_sounds
+-a2f0cd963d827d8d SKIFF_splash
++e96d9d68c0313cce SKIFF_splash
+ be3797e720d65fa9 SKIFF_step
+ 6d365a42f7184317 SKIFF_step_mark
+ 041b914d8fd72502 SKIFF_step_tiles
+diff --git a/tests/ui_render.c b/tests/ui_render.c
+index a49e8a8..3161912 100644
+--- a/tests/ui_render.c
++++ b/tests/ui_render.c
+@@ -1768,7 +1768,7 @@ static void draw(int s)
+     }
+     if (s == S_SPLASH) {                          /* the power-on splash (main.c, before the UI): its lines, the version
+                                                    * shown FELUCCA_VERSION (run_tests.sh: src/felucca.c's) */
+-        static const char WANT[] = "Vizz|" FELUCCA_VERSION "|on Skiff 2.0.1|H\xFCgelton + community";   /* ((Vizz)) */
++        static const char WANT[] = "Vizzbox|" FELUCCA_VERSION "|on Skiff 2.0.1|H\xFCgelton + community";   /* ((Vizz, Vizzbox)) */
+         splash_seen[0] = 0;
+         in_splash = 1;
+         draw_splash();
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index 0c7ee7b..bac3d26 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -4323,7 +4323,7 @@ static int test_bughunt_ui2(void)
+ /* L is a sparse face (tools/gen_aa_font.py L_CHARS): every string drawn in it has all its glyphs */
+ static int test_large_face(void)
+ {
+-    static const char *const FIXED[] = {"VIZZ", "0123456789"};    /* ui_menu.c ((Vizz) ABOUT); ui_draw.c draw_uboot */
++    static const char *const FIXED[] = {"VIZZBOX", "0123456789"}; /* ui_menu.c ((Vizzbox) ABOUT); ui_draw.c draw_uboot */
+     uint32_t i, missing = 0;
+     const char *s;
+     for (i = 0; i < NB + NE + 2u; i++)                              /* ui_input.c setup_show: the control names */
+diff --git a/tools/build.py b/tools/build.py
+index 94c30e6..3d70573 100755
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -6,11 +6,14 @@
+   tools/build.py [--release X.Y[-suffix]] [--board fm1|smk37] [--model pro|elite|mke]
+ 
+ Outputs in build/: felucca.bin (app), loader/ota.bin (update loader),
+-felucca.fwsc (package). A release build (--release X.Y) writes vizz-X.Y.fwsc (Skiff: skiff-X.Y) and a folder
++felucca.fwsc (package). A release build (--release X.Y) writes vizzbox-X.Y.fwsc (Vizz: vizz-X.Y, Skiff: skiff-X.Y) and a folder
+ release-X.Y/ with the package, the app, SHA256SUMS, the samples' attributions and the licence files; (Skiff 2.0) it
+ leaves the serial console out (FELUCCA_CDC=0, a developer tool: FELUCCA_CDC=1 keeps it), so the unit is a plain audio
+ + MIDI device (macOS 13-15 see its USB audio input) and MENU has no USB SERIAL.
+-(Vizz, a modified Skiff) the FM-1's identity is FM-1_800, a release's FM-1_8XY (Skiff's 7XY, Felucca's 9XY: neither
++(Vizzbox, a producer on Vizz 2.0, a modified Skiff) the FM-1's identity is FM-1_800 (Vizz's development builds'), a
++release X.Y's FM-1_8(X+4)Y: Vizzbox 1.0 is FM-1_850, in Vizz's family 8XY (Vizz X.Y is FM-1_8XY) and beside it (the
++installers take 8XY with X >= 2 for a 2.0 inside: no conversion between Vizz 2.0 and the Vizzbox); the package
++vizzbox-X.Y.fwsc. (Vizz, a modified Skiff) a Vizz's identity is FM-1_800, a release's FM-1_8XY (Skiff's 7XY, Felucca's 9XY: neither
+ the app, the loader nor the installers read more of it than the model before "_"), the package vizz-X.Y.fwsc.
+ See BUILDING.md for the toolchain and the SDK.
+ 
+@@ -69,7 +72,7 @@ BOARD = "fm1"                       # fm1 (default) or smk37: BOARD env or --boa
+ BOARD_PRODUCT = {"fm1": "FM-1_800", "smk37": "SMK-37 Pro_700"}   # a dev build's identity ((Vizz) the FM-1's 8XY)
+ BOARD_PREFIX = {"fm1": "FM-1_8", "smk37": "SMK-37 Pro_7"}        # a release build's: prefix + X + Y
+ BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}           # the FM-1 build gets no new flag (byte-identical)
+-BOARD_STEM = {"fm1": "vizz", "smk37": "skiff-smk37"}             # a release package: STEM-X.Y.fwsc ((Vizz) vizz-X.Y)
++BOARD_STEM = {"fm1": "vizzbox", "smk37": "skiff-smk37"}          # a release package: STEM-X.Y.fwsc ((Vizzbox) vizzbox-X.Y)
+ # smk37: the keyboard's model name (MODEL env or --model); one hardware, three names. pro adds no flag
+ MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}
+ VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
+@@ -377,7 +380,7 @@ def mmio_check():
+ def main():
+     global PRODUCT, VERSION, BOARD, APP_SLOT
+     ap = argparse.ArgumentParser()
+-    ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_8XY (Vizz), version string vX.Y")
++    ap.add_argument("--release", metavar="X.Y", help="release build: identity FM-1_8(X+4)Y (Vizzbox), version string vX.Y")
+     ap.add_argument("--board", choices=sorted(BOARD_PRODUCT), default=None,
+                     help="target board: fm1 (default) or smk37 (default: $BOARD, else fm1)")
+     ap.add_argument("--model", choices=sorted(MODELS), default=None,
+@@ -405,7 +408,9 @@ def main():
+         m = re.fullmatch(r"(\d)\.(\d)(?:\.\d){0,2}(-[A-Za-z0-9]+)?", a.release)
+         if not m:
+             raise SystemExit(f"--release {a.release}: use X.Y, X.Y.Z, X.Y.Z.W or X.Y-suffix, one digit each")
+-        PRODUCT = BOARD_PREFIX[BOARD] + m[1] + m[2]
++        PRODUCT = BOARD_PREFIX[BOARD] + (str(int(m[1]) + 4) if BOARD == "fm1" else m[1]) + m[2]   # ((Vizzbox) X + 4)
++        if BOARD == "fm1" and int(m[1]) > 5:
++            raise SystemExit(f"--release {a.release}: the Vizzbox's X is 0 .. 5 (its identity FM-1_8(X+4)Y)")
+         VERSION = "v" + a.release.lower()      # e.g. v1.0, v1.1-rc1
+         os.environ.setdefault("FELUCCA_CDC", "0")   # (Skiff 2.0) no serial console in a release (see the top)
+         name = f"{stem}-{a.release}.fwsc"
+diff --git a/web/make_vizzbox_installer.py b/web/make_vizzbox_installer.py
+new file mode 100644
+index 0000000..f54f45d
+--- /dev/null
++++ b/web/make_vizzbox_installer.py
+@@ -0,0 +1,138 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++# Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
++# (Vizzbox, a producer on Vizz 2.0, a modified Skiff: after web/make_vizz_installer.py, Vizz 2.0's)
++"""Make the Vizzbox's browser installer: one self-contained HTML file, the package and the converter in it.
++
++  web/make_vizzbox_installer.py build/vizzbox-1.0.fwsc 1.0 OUT.html [CONV.wasm]
++
++As web/make_site.py makes Skiff's installer page (index_pkg.html with fm1pkg.js, fm1ota.js, fm1backup.js and (2.0)
++conv/conv.js inlined), with the package and the converter (build/conv/conv.wasm, web/conv/build.sh's, by default)
++carried in the page as data: URLs instead of files next to it, so the one file installs (opened from disk or any
++server, in Chrome or Edge: Web MIDI). Skiff 2.0's way over firmware before it stays whole: a complete backup saved
++first (Vizzbox-backup-DATE.json), after the install what 2.0 can't read converted and written back, the list of it, and
++the way back to M-VAVE's firmware (V15). The Vizzbox is the FM-1's only; its identity is FM-1_8xx as Vizz's (Skiff's
++7xx, Felucca's 9xx): Vizzbox X.Y is FM-1_8(X+4)Y. Where a unit's data comes from is told, for a Vizz or a Vizzbox, by
++its identity: FM-1_8XY with X 1 is Vizz 1.x, Skiff 1.4 inside (its formats, its version string v1.x), with X 2 and up
++Vizz 2.x or a Vizzbox, Skiff 2.0 inside (nothing to back up or convert: installed only); a development build
++(FM-1_80Y) and any other firmware by its version string, as Skiff's page does. The page's words name the Vizzbox where
++they named the firmware;
++the credits and licences stay as Skiff's page has them (the licence links point at LICENSE, LICENSING.md and LICENSES/
++beside the page: copy them along, as a release folder of build.py has them).
++"""
++import base64
++import json
++import re
++import sys
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++sys.path.insert(0, str(HERE))
++from make_site import product_of, strip_module  # noqa: E402
++
++BASE = "2.0.1"                                      # the Skiff this Vizzbox is made from (through Vizz 2.0)
++# first, in the page's words (TEXT), the firmware's name; "Learn Skiff" is the name of Skiff's manual and stays
++WORDS = re.compile(r"\bSkiff\b(?!（使い方| \(the manual)")
++# then (old, new, count): every one must be found as often as given (the template changed: update these)
++EDITS = [
++    ("<title>Skiff</title>", "<title>Vizzbox</title>", 1),
++    ("<h1>Skiff</h1>", "<h1>Vizzbox</h1>", 1),
++    ('''  <p class="small"><span data-t="smk"></span>
++    <a href="https://github.com/illuminus5/skiff/blob/main/SMK37.md" target="_blank" rel="noopener" style="color:inherit">SMK37.md</a></p>
++''', "", 1),
++    ('<a href="../editor/"', '<a href="https://illuminus5.github.io/skiff/webapp/editor/" target="_blank" rel="noopener"', 1),
++    ('<a href="../../learn/"', '<a href="https://illuminus5.github.io/skiff/learn/" target="_blank" rel="noopener"', 1),
++    ('  <p class="small">Skiff by illuminus5, built on Felucca',
++     f'  <p class="small">The Vizzbox is a modified version of Skiff {BASE}: Vizz 2.0 (SEQ MIDI OUT: the sequencer on '
++     'USB MIDI, its mutes as CC 103) and a producer that makes the music itself (its sections as CC 104 .. 109); not a '
++     'release of Skiff.<br>\n'
++     '    Skiff by illuminus5, built on Felucca', 1),
++    ('href="../../firmware/LICENSING.md"', 'href="LICENSING.md"', 1),
++    ('href="../../firmware/LICENSE"', 'href="LICENSE"', 1),
++    ('href="../../firmware/LICENSES/Apache-2.0.txt"', 'href="LICENSES/Apache-2.0.txt"', 1),
++    ('href="../../firmware/LICENSES/"', 'href="LICENSES/"', 1),
++    ('github.com/illuminus5/skiff</a></p>', f'github.com/illuminus5/skiff</a> (v{BASE})</p>', 1),
++    ("say(`Skiff ${meta.version}`)", "say(`Vizzbox ${meta.version}`)", 1),
++    ("a.download = `Skiff-backup-", "a.download = `Vizzbox-backup-", 1),
++    ('intro: "FM-1 または SMK-37 を USB で接続してください。', 'intro: "FM-1 を USB で接続してください。', 1),
++    ('intro: "Connect the FM-1 or SMK-37 by USB.', 'intro: "Connect the FM-1 by USB.', 1),
++    ('beta: "Vizzbox はカスタムファームウェアです。不具合は GitHub で知らせてください。',
++     f'beta: "Vizzbox はカスタムファームウェア（Skiff {BASE} の改変版）です。不具合を Skiff に報告しないでください。', 1),
++    ('beta: "Vizzbox is custom firmware; please report problems on GitHub.',
++     f'beta: "Vizzbox is custom firmware, a modified Skiff {BASE}: please do not report its problems to Skiff.', 1),
++    # (Vizzbox) Skiff 2.0's question names 2.0: the Vizzbox is 1.0 (Skiff 2.0 inside)
++    ('Vizzbox 2.0 は、それより前のファームウェアで', 'Vizzbox は、2.0 より前のファームウェアで', 1),
++    ('Vizzbox 2.0 をインストールしますか？', 'Vizzbox をインストールしますか？', 1),
++    ('Vizzbox 2.0 opens nothing that firmware before it saves', 'Vizzbox opens nothing that firmware before 2.0 saves', 1),
++    ('Install Vizzbox 2.0?', 'Install the Vizzbox?', 1),
++    ('editor: "エディタ（', 'editor: "Skiff のエディタ（オンライン。', 1),
++    ('editor: "Editor (', 'editor: "Skiff\'s editor (online; ', 1),
++    # (Vizz) where a unit's data comes from (the docstring): the backup and the conversion for a Vizz 1.x as for Skiff 1.4;
++    # (Vizzbox) a Vizz 2.x and a Vizzbox (8XY, X 2 and up): Skiff 2.0 inside, installed only
++    ('const major = (v) => +(/(\\d+)\\.\\d/.exec(v || "") || [0, 0])[1];\n',
++     'const major = (v) => +(/(\\d+)\\.\\d/.exec(v || "") || [0, 0])[1];\n'
++     '// (Vizz) firmware before 2.0: a Vizz by its identity (FM-1_8XY is Vizz X.Y: 1.x Skiff 1.4\'s formats, 2.x Skiff\n'
++     '// 2.0\'s), a development build (FM-1_80Y) and any other firmware by its version string, as Skiff\'s page\n'
++     'const before20 = (id, info) => { const m = /^FM-1_8([1-9])\\d$/.exec(id.text);'
++     ' return m ? +m[1] < 2 : major(info.version) < 2; };\n', 1),
++    ("    if (!info.supported || major(info.version) >= 2) return null;\n",
++     "    if (!info.supported || !before20(device.id, info)) return null;\n", 1),
++    # (Vizzbox) Skiff's page backs up only when what it installs is 2.0 or later (its package's version): the
++    # Vizzbox's 1.0 is Skiff 2.0 inside, so always
++    ("  if (major(meta.version) < 2) return null;\n",
++     "  // (Vizzbox) its 1.0 is Skiff 2.0 inside: the backup and the conversion as 2.0's\n", 1),
++]
++
++
++def page(pkg_path, version, conv_path):
++    raw = Path(pkg_path).read_bytes()
++    product = product_of(raw)
++    if not re.fullmatch(r"FM-1_8\d\d", product):
++        raise SystemExit(f"{pkg_path}: identity {product!r} is not the Vizzbox's (FM-1_8xx)")
++    if b"FELUCCA-LOADER-1" not in raw:              # (as make_site.py: never a package with vendor files)
++        raise SystemExit(f"{pkg_path}: no Felucca loader in it; only fm1pkg_make.py packages")
++    conv = Path(conv_path)
++    if not conv.exists():
++        raise SystemExit(f"{conv}: no converter build (sh web/conv/build.sh, after the release build)")
++    wasm = conv.read_bytes()
++    if wasm[:4] != b"\0asm":
++        raise SystemExit(f"{conv}: not WebAssembly")
++    html = (HERE / "index_pkg.html").read_text(encoding="utf-8")
++    a, b = html.index("const TEXT = {"), html.index("let lang = ")
++    html = html[:a] + WORDS.sub("Vizzbox", html[a:b]) + html[b:]
++    for old, new, n in EDITS:
++        if html.count(old) != n:
++            raise SystemExit(f"index_pkg.html: {old[:60]!r} found {html.count(old)} times, not {n}; update EDITS")
++        html = html.replace(old, new)
++    a, b = html.index("const TEXT = {"), html.index("let lang = ")
++    words = html[a:b]                               # (what still names Skiff: its manual, its editor, the base, Skiff
++    kept = ("Learn Skiff", "Skiff のエディタ", "Skiff's editor", f"Skiff {BASE}", "to Skiff", "Skiff に報告")   # itself)
++    rest = [words[m.start() - 12:m.end() + 12] for m in re.finditer(r"\bSkiff\b", words)
++            if not any(k in words[m.start() - 12:m.end() + 12] for k in kept)]
++    if rest:
++        raise SystemExit(f"index_pkg.html: the page's words still name Skiff: {rest}")
++    lib = strip_module((HERE / "fm1pkg.js").read_text(encoding="utf-8")) + "\n" + \
++        strip_module((HERE / "fm1ota.js").read_text(encoding="utf-8")) + "\n" + \
++        strip_module((HERE / "fm1backup.js").read_text(encoding="utf-8")) + "\n" + \
++        strip_module((HERE / "conv" / "conv.js").read_text(encoding="utf-8"))
++    url = "data:application/octet-stream;base64," + base64.b64encode(raw).decode("ascii")
++    meta = json.dumps({"version": version, "product": product,   # (the package once: the page takes packages first)
++                       "packages": [{"product": product, "pkg": url}]})
++    for mark in ("/*LIB*/", "/*META*/", '"../editor/conv/conv.wasm"'):
++        if html.count(mark) != 1:
++            raise SystemExit(f"index_pkg.html must contain {mark} once; update make_vizzbox_installer.py")
++    html = html.replace('"../editor/conv/conv.wasm"',   # ((2.0) the converter: in the page, not webapp/editor/conv/)
++                        json.dumps("data:application/wasm;base64," + base64.b64encode(wasm).decode("ascii")))
++    return product, html.replace("/*LIB*/", lib).replace("/*META*/", meta)
++
++
++def main(pkg, version, out, conv=None):
++    product, html = page(pkg, version, conv or HERE.parent / "build" / "conv" / "conv.wasm")
++    Path(out).write_text(html, encoding="utf-8")
++    print(f"installer: {out} ({len(html)} B), Vizzbox {version}, {product}")
++
++
++if __name__ == "__main__":
++    if len(sys.argv) not in (4, 5):
++        sys.exit(__doc__)
++    main(*sys.argv[1:])
+diff --git a/web/test_vizzbox_installer.mjs b/web/test_vizzbox_installer.mjs
+new file mode 100644
+index 0000000..65cb687
+--- /dev/null
++++ b/web/test_vizzbox_installer.mjs
+@@ -0,0 +1,243 @@
++// SPDX-License-Identifier: GPL-3.0-only
++// (Vizzbox) The Vizzbox's one-file installer (web/make_vizzbox_installer.py) as it ships, in Chromium (Playwright), over
++// the simulated unit of web/test_vizz_installer.mjs (Vizz 2.0's test: the update protocol, the editor's backup requests;
++// the unit tests/vizz10_unit.json, made by Vizz 1.0's own code). The Vizzbox is FM-1_8(X+4)Y, Skiff 2.0 inside:
++//   VIZZ 1.0   FM-1_810: the complete backup first, saved as Vizzbox-backup-DATE.json (the unit's objects bit for bit),
++//              the question, the install (the unit then the package's identity), the conversion in the page (its
++//              conv.wasm): exactly what 2.0 can't read written back (the converter's set, as conv.js computes it here),
++//              the rest untouched; the list shown
++//   VIZZ 1.x   FM-1_811 with a version string of 2.0: a Vizz's identity decides (1.x: Skiff 1.4's formats)
++//   SKIFF 1.4  FM-1_714 (FELUCCA v1.4), and a development build FM-1_800 (FELUCCA v1.0): by the version, the same
++//   2.0        Vizz 2.0 (FM-1_820, v2.0), Skiff 2.0.1 (FM-1_720, v2.0.1), Vizzbox 1.0 (FM-1_850, v1.0: its identity
++//              decides, not the version) and a later Vizzbox (FM-1_851, v1.1): no backup, no question, installed
++//   BACK       Vizz 2.0's installer (VIZZ.html, web/make_vizz_installer.py) over a Vizzbox (FM-1_850, v1.0): the same,
++//              no backup (BRIEF-VIZZBOX.md 6: "ebenso umgekehrt")
++//   SKIFF      Skiff 2.0.1's own page tells a unit by its version string only: over a Vizzbox (v1.0) it saves a backup
++//              first and runs the converter after; a 2.0 store (Vizz 1.0's unit as 2.0 converted it) gives the
++//              converter nothing to write back, so nothing of the unit's is touched
++//   node web/test_vizzbox_installer.mjs INSTALLER.html tests/vizz10_unit.json build/conv/conv.wasm [VIZZ.html]
++import { readFileSync } from "fs";
++import { createRequire } from "module";
++import { pathToFileURL } from "url";
++import { readBackup } from "./fm1backup.js";
++import { loadConverter } from "./conv/conv.js";
++
++const [htmlPath, unitPath, wasmPath, vizzPath] = process.argv.slice(2);
++if (!htmlPath || !unitPath || !wasmPath) { console.log("usage: test_vizzbox_installer.mjs INSTALLER.html UNIT.json CONV.wasm [VIZZ.html]"); process.exit(2); }
++let chromium;
++try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
++catch { console.log("vizzbox installer: skipped (no Playwright)"); process.exit(0); }
++
++let fails = 0;
++const ok = (c, what) => { console.log(`vizzbox installer: ${what.padEnd(92)} ${c ? "ok" : "FAIL"}`); if (!c) fails++; };
++const unit = JSON.parse(readFileSync(unitPath, "utf8"));
++const wasm = readFileSync(wasmPath);
++const expect = (await loadConverter(new Uint8Array(wasm))).convert(readBackup(unit.archive));
++const objs = Object.fromEntries(unit.archive.objects.map((o) => [o.id, o.data]));
++const pageOf = (path) => {
++  const html = readFileSync(path, "utf8");
++  return { path, product: (/"product": "(FM-1_8\d\d)"/.exec(html) || [])[1],   /* (the package in it: the unit reports it after) */
++           version: (/const meta = \{"version": "([^"]*)"/.exec(html) || [])[1] };
++};
++const VB = pageOf(htmlPath), { product, version } = VB;
++
++/* the unit's INFO reply with another version string ("FELUCCA vX.Y": the editor's header, then the string, a 0) */
++const infoAs = (version) => {
++  const w = unit.info, z = w.indexOf(0, 5);
++  return [...w.slice(0, 5), ...new TextEncoder().encode(`FELUCCA ${version}`), ...w.slice(z)];
++};
++
++/* in the page, before its scripts: navigator.requestMIDIAccess answers with the simulated unit */
++const DEVICE = () => {
++  const cfg = window.__unit;
++  const HS = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7], UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
++  const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
++  const pack7 = (data) => { const out = []; let acc = 0, nb = 0; for (const b of data) { acc |= b << nb; nb += 8; while (nb >= 7) { out.push(acc & 0x7F); acc >>>= 7; nb -= 7; } } if (nb) out.push(acc & 0x7F); return out; };
++  const unpack7 = (s) => { const out = []; let acc = 0, nb = 0; for (const b of s) { acc |= (b & 0x7F) << nb; nb += 7; while (nb >= 8) { out.push(acc & 0xFF); acc >>>= 8; nb -= 8; } } return out; };
++  const u32 = (n) => Array.from({ length: 5 }, (_, i) => (n >>> (i * 7)) & (i === 4 ? 15 : 127));
++  const r32 = (a, o) => (a[o] | a[o + 1] << 7 | a[o + 2] << 14 | a[o + 3] << 21 | a[o + 4] << 28) >>> 0;
++  const crc = (bytes) => { let c = 0xffffffff; for (const b of bytes) { c ^= b; for (let k = 0; k < 8; k++) c = c >>> 1 ^ (c & 1 ? 0xedb88320 : 0); } return (~c) >>> 0; };
++  const bpack = (bytes) => { const a = []; for (let off = 0; off < bytes.length; off += 7) { const ch = bytes.subarray(off, off + 7); a.push(ch.reduce((m, b, i) => m | (b >>> 7) << i, 0), ...ch.map((b) => b & 127)); } return a; };
++  const bunpack = (a, size) => { const out = new Uint8Array(size); let i = 0, j = 0; while (j < size) { const n = Math.min(7, size - j), mask = a[i++]; for (let k = 0; k < n; k++) out[j++] = a[i++] | (mask >>> k & 1) << 7; } return out; };
++  const IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, ...Array.from({ length: 16 }, (_, i) => 16 + i), 32, 33, 34];
++  const d = window.__dev = { log: [], puts: [], served: [], gets: 0, lists: 0, infos: 0, flash: new Map(), staged: null };
++  for (const [id, b64] of Object.entries(cfg.objects)) d.flash.set(+id, Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
++  const access = { inputs: new Map(), outputs: new Map(), onstatechange: null, sysexEnabled: true };
++  let input, output, identity, queue = [], waiting = null, ota = false;
++  const tx = (bytes) => { const i = input; setTimeout(() => { if (i.state === "connected" && i.onmidimessage) i.onmidimessage({ data: Uint8Array.from(bytes) }); }, 1); };
++  const ed = (cmd, payload) => tx([0xF0, 0x7D, 0x46, 0x4C, cmd, ...payload, 0xF7]);
++  const boot = (id, name) => {
++    identity = id; ota = id.startsWith("ota-"); waiting = null; queue = [];
++    for (const m of [access.inputs, access.outputs]) { for (const p of m.values()) p.state = "disconnected"; m.clear(); }
++    const k = Math.random().toString(36).slice(2);
++    input = { id: "i" + k, name, state: "connected", onmidimessage: null, open: async () => {} };
++    output = { id: "o" + k, name, state: "connected", open: async () => {}, send: (b) => {
++      if (output.state !== "connected") throw new Error("InvalidStateError");
++      setTimeout(() => rx(Array.from(b)), 1);
++    } };
++    access.inputs.set(input.id, input); access.outputs.set(output.id, output);
++    d.log.push(`boot ${id}`);
++  };
++  const next = () => {
++    const r = queue.shift(); if (!r) return;
++    waiting = r;
++    const [addr, len] = r;
++    const u = [0, 0x59, 0x30, 0, 0, 0, 0, addr & 0xFF, (addr >>> 8) & 0xFF, (addr >>> 16) & 0xFF, (addr >>> 24) & 0xFF, len & 0xFF, len >> 8, 0];
++    let s = 0; for (let i = 6; i < 14; i++) s += u[i]; u.push(~s & 0xFF);
++    tx([0xF0, ...pack7(u), 0xF7]);
++  };
++  const rx = (m) => {
++    if (eq(m, HS)) {
++      const t = [...new TextEncoder().encode(identity)];
++      tx([0xF0, ...pack7([0, 0x59, 0x11, 0, 0, 0, ...t, ...new Array(28 - t.length).fill(0)]), 0xF7]);
++    } else if (eq(m, UPGRADE)) {
++      queue = ota ? [...Array.from({ length: 6 }, (_, k) => [k * 512, 512]), [0xF0000000, 8]]
++                  : [[0, 64], [0x40, 160], [0x1000, 512], [0xE0000000, 8]];
++      next();
++    } else if (m[1] === 0x7D && m[2] === 0x46 && m[3] === 0x4C) {     /* the editor's requests (the app, not its loader) */
++      if (ota) return;
++      const cmd = m[4], a = m.slice(5, -1);
++      if (cmd === 1) { d.infos++; tx(cfg.info); }
++      else if (cmd === 65) {
++        d.lists++;
++        const out = [1, 0, IDS.length];
++        for (const id of IDS) { const v = d.flash.get(id) || new Uint8Array(0); out.push(id, ...u32(v.length), ...u32(v.length ? crc(v) : 0)); }
++        ed(65, out);
++      } else if (cmd === 66) {
++        d.gets++;
++        const id = a[0], off = r32(a, 1), n = a[6] | a[7] << 7, v = d.flash.get(id) || new Uint8Array(0);
++        ed(66, [id, 0, ...u32(off), n & 127, n >> 7, ...bpack(v.subarray(off, off + n))]);
++      } else if (cmd === 67) {
++        const [op, id] = a;
++        if (op === 0) { d.staged = { id, size: r32(a, 2), crc: r32(a, 7), bytes: [] }; ed(67, [op, id, 0]); }
++        else if (op === 1) { const off = r32(a, 2); d.staged.bytes.push(...bunpack(a.slice(7), Math.min(256, d.staged.size - off))); ed(67, [op, id, 0]); }
++        else if (op === 2) {
++          const s = Uint8Array.from(d.staged.bytes), rc = s.length === d.staged.size && crc(s) === d.staged.crc ? 0 : 2;
++          if (!rc) { d.flash.set(id, s); d.puts.push(id); }
++          ed(67, [op, id, rc]);
++        } else ed(67, [op, id, 0]);
++      }
++    } else if (waiting) {
++      const u = unpack7(m.slice(1, -1)), [addr, len] = waiting;
++      d.served.push([addr, u.slice(14, 14 + (addr >= 0xE0000000 ? 8 : len))]);
++      waiting = null;
++      if (addr === 0xE0000000) setTimeout(() => boot("ota-FM-1_820", "Felucca Update"), 300);
++      else if (addr === 0xF0000000) setTimeout(() => boot(cfg.after, cfg.port), 300);
++      else next();
++    }
++  };
++  boot(cfg.identity, cfg.port);
++  navigator.requestMIDIAccess = async () => access;
++};
++
++const browser = await chromium.launch();
++async function install(name, identity, info, pg = VB) {
++  const ctx = await browser.newContext({ acceptDownloads: true, locale: "en-US" });
++  const page = await ctx.newPage();
++  const dialogs = [], downloads = [], errors = [];
++  page.on("dialog", (dl) => { dialogs.push(dl.message()); dl.accept(); });
++  page.on("download", (dl) => downloads.push(dl));
++  page.on("pageerror", (e) => errors.push(String(e)));
++  await page.addInitScript((cfg) => { window.__unit = cfg; }, { identity, port: unit.port, after: pg.product, info, objects: objs });
++  await page.addInitScript(DEVICE);
++  await page.goto(pathToFileURL(pg.path).href);
++  await page.waitForFunction(() => !document.getElementById("go").disabled, null, { timeout: 10000 });
++  const title = await page.title();
++  await page.click("#go");
++  const final = /^(Done|Installed|Error|Could not)|stopped|not found/;
++  await page.waitForFunction((re) => new RegExp(re).test(document.getElementById("status").textContent) &&
++    !document.getElementById("go").disabled, final.source, { timeout: 120000 });
++  const status = await page.textContent("#status"), log = await page.textContent("#log");
++  const dev = await page.evaluate(() => ({ log: window.__dev.log, puts: window.__dev.puts, lists: window.__dev.lists,
++    gets: window.__dev.gets, infos: window.__dev.infos,
++    flash: Object.fromEntries([...window.__dev.flash].map(([id, v]) => [id, btoa(String.fromCharCode(...v))])) }));
++  let backup = null;
++  if (downloads.length) {
++    const p = await downloads[0].path();
++    backup = { name: downloads[0].suggestedFilename(), file: JSON.parse(readFileSync(p, "utf8")) };
++  }
++  await ctx.close();
++  return { name, title, status, log, dev, dialogs, backup, errors };
++}
++
++/* VIZZ 1.0: backup, question, install, conversion */
++{
++  const r = await install("Vizz 1.0", "FM-1_810", unit.info);
++  ok(r.title === "Vizzbox" && !r.errors.length && product && version, `the page: Vizzbox ${version}, its package ${product}, no script errors`);
++  const same = r.backup && r.backup.file.objects.length === unit.archive.objects.length &&
++    r.backup.file.objects.every((o, i) => o.id === unit.archive.objects[i].id && o.data === unit.archive.objects[i].data &&
++                                            o.crc === unit.archive.objects[i].crc) && r.backup.file.firmware === "FELUCCA v1.0";
++  ok(r.dev.infos >= 1 && r.dev.lists === 1 && same && /^Vizzbox-backup-\d{4}-\d\d-\d\d\.json$/.test(r.backup.name),
++    "VIZZ 1.0 (FM-1_810, FELUCCA v1.0): the complete backup first, Vizzbox-backup-DATE.json = the unit's 29 objects");
++  ok(r.dialogs.length === 1 && /Vizzbox opens nothing that firmware before 2\.0 saves/.test(r.dialogs[0]) &&
++     /Install the Vizzbox\?/.test(r.dialogs[0]) && /Vizzbox-backup/.test(r.dialogs[0]) &&
++     r.dev.log.indexOf("boot ota-FM-1_820") > 0 && r.dev.log.at(-1) === `boot ${product}`,
++    "  then the question (the backup is the way back), then the install; the unit then reports the package's identity");
++  const want = expect.writeBack;
++  ok(want.includes(4) && !want.includes(0) && !want.includes(1) && !want.includes(2) &&
++     JSON.stringify([...r.dev.puts].sort((a, b) => a - b)) === JSON.stringify([...want].sort((a, b) => a - b)),
++    `  the conversion: exactly what 2.0 can't read written back (${want.join(" ")}): slot 3's SKF2, the FM6 patches 2.0 adds`);
++  const conv = Object.fromEntries(expect.archive.objects.map((o) => [o.id, o.data]));
++  ok(Object.keys(r.dev.flash).every((id) => r.dev.flash[id] === (want.includes(+id) ? conv[id] : objs[id] || "")),
++    "  the unit's flash: those as the converter made them (slot 3 SKF4), the music, settings, slot 1 untouched");
++  const rep = expect.report.find((x) => x.id === 4);
++  ok(rep && rep.was === "SKF2" && rep.now === "SKF4" && rep.what === "converted" && /4: SKF2 -> SKF4 \(converted\)/.test(r.log) &&
++     /^Done\. What the firmware before saved was converted for 2\.0/.test(r.status) && !/Vizz\b|Skiff \d/.test(r.log),
++    "  the list of what was converted (4: SKF2 -> SKF4), \"Done. ... converted for 2.0\"");
++  if (fails) console.log(r);
++}
++/* VIZZ 1.x by its identity; SKIFF 1.4 and a development build by the version */
++for (const [name, id, ver] of [["a Vizz 1.x saying v2.0", "FM-1_811", "v2.0"], ["Skiff 1.4", "FM-1_714", "v1.4"],
++                               ["a development build", "FM-1_800", "v1.0"]]) {
++  const r = await install(name, id, infoAs(ver));
++  ok(r.backup && r.backup.file.objects.length === 29 && r.dialogs.length === 1 && r.dev.log.at(-1) === `boot ${product}` &&
++     JSON.stringify([...r.dev.puts].sort((a, b) => a - b)) === JSON.stringify([...expect.writeBack].sort((a, b) => a - b)) &&
++     /converted for 2\.0/.test(r.status),
++    `${name.toUpperCase()} (${id}, FELUCCA ${ver}): backup, question, install, conversion as Vizz 1.0's`);
++}
++/* 2.0 inside: nothing to keep apart (a Vizzbox by its identity, whatever its version string says) */
++for (const [name, id, ver] of [["Vizz 2.0", "FM-1_820", "v2.0"], ["Skiff 2.0.1", "FM-1_720", "v2.0.1"],
++                               ["Vizzbox 1.0", "FM-1_850", "v1.0"], ["a later Vizzbox", "FM-1_851", "v1.1"]]) {
++  const r = await install(name, id, infoAs(ver));
++  ok(!r.backup && !r.dialogs.length && !r.dev.lists && !r.dev.puts.length && r.dev.log.at(-1) === `boot ${product}` &&
++     /^Done/.test(r.status),
++    `${name.toUpperCase()} (${id}, FELUCCA ${ver}): no backup, no question, installed, nothing written back`);
++}
++/* BACK: Vizz 2.0's installer over a Vizzbox */
++if (vizzPath) {
++  const VZ = pageOf(vizzPath);
++  for (const [name, id, ver] of [["Vizzbox 1.0", "FM-1_850", "v1.0"], ["a later Vizzbox", "FM-1_851", "v1.1"]]) {
++    const r = await install(name, id, infoAs(ver), VZ);
++    ok(r.title === "Vizz" && !r.errors.length && !r.backup && !r.dialogs.length && !r.dev.lists && !r.dev.puts.length &&
++       r.dev.log.at(-1) === `boot ${VZ.product}` && /^Done/.test(r.status),
++      `BACK: Vizz ${VZ.version}'s installer over ${name.toUpperCase()} (${id}, FELUCCA ${ver}): no backup, no question, installed`);
++  }
++} else console.log("vizzbox installer: BACK skipped (no Vizz installer given)");
++await browser.close();
++
++/* SKIFF: its own page over a Vizzbox (by the version string v1.0: a backup, then the converter) writes nothing back */
++{
++  const again = (await loadConverter(new Uint8Array(wasm))).convert(readBackup(expect.archive));
++  ok(!again.writeBack.length && again.report.every((x) => x.what === "kept" && !x.note) &&
++     JSON.stringify(again.archive.objects.map((o) => o.data)) === JSON.stringify(expect.archive.objects.map((o) => o.data)),
++    "SKIFF 2.0.1's page over a Vizzbox (v1.0): a 2.0 store through the converter again: nothing written back, nothing changed");
++}
++/* SETTINGS: Vizz 1.0's, read by 2.0 (the converter's simulated unit: the firmware's settings_import) as Skiff's */
++{
++  const bytes = Uint8Array.from(atob(objs[1]), (c) => c.charCodeAt(0));
++  const { instance } = await WebAssembly.instantiate(new Uint8Array(wasm), {});
++  const x = instance.exports;
++  x._initialize?.();
++  const buf = () => new Uint8Array(x.memory.buffer, x.conv_buf(), 81920);
++  x.conv_reset();
++  buf().set(bytes);
++  const rc = x.conv_put(1, bytes.length), n = x.conv_get(1), s = buf().slice(0, n);
++  /* SKS1: magic palette lowcut zoom bold (5 x 4), panel_t, fav[15][32], fav_user, fav_filter, then Skiff's 32 bytes:
++     restore_slot, restore_clean[4], cpu (bit 3: SEQ MIDI OUT OFF), mch[6] */
++  const at = n - 22 - 30 - 32 - 32;               /* (sks_t's tail: s, cpal_cols, ml, room) */
++  ok(rc === 0 && String.fromCharCode(...s.slice(0, 4)) === "1SKS" && (s[at + 5] & 8) === 8 && s[at + 6 + 1] === 8 &&
++     bytes[0] === 0x34 && bytes[3] === 0x50,
++    "SETTINGS: 2.0 reads Vizz 1.0's (PER4 with Skiff's mark) as Skiff's: SEQ MIDI OUT OFF and T2 on channel 10 kept");
++}
++console.log(fails ? `vizzbox installer: ${fails} FAILED` : "vizzbox installer: all ok");
++process.exit(fails ? 1 : 0);
+diff --git a/web/test_web.mjs b/web/test_web.mjs
+index 37a8ed8..d10f351 100644
+--- a/web/test_web.mjs
++++ b/web/test_web.mjs
+@@ -473,8 +473,8 @@ function mockTables() {
+   const mj = join(DESC, "../menu.json");
+   if (E.MENU && existsSync(mj)) {                   /* the MENU settings: tests/editor_test.c's MENU_DESC replies */
+     const fm = JSON.parse(readFileSync(mj, "utf8"));
+-    const themes = m2.state.palettes.map((n) => n === "SKIFF" ? "VIZZ" : n);   /* ((Vizz) MENU > THEME shows its default as
+-                                                                                VIZZ; the themes' own list keeps SKIFF) */
++    const themes = m2.state.palettes.map((n) => n === "SKIFF" ? "VIZZBOX" : n);   /* ((Vizzbox) MENU > THEME shows its default
++                                                                                   as VIZZBOX; the themes' own list keeps SKIFF) */
+     cmp("MENU settings", E.MENU.map((x) => ({ id: x.id, kind: 0, min: 0, max: (x.names || themes).length - 1,
+       value: x.def, name: x.name, names: x.names || themes, tab: x.tab, tabName: E.MENU_TABS[x.tab] })), fm);
+   }
+-- 
+2.43.0
+

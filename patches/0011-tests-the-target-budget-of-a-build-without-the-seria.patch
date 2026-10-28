@@ -1,7 +1,7 @@
 From f7fea0f01588ae27f644e55dbf25b2cf9568a88d Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 21:05:34 +0000
-Subject: [PATCH 11/11] tests: the target budget of a build without the serial
+Subject: [PATCH 11/12] tests: the target budget of a build without the serial
  console (Vizz 2.0's own)
 
 Without the console (FELUCCA_CDC=0: a release, and the FM-1's development build since the producer) the

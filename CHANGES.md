@@ -1,10 +1,12 @@
 # Vizzbox 1.0 – Änderungen gegenüber Skiff 2.0.1
 
-> **Zwischenstand: Etappe 4 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
+> **Zwischenstand: Etappe 6 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
 > Flash ist gemessen, der Produzent spielt ganze Songs in allen 36 Subgenres (Patch 0007), ist über Messungen getunt
-> (0008) und hat seine Bedienung: VIZZBOX-Bildschirm, Regler und Tasten, 16 Favoriten, Stilwechsel während der
-> Wiedergabe, ENDLOS (0009–0011). Noch nicht da: Name/Kennung/Installer der Vizzbox, die restlichen Tests (Fuzzer,
-> Gegenprobe, Budget-Messfall) und die Demos. Was steht, was getestet ist und was als Nächstes kommt: unten, „Stand“.
+> (0008), hat seine Bedienung: VIZZBOX-Bildschirm, Regler und Tasten, 16 Favoriten, Stilwechsel während der
+> Wiedergabe, ENDLOS (0009–0011), und heißt Vizzbox: Kennung `FM-1_850`, Paket `vizzbox-1.0.fwsc`, Installer
+> `vizzbox-installer.html`, MIDI CC 104–109 beschrieben in `docs/VIZZBOX-MIDI.md` (0012). Noch nicht da: die
+> restlichen Tests (Gegenprobe, Fuzzer, Lesetest alter Firmware, Budget-Messfall), die Demos, die Anleitung. Was steht,
+> was getestet ist und was als Nächstes kommt: unten, „Stand“.
 
 Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (illuminus5, <https://github.com/illuminus5/skiff>, GPL-3.0; Skiff
 baut auf Felucca von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf (Branch `vizz-2.0` dieses
@@ -21,6 +23,7 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 | 0009 | **Bedienung:** VIZZBOX-Bildschirm und -Tasten (`ui_vizzbox.c`), 16 Favoriten in eigenen Sektoren, neuer Stil während der Wiedergabe (BREAK + BUILD, Klangwechsel in der Pause vor dem DROP), ENDLOS; `tests/producer_test.c`, `tests/vizzbox_ui.c` mit Golden |
 | 0010 | `tools/build.py`: der Entwicklungs-Build der FM-1 ohne serielle Konsole (sie passt nicht mehr neben den Produzenten; `FELUCCA_CDC=1` holt sie zurück) |
 | 0011 | `tests/target_budget_cdc0.txt`: das Kostenmaß eines Builds ohne Konsole gegen Vizz 2.0s eigenes, ebenso gebaut |
+| 0012 | **Name und Kennung:** Vizzbox, `FM-1_850`, `vizzbox-1.0.fwsc`; `web/make_vizzbox_installer.py` und `web/test_vizzbox_installer.mjs`; CC 104–109 auch beim Einschalten von SEQ MIDI OUT und wenn USB wiederkommt geprüft |
 
 ## Stand
 
@@ -182,16 +185,54 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
       unverändert 79 924 Bytes, dahinter `.vbox` 4 300 (die gemerkte GROOVEBOX-Sitzung 2 560, der nächste Stil
       1 740): zusammen 84 224 von 98 304. Pool 347 092 von 356 352 (Reserve 9 260).
 
+11. **Name, Kennung, Installer, MIDI (Etappe 5–6, Patch 0012).**
+    - **Name** überall, wo Vizz ihn hatte: Startbild „Vizzbox / v1.0 / on Skiff 2.0.1 / Hügelton + community“, ABOUT
+      „VIZZBOX“ und „based on Vizz 2.0 / Skiff 2.0.1 / Felucca“, die Credits beginnen mit VIZZBOX (alle von Vizz,
+      Skiff und Felucca bleiben, ebenso alle Lizenzen), das Absturzbild („VIZZBOX CRASH“), der Update-Loader („WAITING
+      FOR THE / VIZZBOX INSTALLER“; seine 5×7-Schrift bekommt das X, B und O hatte sie), der Name der Standardpalette
+      unter THEME. **USB-Namen und -Deskriptoren unverändert.** Code-Bezeichner, Kommentare und Dateinamen bleiben
+      Skiffs; was der Produzent mitbringt, steht in eigenen Dateien.
+    - **Version `v1.0`, Kennung `FM-1_850`.** Release X.Y ist `FM-1_8(X+4)Y` (`tools/build.py`), Entwicklungs-Builds
+      `FM-1_800` wie bei Vizz. Begründung: Die Installer von Vizz 2.0 und der Vizzbox erkennen an `FM-1_8XY` mit X ≥ 2
+      „Skiff 2.0 innen“ und installieren dann ohne Backup und Konvertierung; X = 5 bleibt frei von Vizz' eigenen
+      Nummern (2.x, später 3.x, 4.x) und lässt Vizzbox-Versionen bis 5.9. Paket `vizzbox-1.0.fwsc`
+      (610 445 Bytes), App **575 904 Bytes**, frei **5 660** (≥ 2 KB Reserve).
+    - **Was die Versionskennung „v1.0“ bei fremden Seiten auslöst, geprüft:** Skiff 2.0.1s eigene Seite entscheidet
+      nur nach der Version und hält eine Vizzbox deshalb für Firmware vor 2.0: Sie sichert zuerst (harmlos) und lässt
+      nach der Installation den Konverter laufen. Der schreibt bei einem 2.0-Speicher nichts zurück (geprüft: Vizz 1.0s
+      Gerät einmal konvertiert und dann noch einmal – nichts zurückzuschreiben, nichts geändert). Die Seiten von Vizz
+      2.0 und der Vizzbox gehen nach der Kennung.
+    - **`vizzbox-installer.html`** (`web/make_vizzbox_installer.py`): eine Datei wie bei Vizz 2.0, mit Skiffs ganzer
+      2.0-Logik und den Worten der Vizzbox. Eine Änderung über Vizz' Seite hinaus war nötig: Skiffs Seite sichert nur,
+      wenn das, was sie installiert, nach seiner Version 2.0 oder neuer ist; die Vizzbox ist 1.0 mit Skiff 2.0 innen,
+      also sichert sie immer nach den Regeln von 2.0. Ohne das blieb das Backup über Vizz 1.0 aus (der Test fand es).
+    - **`web/test_vizzbox_installer.mjs`** (in Chromium, im Lauf von `tests/run_tests.sh`): über Vizz 1.0, Vizz 1.x,
+      Skiff 1.4 und einem Entwicklungs-Build zuerst das ganze Backup (`Vizzbox-backup-DATUM.json`), die Frage, die
+      Installation, die Konvertierung; über Vizz 2.0, Skiff 2.0.1, Vizzbox 1.0 und einer späteren Vizzbox nur die
+      Installation; **Vizz 2.0s Installer über einer Vizzbox ebenso nur die Installation**; Skiffs eigene Seite über
+      einer Vizzbox schreibt nichts zurück: **18 Prüfungen, „vizzbox installer: all ok“**.
+    - **MIDI CC 104–109:** Spezifikation für die Empfängerseite in `docs/VIZZBOX-MIDI.md`. `tests/producer_test.c`
+      prüft jetzt auch: alle sechs sofort, wenn SEQ MIDI OUT während der Wiedergabe eingeschaltet wird und wenn USB
+      wiederkommt; beim Wechsel in die GROOVEBOX genau einmal CC 104 = 0.
+    - **UI-Goldens, absichtlich geändert:** in allen Paletten (auch CUSTOM und LARGE) das Startbild und ABOUT samt
+      REC, Credits und Ende; in der Palette SKIFF dazu MENU, MENU LEDS und das MENU-Modell, deren THEME-Zeile jetzt
+      VIZZBOX heißt – 76 von 3 388 Bildern. Die übrigen Tests, die den Namen nennen (`ui_render.c`, `ui_test.c`,
+      `editor_test.c`, `web/test_web.mjs`), folgen ihm.
+12. **Tests auf diesem Stand (Patch 0012):** Release `--release 1.0`, Konverter, Entwicklungs-Build, dann
+    `tests/run_tests.sh` (136 Schritte): **`ALL HOST TESTS PASSED`**, 8 346 Einzelprüfungen „ok“ – darunter
+    `producer_test` 115 Fälle mit **370 347 Prüfungen, 0 Fehler**, `seqmidi: all ok`, die **176 Regressions-Renders
+    0 geändert** (auch mit zweitem Kern und ohne ihn), UI-Goldens 3 388 Bilder 0 geändert, die VIZZBOX-Bildschirme
+    (72), das Kostenmaß ohne Konsole (`fm1_alnk0_irq` 24 543 bei Budget 24 542), „vizz installer: all ok“,
+    „vizzbox installer: all ok“.
+
 ### Als Nächstes
 
-- Etappe 5–6 (läuft): Name Vizzbox und Kennung `FM-1_850` (Startbild, ABOUT, Credits, Absturzbild, Update-Loader,
-  THEME), Paket `vizzbox-1.0.fwsc`, Installer `vizzbox-installer.html` mit Test in Chromium (Vizz 1.0/1.x, Skiff 1.4,
-  Entwicklungs-Build: Backup und Konvertierung; Vizz 2.0, Skiff 2.0.1, Vizzbox: nur Installation; Vizz 2.0s Installer
-  über einer Vizzbox), `docs/VIZZBOX-MIDI.md`.
-- Etappe 7: `tests/vizzbox_mutants.py`, Fuzzer für die VIZZBOX-Bedienung (ASan/UBSan), Lesetest von Vizz 2.0 und
-  Skiff 2.0.1 auf einem Gerät mit Favoriten, Budget-Messfall im schwersten Drop, Regressionslauf mit eingebautem,
-  aber inaktivem Produzenten.
-- Etappe 8: Release, Demos, Anleitung, endgültiges `CHANGES.md`.
+- Etappe 7 (läuft): `tests/vizzbox_mutants.py` (Gegenprobe, die Vizz-Mutanten weiter erkannt), Fuzzer für die
+  VIZZBOX-Bedienung unter ASan/UBSan, Lesetest von Vizz 2.0 und Skiff 2.0.1 auf einem Gerät mit Favoriten (und die
+  Favoriten über ein Update), Budget-Messfall im schwersten Drop, GROOVEBOX mit eingebautem, aber inaktivem
+  Produzenten bitgleich zu Vizz 2.0.
+- Etappe 8: Release, Demos (MP3 und MIDI je Subgenre, `demos/README.md`), Anleitung `docs/VIZZBOX-ANLEITUNG.md`,
+  `build-vizzbox.sh` für die Vizzbox, endgültiges `CHANGES.md`.
 
 ## Platz im Flash
 
