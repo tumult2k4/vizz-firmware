@@ -1,9 +1,10 @@
 # Vizzbox 1.0 – Änderungen gegenüber Skiff 2.0.1
 
-> **Zwischenstand: Etappe 3 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
-> Flash ist gemessen, der Produzent spielt auf dem Host ganze Songs in allen 36 Subgenres (Patch 0007) und ist über
-> Messungen getunt (Patch 0008). Noch nicht da: die fertige Bedienung, Favoriten, ENDLOS-Wechsel, Name/Kennung, Tests
-> und Demos. Was steht, was getestet ist und was als Nächstes kommt: unten, „Stand“.
+> **Zwischenstand: Etappe 4 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
+> Flash ist gemessen, der Produzent spielt ganze Songs in allen 36 Subgenres (Patch 0007), ist über Messungen getunt
+> (0008) und hat seine Bedienung: VIZZBOX-Bildschirm, Regler und Tasten, 16 Favoriten, Stilwechsel während der
+> Wiedergabe, ENDLOS (0009–0011). Noch nicht da: Name/Kennung/Installer der Vizzbox, die restlichen Tests (Fuzzer,
+> Gegenprobe, Budget-Messfall) und die Demos. Was steht, was getestet ist und was als Nächstes kommt: unten, „Stand“.
 
 Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (illuminus5, <https://github.com/illuminus5/skiff>, GPL-3.0; Skiff
 baut auf Felucca von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf (Branch `vizz-2.0` dieses
@@ -15,8 +16,11 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 | --- | --- |
 | 0001–0005 | **Vizz 2.0**, unverändert von `origin/vizz-2.0` (SEQ MIDI OUT, CC 103, Name Vizz, Installer-Test, Gegenprobe) – siehe `CHANGES.md` dort |
 | 0006 | `tools/size_report.py`: wohin der Flash geht, je Quelldatei und Symbol (Messwerkzeug für Abschnitt 7) |
-| 0008 | **Tuning über Messungen:** Songlängen je Tempo, Stille vor dem DROP, Riser geschützt, Pegel unter Skiffs Master-Limiter, Lautheit je Subgenre (`VB_TRIM`), `tools/vizzbox_demos.py`, `tools/vizzbox_level.py` |
 | 0007 | **Der Produzent** (`producer.c`, `producer_isr.c`, `producer_tables.c`, erster `ui_vizzbox.c`), Haken in Skiffs Quellen, `tools/vizzbox_render.c`, die Sound-Messung (`tools/vizzbox_sounds.c`, `vizzbox_sounds.py`, `vizzbox_pick.py`) |
+| 0008 | **Tuning über Messungen:** Songlängen je Tempo, Stille vor dem DROP, Riser geschützt, Pegel unter Skiffs Master-Limiter, Lautheit je Subgenre (`VB_TRIM`), `tools/vizzbox_demos.py`, `tools/vizzbox_level.py` |
+| 0009 | **Bedienung:** VIZZBOX-Bildschirm und -Tasten (`ui_vizzbox.c`), 16 Favoriten in eigenen Sektoren, neuer Stil während der Wiedergabe (BREAK + BUILD, Klangwechsel in der Pause vor dem DROP), ENDLOS; `tests/producer_test.c`, `tests/vizzbox_ui.c` mit Golden |
+| 0010 | `tools/build.py`: der Entwicklungs-Build der FM-1 ohne serielle Konsole (sie passt nicht mehr neben den Produzenten; `FELUCCA_CDC=1` holt sie zurück) |
+| 0011 | `tests/target_budget_cdc0.txt`: das Kostenmaß eines Builds ohne Konsole gegen Vizz 2.0s eigenes, ebenso gebaut |
 
 ## Stand
 
@@ -107,10 +111,87 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
      Flash **569 748 Bytes** (+720), frei 11 816; `tests/run_tests.sh` auf Patch 0008: **`ALL HOST TESTS PASSED`**
      (8 322 Einzelprüfungen, 176 Regressions-Renders 0 geändert, „vizz installer: all ok“).
 
+9. **Bedienung (Etappe 4, Patches 0009–0011).** Belegung im VIZZBOX-Modus (steht auch vorn in
+   `firmware/src/ui_vizzbox.c`):
+
+   | Bedienelement | Funktion |
+   | --- | --- |
+   | Regler 1 / 2 / 3 / 4 | GENRE / SUBGENRE / ENERGIE / VARIATION |
+   | SELECT drehen | TEMPO (1 BPM; mit externer Clock ohne Wirkung, Anzeige „EXT“) |
+   | ALGO drehen | LÄNGE: KURZ / NORMAL / ENDLOS (Abweichung: SELECT hat keinen Taster, siehe „Plan“) |
+   | PRESET drehen | der Seed (4 Hex-Stellen) |
+   | PLAY | Start / Stopp |
+   | REC | NEU: ein neuer Seed (gestoppt: ein neuer Song; beim Spielen ab dem nächsten Abschnitt) |
+   | HOME + PLAY | in die GROOVEBOX; dort HOME + PLAY zurück (Abweichung: HOME lang halten öffnet in Skiff schon das MENU) |
+   | FX / ARP / SEQ | DROP JETZT (BUILD von 4 Takten, nach BREAK/INTRO 8, dann DROP) / BREAK JETZT (BREAK 8, BUILD 8, DROP) / HALTEN (der Abschnitt wiederholt sich, bis erneut gedrückt) |
+   | OCT− / OCT+ | Oktave der weißen Tasten |
+   | schwarze Tasten | T1–T6 MUTE (tippen), stumm solange gehalten (halten), mit GLO SOLO – Skiffs GLO-Ebene, CC 103 meldet sie |
+   | weiße Tasten | der Sound der LEAD-Spur, auf die Skala des Songs eingerastet (Skiffs QNT WHITE) |
+   | SAVE + weiße Taste / GLO + weiße Taste | Favorit 1–16 speichern / laden (die weiße Taste klingt dabei nicht) |
+
+   - **Bildschirm:** Genre, Subgenre, Tempo (EXT), Tonart, Seed, Länge, Abschnitt mit Taktzähler (`BUILD 12/16`), die
+     Energiekurve des ganzen Songs mit Playhead, die sechs Spuren (spielt / stumm / solo), beim Drehen groß der Wert
+     des Reglers, die Favoritenliste bei gehaltenem SAVE/GLO; eigene LEDs. Gezeichnet mit Skiffs Mitteln in allen
+     sechs Paletten.
+   - **Favoriten:** 16, je 8 Bytes (Genre, Subgenre, Seed, Energie, Variation, Länge, Tempo), in zwei eigenen Sektoren
+     A/B bei `0x95000`/`0x96000` (zwischen App-Bereich und Skiffs Speicher; `fm1_flash_map.h` `FL_VBOX`): Skiff 2.0.1,
+     Vizz 2.0 und der Update-Loader lesen, schreiben und löschen dort nichts (der Loader löscht nur Sektoren mit
+     seinem eigenen Datensatz). Datensatz `VBF1` mit Folgenummer und CRC, abwechselnd A/B, also übersteht er einen
+     Stromausfall beim Schreiben. Geschrieben wird erst im Stillstand (ein Löschvorgang hält den Flash an und damit
+     das Audio). Ein Favorit spielt denselben Song bitgleich.
+   - **Neuer Stil während der Wiedergabe** (GENRE, SUBGENRE, Seed oder ein Favorit; ENDLOS): wie ein DJ – ein BREAK
+     von 8 und ein BUILD von 16 Takten, das Tempo gleitet darüber, dann der Song des neuen Stils ab seinem ersten DROP,
+     in derselben Tonart (ENDLOS darf die Skala wechseln). Die Klänge des neuen Stils kommen im stillen letzten Beat des
+     BUILD auf die Spuren: in der Hauptschleife vorbereitet (`vb_nx`, im `.vbox`-Abschnitt), im Audio-Interrupt in
+     einem Schritt gesetzt, alle Stimmen dort beendet – so bleibt ein Song bitgleich. ENERGIE, VARIATION und LÄNGE
+     wirken ab dem nächsten Abschnitt, TEMPO gleitet über vier Takte.
+   - **ENDLOS:** nach 4–8 Minuten eines Subgenres, am Ende eines DROP (Ambient: nach einem BREAK) ein verwandtes
+     Subgenre (Tempo-Nachbar innerhalb ±8 BPM, das eigene Genre doppelt gewichtet), das Tempo gleitet über den BUILD.
+     Der Plan ist ein Ring von 24 Abschnitten: kein Speicherwachstum.
+   - **Die Musik des Nutzers:** Beim ersten PLAY merkt sich der Produzent die GROOVEBOX-Sitzung gepackt im RAM; in die
+     GROOVEBOX zurück (im Stillstand) ist sie wieder da. Autosave, Pattern-Pool und SONG schreiben nichts, solange er
+     die Spuren hat; gespeicherte Projekte fasst er nie an.
+   - **Abweichung, Konsole:** Mit dem Produzenten passt der Entwicklungs-Build mit serieller Konsole (~7,4 KB) nicht
+     mehr in den App-Bereich (1 632 Bytes zu viel); `tools/build.py` lässt sie deshalb auch im Entwicklungs-Build der
+     FM-1 weg (der Release hat sie seit Skiff 2.0 ohnehin nicht; `FELUCCA_CDC=1` verlangt sie).
+   - **Abweichung, Kostenmaß:** `tests/target_budget.py` misst statisch die Befehle in den Schleifen der
+     Render-Funktionen. Ohne Konsole legt der Compiler den Audio-Interrupt anders an: Dieselben ~1 390 Befehle in
+     Schleifen liegen eine Ebene tiefer verschachtelt, `fm1_alnk0_irq` zählt **24 542 bei Vizz 2.0 selbst** (ohne
+     Konsole gebaut) gegen 7 598 mit ihr. Skiffs `tests/target_budget.txt` gilt für Builds mit Konsole und bleibt
+     unverändert; für Builds ohne Konsole ist `tests/target_budget_cdc0.txt` Vizz 2.0s eigenes Maß (Patch 0005,
+     `FELUCCA_CDC=0 ./build.sh`), `tests/run_tests.sh` wählt danach. Die Vizzbox: `fm1_alnk0_irq` **24 543** (+1),
+     `fm1_timer5_irq` 27 164 (gleich), alle Render-Funktionen im Budget.
+10. **Tests auf diesem Stand (Patches 0009–0011)**, Entwicklungs-Build mit Emscripten (`tests/run_tests.sh`, 134
+    Schritte):
+    - `tests/producer_test.c`, neu: 115 Fälle, je ein frisches Gerät (fork): jedes Subgenre in jeder LÄNGE (Form,
+      Abschnittslängen, Tempo im Bereich, Noten in der Tonart, Register der Rollen, 0 gestohlene Stimmen, jeder DROP:
+      CC 104 = 4 vor der Kick auf seiner Eins, davor Roll oder Riser; CC 104–109 auf Kanal 16, alle sechs auf jeder
+      Eins vor den Noten, CC 105 höchstens einmal pro 16tel), Determinismus (derselbe Song zweimal und mit anderer
+      Render-Blockgröße: gleiche MIDI-Bytes und gleiches Audio; anderer Seed: anderer Song), PLAY/Stopp, SEQ MIDI OUT
+      OFF, die GROOVEBOX, Regler während der Wiedergabe, DROP JETZT/BREAK JETZT/HALTEN, MUTE und SOLO als CC 103
+      (nicht das Arrangement), ENDLOS 60 simulierte Minuten mit Subgenre-Wechseln, Favoriten über einen simulierten
+      Neustart, VIZZBOX ↔ GROOVEBOX auch während der Wiedergabe: **370 344 Prüfungen, 0 Fehler**.
+    - `tests/vizzbox_ui.c`: die neuen Bildschirme (bereit, Regler groß, spielend, MUTE, Favoriten speichern/laden,
+      gestoppt, GROOVEBOX) in allen sechs Paletten gegen `tests/vizzbox_ui_golden.txt` (72 Bilder), von Hand
+      angesehen.
+    - Alle übrigen Schritte grün wie zuvor: 176 Regressions-Renders 0 geändert (auch mit zweitem Kern und ohne ihn),
+      UI-Goldens 3 388 Bilder 0 geändert, `seqmidi_test` „all ok“, Fuzzer, „vizz installer: all ok“. Der eine rote
+      Schritt des Laufs war das Kostenmaß (oben, „Abweichung, Kostenmaß“); mit Patch 0011 besteht es auf demselben
+      Build.
+    - Flash (Entwicklungs-Build, noch mit Vizz' Namen): App **575 748 Bytes**, frei **5 816**. RAM `.data`+`.bss`
+      unverändert 79 924 Bytes, dahinter `.vbox` 4 300 (die gemerkte GROOVEBOX-Sitzung 2 560, der nächste Stil
+      1 740): zusammen 84 224 von 98 304. Pool 347 092 von 356 352 (Reserve 9 260).
+
 ### Als Nächstes
 
-Etappe 4 (läuft): Bedienung (Bildschirm, Regler, schwarze/weiße Tasten, LEDs), Favoriten in eigenem Speicherobjekt,
-Stilwechsel während der Wiedergabe und ENDLOS (verwandtes Subgenre nach 4–8 min, Tempo ±8 BPM), UI-Goldens.
+- Etappe 5–6 (läuft): Name Vizzbox und Kennung `FM-1_850` (Startbild, ABOUT, Credits, Absturzbild, Update-Loader,
+  THEME), Paket `vizzbox-1.0.fwsc`, Installer `vizzbox-installer.html` mit Test in Chromium (Vizz 1.0/1.x, Skiff 1.4,
+  Entwicklungs-Build: Backup und Konvertierung; Vizz 2.0, Skiff 2.0.1, Vizzbox: nur Installation; Vizz 2.0s Installer
+  über einer Vizzbox), `docs/VIZZBOX-MIDI.md`.
+- Etappe 7: `tests/vizzbox_mutants.py`, Fuzzer für die VIZZBOX-Bedienung (ASan/UBSan), Lesetest von Vizz 2.0 und
+  Skiff 2.0.1 auf einem Gerät mit Favoriten, Budget-Messfall im schwersten Drop, Regressionslauf mit eingebautem,
+  aber inaktivem Produzenten.
+- Etappe 8: Release, Demos, Anleitung, endgültiges `CHANGES.md`.
 
 ## Platz im Flash
 

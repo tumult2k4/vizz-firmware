@@ -1,0 +1,131 @@
+From f7fea0f01588ae27f644e55dbf25b2cf9568a88d Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 21:05:34 +0000
+Subject: [PATCH 11/11] tests: the target budget of a build without the serial
+ console (Vizz 2.0's own)
+
+Without the console (FELUCCA_CDC=0: a release, and the FM-1's development build since the producer) the
+compiler lays the audio ISR out differently: target_budget.py's static measure sees its loops nest a level
+deeper, fm1_alnk0_irq 24 542 against 7 598 with the console, for Vizz 2.0's own code alike.
+tests/target_budget_cdc0.txt is Vizz 2.0's cost so built (patch 0005, FELUCCA_CDC=0 ./build.sh);
+tests/run_tests.sh holds a build to the budget of its own configuration. Skiff's file stays as it was.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ tests/run_tests.sh           |  6 ++-
+ tests/target_budget_cdc0.txt | 85 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 89 insertions(+), 2 deletions(-)
+ create mode 100644 tests/target_budget_cdc0.txt
+
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index ea9ceb8..e2cc4e3 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -479,8 +479,10 @@ else
+     run "ASan/UBSan fuzz: user sample slot headers -> scan -> SAMPLE / GRAIN / SLICE (1000, seed 17)" "$A/fuzz_smp" 1000 17
+ fi
+ 
+-run "regression: target cost of the render loops (pi32v2 disassembly)" python3 tests/target_budget.py \
+-    build/felucca.dis tests/target_budget.txt
++TB=tests/target_budget.txt                          # ((Vizzbox) a build without the serial console: Vizz 2.0's own
++grep -q '^con_puts:$' build/felucca.dis 2>/dev/null || TB=tests/target_budget_cdc0.txt   # cost so built)
++run "regression: target cost of the render loops (pi32v2 disassembly; $TB)" python3 tests/target_budget.py \
++    build/felucca.dis "$TB"
+ 
+ run "installer CLI (fm1_install.py) against a simulated FM-1" python3 tests/install_test.py
+ run "(#21) sample upload CLI: mix (a sound's LEVEL REV DLY) against a fake device" python3 tests/sample_upload_test.py
+diff --git a/tests/target_budget_cdc0.txt b/tests/target_budget_cdc0.txt
+new file mode 100644
+index 0000000..8be7322
+--- /dev/null
++++ b/tests/target_budget_cdc0.txt
+@@ -0,0 +1,85 @@
++# (Vizzbox) FELUCCA target cost budget (tests/target_budget.py) for a build WITHOUT the serial console (FELUCCA_CDC=0:
++# a release, and since the producer the FM-1's development build too, tools/build.py): Vizz 2.0's own cost, built so
++# (patch 0005, FELUCCA_CDC=0 ./build.sh). Without the console the compiler lays the audio ISR out differently (its
++# loops nest a level deeper in this static measure: fm1_alnk0_irq 24 542 against 7 598 with it), so each build is
++# held to the budget of its own configuration (tests/run_tests.sh picks this file when build/felucca.dis has no
++# console). tests/target_budget.txt (Skiff's, with the console) stays as it was. The check allows +10 %.
++analog_render 577
++phase_render 83
++lofi_render 123
++sample_render 128
++formant_render 312
++trio_render 341
++trio_pass 175
++wheel_render 265
++wheel_block 86
++grain_render 1726
++grain_block 133
++phys_render 61
++drum_render 89
++drumx_render 72
++dx_run 368
++noise_render 259
++fm6_render 364
++fm6_op_run 72
++fm6_op_fb 26
++px_modal_block 111
++px_modal_run 192
++px_memb_block 106
++px_string_excite 171
++px_string_run 264
++px_symp_run 252
++dv_metal_run 26
++dv_kick_run 151
++dv_snare_run 154
++dv_clap_run 74
++dv_hat_run 61
++dv_tom_run 75
++dv_rim_run 61
++dv_bell_run 52
++dv_cym_run 67
++dv_out 35
++dv_metal_mix 16
++slicer_track 556
++slice_render 440
++slc_rev 120
++fm1_alnk0_irq 24542
++fm1_timer5_irq 27164
++click_render 30
++mod_begin 168
++mod_voice 34
++mod_end 6
++perf_begin 17
++perf_mute 18
++perf_pre 26
++perf_block 846
++perf_master 30
++perf_gate 37
++perf_dub 22
++duck_block 126
++duck_apply 10
++launch_step 0
++launch_swap 71
++throw_on 186
++throw_off 15
++rev_room 218
++rev_spring 127
++dist_hard 41
++dist_fold 47
++dist_crush 32
++dist_fuzz 59
++rev_hall 1994
++rev_side_mix 8
++cho_mode 167
++mix_part 809
++mix_split 42
++track_insert 3
++ins_drive 279
++ins_swept 228
++mix_spread 70
++esync_coef 0
++mod_depth 25
++smx_render 17
++lpan_render 11
++lpan_mix 64
++drum_smp 139
+-- 
+2.43.0
+

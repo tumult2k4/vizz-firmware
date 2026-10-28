@@ -1,0 +1,2048 @@
+From d5ed13362a29a46e4a1ad66eec00a9f6324b7ae0 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 20:38:21 +0000
+Subject: [PATCH 09/11] Vizzbox: the VIZZBOX's controls, screen, favourites;
+ new styles while playing; ENDLESS
+
+firmware/src/ui_vizzbox.c: K1..K4 GENRE SUBGENRE ENERGY VARIATION, SELECT TEMPO, ALGO LENGTH, PRESET the
+seed, REC NEW, PLAY, HOME + PLAY the GROOVEBOX, FX / ARP / SEQ DROP NOW, BREAK NOW, HOLD, OCT- OCT+; the
+black keys MUTE (a tap) and cut (held), with GLO SOLO, as Skiff's GLO layer, CC 103 saying them; the white
+keys the lead in the song's scale; SAVE / GLO + a white key store / load one of sixteen favourites, kept in
+two sectors of their own at 0x95000 / 0x96000 (fm1_flash_map.h FL_VBOX: no Skiff or Vizz touches them, the
+update loader neither), written while stopped. The screen: genre, subgenre, tempo (EXT on an external
+clock), key, seed, length, the section and its bar, the whole song's energy with the bar playing, the six
+tracks (playing, muted, soloed), the knob turned big, the favourites. Its own LEDs.
+
+firmware/src/producer.c: GENRE, SUBGENRE, the seed or a favourite while playing come in as a DJ would: a
+BREAK and a BUILD of 16 with the tempo gliding over it, then the new style's song from its first DROP, in
+the same key; its sounds go onto the tracks in the BUILD's silent last beat, in the audio ISR (vb_swap:
+prepared in the main loop, every voice stopped there), so a song stays the same bytes. ENDLESS: after 4..8
+minutes of a subgenre, at a DROP's end, a related one (a tempo neighbour within 8 BPM, its own genre twice
+as likely), its scale where it has another; ambient's cycles without a DROP. ENERGY and VARIATION from the
+next section, LENGTH too, TEMPO over four bars. The tails at each bar's tempo.
+
+tests/producer_test.c: every subgenre in every LENGTH (form, tempo, key, registers, voices, the DROPs and
+their kick, CC 104..109), determinism (the same song twice and in another main-loop phase: the same MIDI
+bytes and audio), transport, SEQ MIDI OUT OFF, the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS
+for 60 minutes, favourites over a power cycle, VIZZBOX <-> GROOVEBOX. tests/vizzbox_ui.c and its golden:
+the new screens in every palette. Both in tests/run_tests.sh.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ firmware/hal/fm1_flash_map.h |  14 +-
+ firmware/src/producer.c      | 322 ++++++++++++----
+ firmware/src/producer_isr.c  |  14 +-
+ firmware/src/ui_input.c      |   9 +
+ firmware/src/ui_vizzbox.c    | 392 ++++++++++++++++++--
+ tests/producer_test.c        | 695 +++++++++++++++++++++++++++++++++++
+ tests/run_tests.sh           |   6 +
+ tests/vizzbox_ui.c           | 142 +++++++
+ tests/vizzbox_ui_golden.txt  |  72 ++++
+ tools/vizzbox_render.c       |   7 +-
+ 10 files changed, 1567 insertions(+), 106 deletions(-)
+ create mode 100644 tests/producer_test.c
+ create mode 100644 tests/vizzbox_ui.c
+ create mode 100644 tests/vizzbox_ui_golden.txt
+
+diff --git a/firmware/hal/fm1_flash_map.h b/firmware/hal/fm1_flash_map.h
+index 9025388..0fe8d62 100644
+--- a/firmware/hal/fm1_flash_map.h
++++ b/firmware/hal/fm1_flash_map.h
+@@ -112,10 +112,20 @@ _Static_assert(FL_DATA_HI <= FL_OTA_LO && FL_APP_HI <= FL_DATA_LO, "SMK: windows
+ #define FL_BANK_HI      0x000E9000u                /* sectors; 0xE9000 is the package's BTIF (tools/fm1pkg_make.py) */
+ #define FL_USR_LO       0x000EA000u                /* .. and its USR region, 18 sectors: the bank's other sectors */
+ #define FL_USR_HI       0x000FC000u
+-/* Felucca's own store (projects, user samples; settings; the autosave; Skiff's pattern bank) */
++/* (Vizzbox) the favourites, A / B (ui_vizzbox.c): the plain window's last two sectors, below Felucca's store. No
++ * Skiff and no Vizz touches them; the update loader writes the app area only and erases a sector here only with an
++ * update record at its +0xF00 (ldr_core.c), which these never have */
++#define FL_VBOX_LO      0x00095000u
++#define FL_VBOX_HI      0x00097000u
++#if defined(VIZZBOX) && VIZZBOX
++#define FL_VBOX_OK(off, n) FL_IN(off, n, FL_VBOX_LO, FL_VBOX_HI)
++#else
++#define FL_VBOX_OK(off, n) 0
++#endif
++/* Felucca's own store (projects, user samples; settings; the autosave; Skiff's pattern bank; the Vizzbox's favourites) */
+ #define FL_STORE_OK(off, n) (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
+                              FL_IN(off, n, FL_AUTO_LO, FL_AUTO_HI) || FL_IN(off, n, FL_BANK_LO, FL_BANK_HI) || \
+-                             FL_IN(off, n, FL_USR_LO, FL_USR_HI))
++                             FL_IN(off, n, FL_USR_LO, FL_USR_HI) || FL_VBOX_OK(off, n))
+ /* Where the RAM driver may erase / program. The app build allows only its own
+  * data regions; the update loader (firmware/loader) defines its own window. */
+ #ifndef FL_RANGE_OK
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index 73c23d8..0df1f87 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -49,6 +49,9 @@ static struct {
+     uint16_t sub_bars;               /* ENDLESS: bars since the subgenre came in */
+     uint8_t cprev[4], cn;            /* the chord voiced last (voice leading) */
+     uint8_t sil;                     /* the staged bar ends in a beat of silence (a BUILD's last, before its DROP) */
++    uint8_t xfer;                    /* a new style comes in: the plan's section it starts with (0 none) */
++    uint8_t endl;                    /* .. chosen by ENDLESS (its scale may change, its tempo glides 8 BPM at most) */
++    uint16_t sub_len;                /* ENDLESS: bars the subgenre plays before a related one comes */
+ } vb __attribute__((section(".pool")));
+ #define VQ_DROP 1u
+ #define VQ_BREAK 2u
+@@ -154,11 +157,13 @@ static void vb_hit(uint32_t i, uint32_t lane, uint32_t vel)
+ 
+ /* -------------------------------------------------------- the song --- */
+ static const vb_sub_t *vb_sub(void) { return &VB_SUB[vb.ri % 36u]; }
+-static uint32_t vb_tempo(void)                      /* the subgenre's tempo for this seed, or the knob's */
++static uint32_t vb_ri(const vb_song_t *s) { return (vb_sub0(s->genre % 10u) + s->sub) % 36u; }
++static uint32_t vb_tempo_of(const vb_song_t *s)     /* a song's tempo: its subgenre's for its seed, or the knob's */
+ {
+-    const vb_sub_t *u = vb_sub();
+-    return vb.s.bpm ? vb.s.bpm : u->bpm0 + (vb_hash(vb.s.seed ^ 0x51u) % (uint32_t)(u->bpm1 - u->bpm0 + 1u));
++    const vb_sub_t *u = &VB_SUB[vb_ri(s)];
++    return s->bpm ? s->bpm : u->bpm0 + (vb_hash(s->seed ^ 0x51u) % (uint32_t)(u->bpm1 - u->bpm0 + 1u));
+ }
++static uint32_t vb_tempo(void) { return vb_tempo_of(&vb.s); }
+ /* the forms for LENGTH NORMAL (BRIEF 3.5): a section a byte, its type << 4 | its bars / 4 - 1 */
+ #define VB_FS(t, b) ((uint8_t)((t) << 4 | ((b) / 4 - 1)))
+ static const uint8_t VB_FORM[7][8] = {
+@@ -257,9 +262,16 @@ static void vb_more(void)
+     for (i = 0; i < n; i++)
+         vb.plan[i] = vb.plan[k + i];
+     vb.sec = 0;
+-    vb_sec_put(n++, vb_pct(50) ? VS_BREAK : VS_GROOVE, vb_pct(50) ? 16u : 8u);
+-    vb_sec_put(n++, VS_BUILD, vb_pct(50) ? 16u : 8u);
+-    vb_sec_put(n++, VS_DROP, vb_pct(40) ? 16u : 32u);
++    if (vb.xfer)
++        vb.xfer = (uint8_t)(vb.xfer - k);
++    if (vb_sub()->form == FO_A) {                   /* (ambient: no hard changes, a GROOVE and a BREAK) */
++        vb_sec_put(n++, VS_GROOVE, vb_pct(50) ? 16u : 32u);
++        vb_sec_put(n++, VS_BREAK, vb_pct(50) ? 16u : 32u);
++    } else {
++        vb_sec_put(n++, vb_pct(50) ? VS_BREAK : VS_GROOVE, vb_pct(50) ? 16u : 8u);
++        vb_sec_put(n++, VS_BUILD, vb_pct(50) ? 16u : 8u);
++        vb_sec_put(n++, VS_DROP, vb_pct(40) ? 16u : 32u);
++    }
+     vb.nplan = (uint8_t)n;
+ }
+ 
+@@ -320,7 +332,7 @@ static void vb_song(void)
+ {
+     const vb_sub_t *u;
+     uint32_t i, j;
+-    vb.ri = (uint8_t)((vb_sub0(vb.s.genre) + vb.s.sub) % 36u);
++    vb.ri = (uint8_t)vb_ri(&vb.s);
+     u = vb_sub();
+     vb_stream(VR_SONG, vb.ri, 0);                   /* (the seed and the subgenre: the key, the sounds) */
+     vb.root = (uint8_t)vb_below(12u);
+@@ -330,9 +342,7 @@ static void vb_song(void)
+         vb.prog[j] = (uint8_t)((VB_PROG[i % NELEM(VB_PROG)] >> (4u * j)) & 15u);
+     vb.cbars = u->cbars;
+     {   /* the sounds: one of each role's candidates */
+-        static const uint8_t *const L[1] = {0};
+         const uint8_t li[NTRK] = {u->kit, u->blist, u->clist, u->llist, u->alist, u->flist};
+-        (void)L;
+         for (j = 0; j < NTRK; j++) {
+             const uint8_t *c = VB_LIST[li[j] % NELEM(VB_LIST)];
+             uint32_t n = 0;
+@@ -829,6 +839,7 @@ static void vb_ctl_make(uint32_t e, uint32_t e1)
+         k->flt1 = (int8_t)(h * (int32_t)(vb.sbar + 1u) / (int32_t)len);
+         vb_ramp(k, R_F, P_LEVEL, 20 + 90 * (int32_t)vb.sbar / (int32_t)len, 20 + 90 * (int32_t)(vb.sbar + 1u) / (int32_t)len);
+         vb_ramp(k, R_F, t6, 10 + 100 * (int32_t)vb.sbar / (int32_t)len, 10 + 100 * (int32_t)(vb.sbar + 1u) / (int32_t)len);
++        k->swap = (uint8_t)(vb.sil && vb.sec + 1u == vb.xfer);   /* (a new style next: its sounds there, vb_swap) */
+         if (vb.sil)
+             k->cut = 12;                            /* (the silence: every track's notes end, vb_write, and the
+                                                      * FILTER takes what rings on) */
+@@ -916,14 +927,14 @@ static struct {
+                                                      * start; <= 0 nothing) */
+     uint8_t chn[VB_CHV];                            /* the chord notes' pitches */
+ } vb_vc __attribute__((section(".pool")));
+-static uint32_t vb_q(uint32_t ms)                   /* ms -> quarter steps at the tempo, up */
++static uint32_t vb_q(uint32_t ms)                   /* ms -> quarter steps at the staged bar's tempo, up */
+ {
+-    uint32_t qs = div_samples(2) / 4u;
+-    return (ms * (FS / 1000u) + qs - 1u) / (qs ? qs : 1u);
++    uint32_t qs = FS * 15u / (4u * (vb.bpm ? vb.bpm : 120u));
++    return (ms * (FS / 1000u) + qs - 1u) / qs;
+ }
+-static void vb_tails(void)                          /* the song's sounds' tails at its tempo and swing (vb_load) */
++static void vb_tails(void)                          /* the sounds' tails at the staged bar's tempo and the swing */
+ {
+-    uint32_t k, l, i, sw = (4u * (uint32_t)song.g[G_SWING] + 249u) / 250u;   /* (a swung step's late start: seq.c
++    uint32_t k, l, i, sw = (4u * (uint32_t)vb_sub()->swing + 249u) / 250u;   /* (a swung step's late start: seq.c
+                                                                                 * swing_step_len, in quarter steps) */
+     for (k = 0; k < NTRK; k++)
+         vb_tq[k] = (uint16_t)(vb_q(16u * VB_SND[vb.snd[k] % NELEM(VB_SND)].tail) + sw);
+@@ -933,7 +944,6 @@ static void vb_tails(void)                          /* the song's sounds' tails
+         if (VB_KIT[i].snd == vb.snd[R_D])
+             for (l = 0; l < NLANE; l++)
+                 vb_lq[l] = (uint16_t)(vb_q(32u * VB_KIT[i].ring[l]) + sw);
+-    memset(&vb_vc, 0, sizeof vb_vc);
+ }
+ /* a note on step s of o: where it ends (quarter steps): its TIEs after it, then the GATE of its last step */
+ static int32_t vb_end(const step_t *o, uint32_t s, uint32_t gate)
+@@ -1127,7 +1137,7 @@ static void vb_write(step_t *const *dst)
+     vb_stream(VR_PLAN, vb.nsec, 1u);                /* (a BUILD's last bar: a beat of silence before the drop, where
+                                                      * the style has it, else by chance) */
+     vb.sil = (uint8_t)(vb_cur()->type == VS_BUILD && vb_left() == 1u &&
+-                       ((vb_sub()->flags & VF_SIL) || vb_pct(35u + vb.s.var / 2u)));
++                       ((vb_sub()->flags & VF_SIL) || vb_pct(35u + vb.s.var / 2u) || vb.sec + 1u == vb.xfer));
+     for (k = 0; k < NTRK; k++) {
+         vb_o = dst[k];
+         vb_clear();
+@@ -1169,13 +1179,17 @@ static void vb_time(int16_t *tv, uint32_t k)
+     tv[4] = DIR_FWD;
+ }
+ /* playing: the next bar into launch_q, armed for the end of the bar playing (LOOP: 16 steps, its pass) */
++static void vb_restyle(void);
+ static void vb_stage(void)
+ {
+     step_t *dst[NTRK];
+     uint32_t k;
+     for (k = 0; k < NTRK; k++)
+         dst[k] = launch_q[k].step;
++    vb_tails();                                     /* (at this bar's tempo: it may glide) */
+     vb_write(dst);
++    if (vb.xfer && vb.sec + 1u == vb.xfer && vb_left() == 1u)
++        vb_restyle();                               /* (the new style after this bar) */
+     for (k = 0; k < NTRK; k++) {
+         launch_t *q = &launch_q[k];
+         int16_t tv[5];
+@@ -1200,21 +1214,88 @@ static void vb_next(void);
+ static void vb_advance(void)
+ {
+     vb.bar++;
++    vb.sub_bars++;
++    if (vb.xfer)
++        vb.req &= (uint8_t)~(VQ_DROP | VQ_BREAK);   /* (a new style coming in: its way, not DROP NOW / BREAK NOW) */
+     if (vb.req & (VQ_DROP | VQ_BREAK)) {            /* DROP NOW / BREAK NOW: the section ends here */
+         vb.plan[vb.sec].bars = (uint8_t)(vb.sbar + 1u);
+         vb.sbar = (uint8_t)(vb.plan[vb.sec].bars - 1u);
+     }
+-    if (++vb.sbar < vb_cur()->bars)
++    if (++vb.sbar >= vb_cur()->bars) {
++        vb.sbar = 0;
++        if (!(vb.req & VQ_HOLD) || (vb.req & (VQ_DROP | VQ_BREAK))) {   /* (HOLD: the section again) */
++            vb.nsec++;
++            vb_next();
++        }
++    }
++    if (vb.bpm != vb.bpm_to && (!vb.xfer || vb.sec + 1u == vb.xfer)) {   /* the tempo glides: to a new style's over its
++                                                     * BUILD, to the TEMPO knob's over four bars */
++        int32_t d = (int32_t)vb.bpm_to - (int32_t)vb.bpm, n = vb.xfer ? (int32_t)vb_left() : 4;
++        vb.bpm = (uint8_t)((int32_t)vb.bpm + (d / n ? d / n : d > 0 ? 1 : -1));
++    }
++}
++/* ENDLESS (BRIEF 2.5): a related subgenre, of those whose tempo is within 8 BPM of the tempo playing; one of the same
++ * genre twice as likely. Onto the knobs, as a turn of them would put it */
++static void vb_related(void)
++{
++    uint8_t c[72];
++    uint32_t i, n = 0, g;
++    vb_stream(VR_PLAN, vb.nsec, 2u);
++    for (i = 0; i < 36u; i++)
++        if (i != vb.ri && VB_SUB[i].bpm0 <= vb.bpm + 8u && VB_SUB[i].bpm1 + 8u >= vb.bpm) {
++            c[n++] = (uint8_t)i;
++            if (i >= vb_sub0(vb.s.genre) && i < vb_sub0(vb.s.genre) + VB_NSUB[vb.s.genre % 10u])
++                c[n++] = (uint8_t)i;
++        }
++    if (!n)
+         return;
+-    vb.sbar = 0;
+-    if ((vb.req & VQ_HOLD) && !(vb.req & (VQ_DROP | VQ_BREAK)))
+-        return;                                     /* HOLD: the section again */
+-    vb.nsec++;
+-    vb_next();
++    i = c[vb_below(n)];
++    for (g = 0; g < 9u && i >= vb_sub0(g + 1u); g++)
++        ;
++    vb.k.genre = (uint8_t)g;
++    vb.k.sub = (uint8_t)(i - vb_sub0(g));
++    vb.k.bpm = 0;
++    vb.endl = 1;
++    vb.chg |= 2u;
++}
++static void vb_sub_len(void)                         /* ENDLESS: 4 .. 8 minutes of this subgenre, in bars (4 minutes:
++                                                     * bpm bars) */
++{
++    vb_stream(VR_PLAN, vb.nsec, 4u);
++    vb.sub_len = (uint16_t)(vb.bpm + vb_below(vb.bpm + 1u));
++    vb.sub_bars = 0;
+ }
+ static void vb_next(void)
+ {
+     uint32_t i, j, t, d = VB_PLAN;
++    if (vb.s.len == VL_ENDLESS && !vb.xfer && !(vb.chg & 2u) && vb.sub_bars >= vb.sub_len &&
++        vb_cur()->type == (vb_sub()->form == FO_A ? VS_BREAK : VS_DROP))
++        vb_related();                               /* (ENDLESS: after a DROP (ambient: a BREAK), now and then a
++                                                     * related subgenre) */
++    if ((vb.chg & 2u) && !vb.xfer) {                /* a new style (BRIEF 2.2, 2.5): a BREAK, a BUILD of 16 with the
++                                                     * tempo gliding over it, then the new style (vb_restyle) */
++        i = vb.sec + 1u;
++        if (vb_cur()->type != VS_BREAK)
++            vb_sec_put(i++, VS_BREAK, 8u);
++        vb_sec_put(i++, VS_BUILD, 16u);
++        vb_sec_put(i, VS_DROP, 16u);                /* (its place: vb_restyle puts the new style's song there) */
++        vb.nplan = (uint8_t)(i + 1u);
++        vb.xfer = (uint8_t)i;
++        t = vb_tempo_of(&vb.k);
++        if (vb.endl)                                /* (ENDLESS: 8 BPM at most, inside the new style's range) */
++            t = (uint32_t)clamp(clamp((int32_t)t, vb.bpm - 8, vb.bpm + 8), VB_SUB[vb_ri(&vb.k)].bpm0,
++                                VB_SUB[vb_ri(&vb.k)].bpm1);
++        vb.bpm_to = (uint8_t)t;
++        vb.chg &= (uint8_t)~2u;
++    }
++    if (vb.chg & 4u) {                              /* LENGTH: ENDLESS goes on past the plan, the others end it */
++        if (vb.k.len == VL_ENDLESS && vb.plan[vb.nplan - 1u].type == VS_OUTRO && vb.nplan > vb.sec + 2u)
++            vb.nplan--;
++        else if (vb.k.len != VL_ENDLESS && vb.s.len == VL_ENDLESS)
++            vb_sec_put(vb.nplan < VB_PLAN ? vb.nplan++ : VB_PLAN - 1u, VS_OUTRO, 16u);
++        vb.s.len = vb.k.len;
++        vb.chg &= (uint8_t)~4u;
++    }
+     if (vb.req & (VQ_DROP | VQ_BREAK)) {            /* the rest of the plan from its next DROP, a BUILD (and BREAK) before */
+         uint32_t brk = (vb.req & VQ_BREAK) != 0u, build = brk || vb_cur()->type == VS_BREAK || vb_cur()->type == VS_INTRO
+                        ? 8u : 4u;
+@@ -1248,10 +1329,10 @@ static void vb_next(void)
+     for (i = 0, j = 0; i < vb.sec; i++)
+         j += vb.plan[i].type == t;
+     vb.occ = (uint8_t)j;
+-    if (vb.chg) {                                   /* ENERGY, VARIATION: from this section on */
++    if (vb.chg & 1u) {                              /* ENERGY, VARIATION: from this section on */
+         vb.s.energy = vb.k.energy;
+         vb.s.var = vb.k.var;
+-        vb.chg = 0;
++        vb.chg &= (uint8_t)~1u;
+     }
+ }
+ 
+@@ -1305,74 +1386,167 @@ static void vb_give(void)
+ }
+ 
+ /* ------------------------------------------------------- the tracks --- */
+-/* track k: engine en's preset pre as PRESETS loads it (no undo) at level lvl, and what the role sets of the rest */
+-static void vb_sound(uint32_t k, uint32_t en, uint32_t pre, uint32_t lvl)
++/* track k's sound into p (its other parameters as they are): engine en's preset pi as PRESETS loads it, at level lvl,
++ * what the role sets of the rest; its DRUM-X kit (DX_KITS + 1, 0 none) */
++static uint32_t vb_fill(uint32_t k, int16_t *p, uint32_t en, uint32_t pi, uint32_t lvl)
+ {
+-    track_t *t = &trk[k];
+-    const engine_t *e = ENGINES[en % NENGINES];
+-    uint32_t pi = e->npresets ? pre % e->npresets : 0u, kit;
+-    fm1_irq_off();
+-    t->eng_req = (uint8_t)(en % NENGINES);
+-    t->user = 0;
+-    t->preset = (uint8_t)pi;
+-    preset_fill(t->p, e, pi);
+-    kit = t->eng_req == ENGI_DRUMX ? DRUMX_PKIT[pi % NELEM(DRUMX_PKIT)] : 0u;
+-    if (kit)
+-        memcpy(dx_kit, DX_KITS[kit - 1u], sizeof dx_kit);
+-    t->p[P_LEVEL] = vb_lvl[k] = (uint8_t)lvl;
+-    t->p[P_PAN] = (int16_t)(k == R_A ? 18 : k == R_L ? -8 : 0);
+-    t->p[P_AMODE] = 0;
+-    t->p[P_SLCR] = 0;
+-    t->p[P_CHRD] = 0;
+-    t->p[P_DIR] = DIR_FWD;
+-    t->p[P_ROOT] = vb.root;
+-    t->p[P_SCALE] = vb.scale;
+-    t->p[P_QUANT] = k == R_L ? QN_WHITE : QN_OFF;   /* (the white keys play the lead in the song's scale) */
+-    t->p[P_TRANS] = 0;
++    const engine_t *e = ENGINES[en];
++    preset_fill(p, e, pi);
++    p[P_LEVEL] = vb_lvl[k] = (uint8_t)lvl;
++    p[P_PAN] = (int16_t)(k == R_A ? 18 : k == R_L ? -8 : 0);
++    p[P_AMODE] = 0;
++    p[P_SLCR] = 0;
++    p[P_CHRD] = 0;
++    p[P_DIR] = DIR_FWD;
++    p[P_ROOT] = vb.root;
++    p[P_SCALE] = vb.scale;
++    p[P_QUANT] = k == R_L ? QN_WHITE : QN_OFF;      /* (the white keys play the lead in the song's scale) */
++    p[P_TRANS] = 0;
+     if (k != R_C && k != R_D && !e->oneshot)
+-        t->p[P_VOICE] = V_LEGATO;                   /* (one voice: the budget) */
++        p[P_VOICE] = V_LEGATO;                      /* (one voice: the budget) */
+     {   /* the voice budget (8 at once, core.h): releases no longer than the role can carry, the kit's long lanes shorter */
+         static const uint8_t REL[NTRK] = {127, 40, 70, 60, 40, 90};
+         static const int8_t LDEC[NLANE] = {0, -8, -12, -8, -24, -20, -12, -32};
+         uint32_t r = k == R_C && vb_sub()->chords != CR_PAD ? 48u : REL[k], l;
+-        if (t->p[P_REL] > (int16_t)r)
+-            t->p[P_REL] = (int16_t)r;
+-        if (t->eng_req == ENGI_DRUM)
++        if (p[P_REL] > (int16_t)r)
++            p[P_REL] = (int16_t)r;
++        if (en == ENGI_DRUM)
+             for (l = 0; l < NLANE; l++)
+-                t->p[P_LDECAY0 + l] = LDEC[l];
++                p[P_LDECAY0 + l] = LDEC[l];
+     }
+-    t->p[P_DKSRC] = (int16_t)((vb_sub()->flags & VF_4) && (k == R_B || k == R_C || k == R_A) ? 1 : 0);
+-    t->p[P_DKAMT] = (int16_t)(k == R_B ? 70 + vb.s.energy / 4u : 50 + vb.s.energy / 4u);
+-    t->p[P_DKREL] = 60;
++    p[P_DKSRC] = (int16_t)((vb_sub()->flags & VF_4) && (k == R_B || k == R_C || k == R_A) ? 1 : 0);
++    p[P_DKAMT] = (int16_t)(k == R_B ? 70 + vb.s.energy / 4u : 50 + vb.s.energy / 4u);
++    p[P_DKREL] = 60;
+     if (k == R_C)
+-        t->p[P_DLY] = (int16_t)((vb_sub()->dly & 15u) * 8u);
++        p[P_DLY] = (int16_t)((vb_sub()->dly & 15u) * 8u);
+     if (k == R_B && vb_sub()->bass == BS_WOB) {     /* the wobble: the LFO on the filter, in time */
+-        t->p[P_LD_FLT] = 52;
+-        t->p[P_LSYNC] = 6;
+-        t->p[P_LTRIG] = 0;
++        p[P_LD_FLT] = 52;
++        p[P_LSYNC] = 6;
++        p[P_LTRIG] = 0;
+     }
++    return en == ENGI_DRUMX ? DRUMX_PKIT[pi % NELEM(DRUMX_PKIT)] : 0u;
++}
++static uint32_t vb_pre(uint32_t en, uint32_t pre)   /* a preset index the engine has */
++{
++    return ENGINES[en]->npresets ? pre % ENGINES[en]->npresets : 0u;
++}
++static uint32_t vb_lvl_of(uint32_t k)               /* track k's level in the song: its sound's, the subgenre's trim */
++{
++    return (uint32_t)clamp((int32_t)VB_SND[vb.snd[k] % NELEM(VB_SND)].lvl + VB_TRIM[vb.ri % 36u], 0, 127);
++}
++/* track k: engine en's preset pre as PRESETS loads it (no undo) at level lvl, and what the role sets of the rest */
++static void vb_sound(uint32_t k, uint32_t en, uint32_t pre, uint32_t lvl)
++{
++    track_t *t = &trk[k];
++    uint32_t kit;
++    en %= NENGINES;
++    fm1_irq_off();
++    t->eng_req = (uint8_t)en;
++    t->user = 0;
++    t->preset = (uint8_t)vb_pre(en, pre);
++    if ((kit = vb_fill(k, t->p, en, t->preset, lvl)) != 0u)
++        memcpy(dx_kit, DX_KITS[kit - 1u], sizeof dx_kit);
+     fm6_track_loaded(t);
+     panic_req |= (uint8_t)(1u << k);
+     fm1_irq_on();
+ }
++/* the globals a subgenre sets (vb_load; vb_swap: the swing, delay and reverb, the tempo aside) */
++static void vb_globals(int16_t *g)
++{
++    const vb_sub_t *u = vb_sub();
++    g[0] = u->swing;
++    g[1] = (int16_t)(u->dly >> 4);
++    g[2] = (int16_t)(u->flags & VF_DUB ? 92 : 55);
++    g[3] = (int16_t)(u->flags & VF_DUB ? 1 : u->form == FO_A || u->form == FO_H || u->form == FO_D ? 2 : 0);
++    g[4] = (int16_t)(u->form == FO_A ? 120 : 90);
++}
++static const uint8_t VB_GID[5] = {G_SWING, G_DTIME, G_DFDBK, G_RTYPE, G_RSIZE};
++/* a new style (vb.k) from the next section on; the bar just staged is its BUILD's last (vb_stage), its last beat
++ * silent: its song in this key (ENDLESS: its scale, where the new style has another), its form from its first DROP
++ * on, the tempo the BUILD glided to, its sounds made ready for the ISR to put on the tracks in that beat (vb_swap) */
++static void vb_restyle(void)
++{
++    vb_sec_t cur = *vb_cur();
++    uint32_t root = vb.root, sc = vb.scale, bpm = vb.bpm, i, k, n;
++    vb.s = vb.k;
++    vb_song();
++    vb.root = (uint8_t)root;
++    if (!vb.endl || VB_SCALES[vb_sub()->scale][0] == sc || VB_SCALES[vb_sub()->scale][1] == sc)
++        vb.scale = (uint8_t)sc;
++    vb.bpm = vb.bpm_to = (uint8_t)bpm;
++    for (i = 0; i < vb.nplan && vb.plan[i].type != VS_DROP; i++)
++        ;
++    if (i == vb.nplan)                              /* (no DROP, ambient: from its first GROOVE) */
++        i = 1u;
++    n = vb.nplan - i;
++    for (k = 0; k < n; k++)                         /* (down: the form from its DROP on after this section) */
++        vb.plan[1u + k] = vb.plan[i + k];
++    vb.plan[0] = cur;
++    vb.nplan = (uint8_t)(n + 1u);
++    vb.sec = 0;
++    vb.xfer = vb.endl = 0;
++    vb_sub_len();
++    vb_tails();
++    memset(&vb_vc, 0, sizeof vb_vc);                /* (vb_swap stops every voice in the silent beat: nothing rings
++                                                     * on into the DROP) */
++    for (k = 0; k < NTRK; k++) {
++        const vb_snd_t *d = &VB_SND[vb.snd[k] % NELEM(VB_SND)];
++        uint32_t en = d->eng % NENGINES, kit;
++        memcpy(vb_nx.p[k], trk[k].p, sizeof vb_nx.p[k]);
++        vb_nx.eng[k] = (uint8_t)en;
++        vb_nx.pre[k] = (uint8_t)vb_pre(en, d->pre);
++        if ((kit = vb_fill(k, vb_nx.p[k], en, vb_nx.pre[k], vb_lvl_of(k))) != 0u)
++            vb_nx.kit = (uint8_t)kit;
++    }
++    vb_globals(vb_nx.g);
++}
++/* (the audio ISR, producer_isr.c: the silent beat before a new style's DROP) the sounds vb_restyle made ready onto the
++ * tracks, the subgenre's globals; every voice stopped there (under the FILTER's cut, as an engine switch stops them
++ * after its fade, voice.c engine_block): the new sounds' releases do not hold the old notes on. MUTE and the pattern's
++ * time stay */
++static void vb_swap(void)
++{
++    uint32_t k, i;
++    for (k = 0; k < NTRK; k++) {
++        track_t *t = &trk[k];
++        for (i = 0; i < NVOICE; i++) {
++            voice_t *v = &t->v[i];
++            v->active = v->gate = 0;
++            v->stage = v->stage2 = 0;
++            v->env = v->env_out = v->env2 = 0;
++        }
++        t->nmono = 0;
++        t->mono_note = 0;
++        for (i = 0; i < P_COUNT; i++)
++            if (i != P_MUTE && i != P_DIR && (i < P_SLEN || i > P_SGATE))
++                t->p[i] = vb_nx.p[k][i];
++        t->eng_req = vb_nx.eng[k];
++        t->user = 0;
++        t->preset = vb_nx.pre[k];
++    }
++    if (vb_nx.kit)
++        memcpy(dx_kit, DX_KITS[vb_nx.kit - 1u], sizeof dx_kit);
++    vb_nx.kit = 0;
++    for (i = 0; i < 5u; i++)
++        song.g[VB_GID[i]] = vb_nx.g[i];
++    panic_req = (uint8_t)((1u << NTRK) - 1u);
++    vb_swapped = 1;
++}
+ /* a new song into the tracks, stopped: its sounds, the globals it sets (tempo, swing, delay, reverb), its first bar */
+ static void vb_load(void)
+ {
+-    const vb_sub_t *u = vb_sub();
+     step_t *dst[NTRK];
+     uint32_t k;
+     int16_t tv[5];
+-    for (k = 0; k < NTRK; k++) {
+-        const vb_snd_t *s = &VB_SND[vb.snd[k] % NELEM(VB_SND)];
+-        vb_sound(k, s->eng, s->pre, (uint32_t)clamp((int32_t)s->lvl + VB_TRIM[vb.ri % 36u], 0, 127));
+-    }
+-    song.g[G_BPM] = vb.bpm;                          /* (the tails in steps at it, and its swing) */
+-    song.g[G_SWING] = u->swing;
++    int16_t g[5];
++    for (k = 0; k < NTRK; k++)
++        vb_sound(k, VB_SND[vb.snd[k] % NELEM(VB_SND)].eng, VB_SND[vb.snd[k] % NELEM(VB_SND)].pre, vb_lvl_of(k));
++    song.g[G_BPM] = vb.bpm;
++    vb_globals(g);
++    for (k = 0; k < 5u; k++)
++        song.g[VB_GID[k]] = g[k];
+     vb_tails();
+-    song.g[G_DTIME] = (int16_t)(u->dly >> 4);
+-    song.g[G_DFDBK] = (int16_t)(u->flags & VF_DUB ? 92 : 55);
+-    song.g[G_RTYPE] = (int16_t)(u->flags & VF_DUB ? 1 : u->form == FO_A || u->form == FO_H || u->form == FO_D ? 2 : 0);
+-    song.g[G_RSIZE] = (int16_t)(u->form == FO_A ? 120 : 90);
++    memset(&vb_vc, 0, sizeof vb_vc);
+     sel_set(R_L);                                   /* (the keys: the lead) */
+     vb.bar = 0;
+     vb.sec = vb.sbar = 0;
+@@ -1381,7 +1555,8 @@ static void vb_load(void)
+     vb.act = 0;
+     vb.req &= VQ_HOLD;
+     vb.tape = 0;
+-    vb.sub_bars = 0;
++    vb.chg = vb.xfer = vb.endl = 0;
++    vb_sub_len();
+     for (k = 0; k < NTRK; k++) {
+         dst[k] = trk[k].step;
+         vb_time(tv, k);
+@@ -1419,6 +1594,11 @@ static int vb_start(void)
+ static void vb_poll(void)
+ {
+     uint32_t k, armed = 0;
++    if (vb_swapped) {                               /* (a new style's sounds went on in the silent beat: FM6's patches) */
++        vb_swapped = 0;
++        for (k = 0; k < NTRK; k++)
++            fm6_track_loaded(&trk[k]);
++    }
+     if (!vb.own || !vb_run)
+         return;
+     for (k = 0; k < NTRK; k++) {
+diff --git a/firmware/src/producer_isr.c b/firmware/src/producer_isr.c
+index 8b1d74c..9d13272 100644
+--- a/firmware/src/producer_isr.c
++++ b/firmware/src/producer_isr.c
+@@ -24,6 +24,7 @@ typedef struct {
+     uint8_t thr_at;
+     uint8_t fx, fx_at, fx_to;                       /* an FX layer effect (PF_*; PF_N none) on steps fx_at .. fx_to */
+     uint8_t end;                                    /* the song is over: stop on its first step */
++    uint8_t swap;                                   /* a new style's sounds onto the tracks at step `cut` (vb_swap) */
+     struct { uint8_t k, id; int8_t v0, v1; } rp[VB_NRAMP];   /* track k's parameter id: v0 on the first step .. v1 on
+                                                      * the last (k 0xFF: none) */
+ } vb_ctl_t;
+@@ -36,6 +37,15 @@ static uint8_t vb_out __attribute__((section(".pool")));     /* SEQ MIDI OUT and
+ static uint8_t vb_e __attribute__((section(".pool")));       /* CC 105 sent last */
+ static uint8_t vb_fxon __attribute__((section(".pool")));    /* the effect held + 1 (0: none) */
+ static void seq_stop(void);
++/* a new style's sounds, made ready in the main loop (producer.c vb_restyle) for the ISR to put on (vb_swap): each
++ * track's parameters, engine, preset; a DRUM-X kit; the subgenre's globals. After .bss (app.ld .vbox), not zeroed */
++static struct {
++    int16_t p[NTRK][P_COUNT];
++    uint8_t eng[NTRK], pre[NTRK], kit;
++    int16_t g[5];
++} vb_nx __attribute__((section(".vbox")));
++static volatile uint8_t vb_swapped __attribute__((section(".pool")));   /* vb_swap ran: the main loop loads FM6's */
++static void vb_swap(void);
+ 
+ static void vb_cc(uint32_t n, uint32_t v)
+ {
+@@ -73,9 +83,11 @@ static __attribute__((noinline)) void vb_isr(void)
+         if (!s && c->bpm && !song.g[G_CLOCK])
+             song.g[G_BPM] = c->bpm;
+         perf_k[0] = (int16_t)(c->cut && s >= c->cut ? -100 : vb_line(c->flt0, c->flt1, s));
++        if (c->swap && s == c->cut)
++            vb_swap();
+         perf_k[2] = (int16_t)(c->thr && s >= c->thr_at ? c->thr : 0);
+         vb_hold_fx(c->fx < PF_N && s >= c->fx_at && s <= c->fx_to ? c->fx : PF_N);
+-        for (i = 0; i < VB_NRAMP; i++)
++        for (i = 0; i < VB_NRAMP && !(c->swap && s >= c->cut); i++)
+             if (c->rp[i].k < NTRK)
+                 trk[c->rp[i].k].p[c->rp[i].id] = (int16_t)vb_line(c->rp[i].v0, c->rp[i].v1, s);
+         e = (uint32_t)vb_line(c->cc[1], c->e1, s);
+diff --git a/firmware/src/ui_input.c b/firmware/src/ui_input.c
+index 43d21ba..e66dab0 100644
+--- a/firmware/src/ui_input.c
++++ b/firmware/src/ui_input.c
+@@ -380,6 +380,9 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
+     smk_pads_out(nl, nd, nb, nm);
+ }
+ #endif
++#if VIZZBOX
++static void vb_leds(void);                              /* ((Vizzbox) ui_vizzbox.c) */
++#endif
+ static void ui_leds(void)
+ {
+     uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0}, own[FM1_NCOL] = {0}, og[FM1_NCOL] = {0}, nb[FM1_NCOL] = {0};
+@@ -390,6 +393,12 @@ static void ui_leds(void)
+     static uint8_t ready;
+     if (fm1_led_anim_on())                              /* the power-on sweep has them (main.c boot_leds) */
+         return;
++#if VIZZBOX
++    if (vb_mode) {
++        vb_leds();                                      /* ((Vizzbox) the VIZZBOX's own) */
++        return;
++    }
++#endif
+     if (!ready) {
+         led_pos_init();
+         ready = 1;
+diff --git a/firmware/src/ui_vizzbox.c b/firmware/src/ui_vizzbox.c
+index 5121e9c..5be5f10 100644
+--- a/firmware/src/ui_vizzbox.c
++++ b/firmware/src/ui_vizzbox.c
+@@ -1,10 +1,20 @@
+ /* SPDX-License-Identifier: GPL-3.0-only */
+ /* (Vizzbox) The VIZZBOX screen and its controls (BRIEF-VIZZBOX.md 2): the producer's knobs and keys, the favourites,
+- * the switch to the GROOVEBOX (Skiff's whole interface) and back. Included by felucca.c after producer.c */
++ * the switch to the GROOVEBOX (Skiff's whole interface) and back. Included by felucca.c after producer.c.
++ *   K1 GENRE  K2 SUBGENRE  K3 ENERGY  K4 VARIATION  SELECT TEMPO  ALGO LENGTH (SHORT NORMAL ENDLESS)  PRESET the seed
++ *   PLAY start / stop          REC NEW (a new seed)          HOME + PLAY the GROOVEBOX (there: HOME + PLAY back)
++ *   FX DROP NOW  ARP BREAK NOW  SEQ HOLD (the section again, until pressed again)    OCT- OCT+ the keys' octave
++ *   black keys F#3 G#3 A#3 C#4 D#4 F#4: T1..T6 MUTE (a tap; held: silent while held), with GLO held SOLO while held
++ *   white keys: the lead's sound in the song's scale (Skiff's QNT WHITE: producer.c vb_fill)
++ *   SAVE held + a white key: the song into that favourite; GLO held + a white key: that favourite onto the knobs
++ * While a song plays, GENRE, SUBGENRE, the seed, LENGTH, ENERGY and VARIATION come in at the next section (a new style
++ * over a BREAK and a BUILD, producer.c vb_next), TEMPO glides there over four bars. */
+ 
+ /* the mode: 1 VIZZBOX (its screen, its controls), 0 GROOVEBOX. Kept in the settings (CPU2_BYTE bit 4: set, the
+  * GROOVEBOX was last), so a unit starts where it was left; a new one in the VIZZBOX */
+ #define VB_MODE_BIT 16u
++static void vb_fav_load(void);
++static void vb_knob_song(void);
+ static void vb_mode_boot(void)
+ {
+     vb_mode = !(CPU2_BYTE & VB_MODE_BIT);
+@@ -12,6 +22,8 @@ static void vb_mode_boot(void)
+     vb.k.var = 40;
+     vb.k.len = VL_NORMAL;
+     vb.k.seed = 0x5EEDu;
++    vb_fav_load();
++    vb_knob_song();
+ }
+ static void vb_mode_set(uint32_t m)
+ {
+@@ -20,80 +32,398 @@ static void vb_mode_set(uint32_t m)
+     vb_mode = (uint8_t)m;
+     CPU2_BYTE = (uint8_t)(m ? CPU2_BYTE & ~VB_MODE_BIT : CPU2_BYTE | VB_MODE_BIT);
+     settings_save();
+-    if (!m && !song.playing)
++    perf_cut = perf_solo = 0;                       /* (the black keys held: theirs no more) */
++    if (!m && !song.playing) {
+         vb_give();                                  /* (the GROOVEBOX's music back) */
++        vb_resend = 2;                              /* (BRIEF 5: into the GROOVEBOX, CC 104 0 once) */
++    }
++    if (m && vb.own)
++        sel_set(R_L);                               /* (the keys: the lead) */
+     ui.force = 1;
+     lcd_fill(0, 0, 240, 240, T_BG);
+ }
+ 
+-/* the knobs' song: GENRE, SUBGENRE, ENERGY, VARIATION; while playing they come in at the next section */
+-static void vb_knob(uint32_t k, int32_t s)
++/* ------------------------------------------------------- favourites --- */
++/* (BRIEF 2.4) sixteen, one a white key (F3 .. G5): only what makes the song (genre, subgenre, seed, energy, variation,
++ * length, tempo), so one plays the same song again, bit for bit, from PLAY. In two sectors of their own, A 0x95000 and
++ * B 0x96000: the FM-1's flash between the app area and Skiff's store, which Skiff 2.0.1 and Vizz 2.0 never read, write
++ * nor erase (fm1_flash_map.h FL_VBOX), nor does an update (the loader writes the app area; it erases a sector there
++ * only with an update record at its +0xF00, never in these). A record of its own: VB_FMAGIC, a sequence number, the
++ * sixteen, a CRC; the newer valid copy counts, a change goes into the other one, written while stopped (an erase
++ * stops the audio) */
++#define VB_FAV_OFF 0x95000u
++#define VB_NFAV 16u
++#define VB_FMAGIC 0x31464256u                       /* "VBF1" */
++typedef struct {
++    uint32_t magic, seq;
++    vb_song_t f[VB_NFAV];                           /* genre 0xFF: empty */
++    uint32_t crc;
++} vb_favs_t;
++static vb_favs_t vb_fav __attribute__((section(".pool")));
++static uint8_t vb_fav_dirty __attribute__((section(".pool")));   /* changed: to be written once stopped */
++static uint8_t vb_fav_at __attribute__((section(".pool")));      /* the copy that holds the newest */
++static uint32_t vb_fav_crc(const vb_favs_t *f) { return st_crc32(f, (uint32_t)((const uint8_t *)&f->crc - (const uint8_t *)f)); }
++static void vb_fav_load(void)
++{
++    vb_favs_t b;
++    uint32_t c;
++    memset(&vb_fav, 0xFF, sizeof vb_fav);
++    for (c = 0; c < 2u; c++)
++        if (!st_read(VB_FAV_OFF + c * ST_SECTOR, &b, sizeof b) && b.magic == VB_FMAGIC && b.crc == vb_fav_crc(&b) &&
++            (vb_fav.magic != VB_FMAGIC || b.seq - vb_fav.seq < 0x80000000u)) {
++            vb_fav = b;
++            vb_fav_at = (uint8_t)c;
++        }
++}
++static void vb_fav_poll(void)
++{
++    uint32_t off;
++    if (!vb_fav_dirty || song.playing || !flash_ok)
++        return;
++    vb_fav_dirty = 0;
++    vb_fav.seq = vb_fav.magic == VB_FMAGIC ? vb_fav.seq + 1u : 1u;
++    vb_fav.magic = VB_FMAGIC;
++    vb_fav.crc = vb_fav_crc(&vb_fav);
++    off = VB_FAV_OFF + (vb_fav_at ^ 1u) * ST_SECTOR;
++    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav))
++        ui_message("SAVE ERROR");
++    else
++        vb_fav_at ^= 1u;
++}
++
++/* ----------------------------------------------------------- controls --- */
++static uint8_t vb_ov __attribute__((section(".pool")));      /* the control turned last (VO_*), shown big */
++static uint32_t vb_ov_t __attribute__((section(".pool")));   /* .. when */
++enum { VO_NONE, VO_GENRE, VO_SUB, VO_ENERGY, VO_VAR, VO_TEMPO, VO_LEN, VO_SEED };
++static const char *const VB_LEN[3] = {"SHORT", "NORMAL", "ENDLESS"};
++static const char *const VB_ROLE[NTRK] = {"DRUMS", "BASS", "CHORDS", "LEAD", "ARP", "FX"};
++/* stopped: the knobs' song made (its key, tempo and plan on the screen; PLAY plays exactly it) */
++static void vb_knob_song(void)
++{
++    if (song.playing && vb.own)
++        return;
++    vb.s = vb.k;
++    vb_song();
++}
++static void vb_knob(uint32_t o, int32_t s)
+ {
+     vb_song_t *w = &vb.k;
+-    if (k == 0u) {
+-        w->genre = (uint8_t)clamp((int32_t)w->genre + (s > 0 ? 1 : -1), 0, 9);
++    int live = vb.own && song.playing;
++    uint32_t chg = 2u;
++    if (o == VO_GENRE) {
++        w->genre = (uint8_t)clamp((int32_t)w->genre + s, 0, 9);
+         w->sub = 0;
+-    } else if (k == 1u)
+-        w->sub = (uint8_t)clamp((int32_t)w->sub + (s > 0 ? 1 : -1), 0, VB_NSUB[w->genre % 10u] - 1);
+-    else if (k == 2u)
+-        w->energy = (uint8_t)clamp((int32_t)w->energy + s, 0, 100);
+-    else
+-        w->var = (uint8_t)clamp((int32_t)w->var + s, 0, 100);
+-    if (k < 2u)
+         w->bpm = 0;                                 /* (the new style's own tempo) */
+-    if (vb.own && song.playing)
+-        vb.chg = 1;
++    } else if (o == VO_SUB) {
++        w->sub = (uint8_t)clamp((int32_t)w->sub + s, 0, VB_NSUB[w->genre % 10u] - 1);
++        w->bpm = 0;
++    } else if (o == VO_ENERGY || o == VO_VAR) {
++        uint8_t *v = o == VO_ENERGY ? &w->energy : &w->var;
++        *v = (uint8_t)clamp((int32_t)*v + s, 0, 100);
++        chg = 1u;
++    } else if (o == VO_LEN) {
++        w->len = (uint8_t)clamp((int32_t)w->len + s, VL_SHORT, VL_ENDLESS);
++        chg = 4u;
++    } else if (o == VO_SEED) {
++        w->seed = (uint16_t)(w->seed + s);
++    } else {                                        /* TEMPO: the style's range and some (BRIEF 2.2) */
++        const vb_sub_t *u = &VB_SUB[vb_ri(w)];
++        w->bpm = (uint8_t)clamp((w->bpm ? w->bpm : (int32_t)vb.bpm) + s, u->bpm0 > 60u ? u->bpm0 - 20 : 40,
++                                u->bpm1 < 220u ? u->bpm1 + 20 : 240);
++        chg = 0;
++        if (live) {
++            vb.s.bpm = w->bpm;
++            vb.bpm_to = w->bpm;
++        }
++    }
++    if (live)
++        vb.chg |= (uint8_t)chg;
++    else
++        vb_knob_song();
++    vb_ov = (uint8_t)o;
++    vb_ov_t = fm1_ms;
+     ui.force = 1;
+ }
+ 
++/* the black keys (BRIEF 2.2, as in Skiff's GLO layer, ui_layer.c mute_keys): a tap toggles the track's MUTE, held it is
++ * silent while held (perf_cut), with GLO held soloed while held (perf_solo); CC 103 says each as in Vizz */
++static struct { uint8_t dn, solo; uint32_t t0[NTRK]; } vb_bk __attribute__((section(".pool")));
++static void vb_black(uint32_t pressed)
++{
++    uint32_t k, p, b, glo = (fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
++    for (k = 0; k < 27u; k++) {
++        if (!key_black(k) || (p = key_place(k)) >= NTRK)
++            continue;
++        b = 1u << p;
++        if ((pressed >> k) & 1u) {
++            if (glo)
++                vb_bk.solo |= (uint8_t)b;
++            else {
++                vb_bk.dn |= (uint8_t)b;
++                vb_bk.t0[p] = fm1_ms;
++            }
++        } else if (!((fm1_in.notes >> k) & 1u) && ((vb_bk.dn | vb_bk.solo) & b)) {
++            if ((vb_bk.dn & b) && fm1_ms - vb_bk.t0[p] < HOLD_MS[settings_hold % 4u])
++                trk[p].p[P_MUTE] = (int16_t)!trk[p].p[P_MUTE];
++            vb_bk.dn &= (uint8_t)~b;
++            vb_bk.solo &= (uint8_t)~b;
++            ui.force = 1;
++        }
++    }
++    perf_cut = vb_bk.dn;
++    perf_solo = vb_bk.solo;
++}
++
++/* SAVE held + a white key: the song (playing: what plays, else the knobs') into that favourite; GLO held + a white
++ * key: that favourite onto the knobs */
++static void vb_white(uint32_t pressed)
++{
++    uint32_t k, n, save = (fm1_in.buttons >> panel.btn[B_SAVE]) & 1u;
++    char b[24];
++    if (!save && !((fm1_in.buttons >> panel.btn[B_GLO]) & 1u))
++        return;
++    for (k = 0; k < 27u; k++) {
++        if (!((pressed >> k) & 1u) || key_black(k) || (n = key_place(k)) >= VB_NFAV)
++            continue;
++        if (save) {
++            vb_fav.f[n] = vb.own && song.playing ? vb.s : vb.k;
++            vb_fav_dirty = 1;
++            str_cpy(b, "FAVOURITE    SAVED", sizeof b);
++        } else if (vb_fav.f[n].genre < 10u) {
++            vb.k = vb_fav.f[n];
++            if (vb.own && song.playing)
++                vb.chg |= 7u;
++            else
++                vb_knob_song();
++            str_cpy(b, "FAVOURITE    LOADED", sizeof b);
++        } else
++            str_cpy(b, "FAVOURITE    EMPTY", sizeof b);
++        b[10] = (char)('0' + (n + 1u) / 10u);
++        b[11] = (char)('0' + (n + 1u) % 10u);
++        if (b[10] == '0')
++            b[10] = ' ';
++        ui_message(b);
++        ui.force = 1;
++    }
++}
++
+ /* each pass in the VIZZBOX (ui_input): the buttons, the knobs, the keys */
+ static void vb_input(uint32_t pressed, uint32_t notes)
+ {
+-    uint32_t b, id;
++    static const uint8_t ENC[7] = {VO_TEMPO, VO_LEN, VO_SEED, VO_GENRE, VO_SUB, VO_ENERGY, VO_VAR};
++    uint32_t b, id, held = fm1_in.buttons;
+     int32_t s;
+-    (void)notes;
++    kb_mask = 1u << panel.btn[B_SAVE] | 1u << panel.btn[B_GLO];   /* (SAVE, GLO held: the white keys the favourites',
++                                                     * silent) */
++    perf_mask = 0;
++    kb_lock = 0;
+     for (id = 0; id < FM1_NBTN; id++) {
+         if (!((pressed >> id) & 1u))
+             continue;
+         b = panel_btn_of(id);
+         if (b == B_PLAY) {
+-            if (((fm1_in.buttons >> panel.btn[B_HOME]) & 1u)) {
++            if ((held >> panel.btn[B_HOME]) & 1u) {
+                 vb_mode_set(0);
+-                continue;
++                return;
+             }
+             if (song.playing)
+                 transport_req = 2;
+             else
+                 (void)vb_start();
+         } else if (b == B_REC) {
+-            vb.k.seed = (uint16_t)(vb_hash(vb.k.seed + fm1_ms) & 0xFFFFu);
++            vb_knob(VO_SEED, (int32_t)(vb_hash(vb.k.seed + fm1_ms) & 0xFFFFu) | 1);
+         } else if (b == B_FX && vb.own && song.playing)
+             vb.req |= VQ_DROP;
+         else if (b == B_ARP && vb.own && song.playing)
+             vb.req |= VQ_BREAK;
+         else if (b == B_SEQ)
+             vb.req ^= VQ_HOLD;
++        else if (b == B_OCTDN || b == B_OCTUP)
++            song.octave = (int8_t)clamp(song.octave + (b == B_OCTUP ? 1 : -1), -3, 3);
++        ui.force = 1;
+     }
+-    for (id = 0; id < 4u; id++)
+-        if ((s = panel_enc(EN_K1 + id)) != 0)
+-            vb_knob(id, s);
+-    if ((s = panel_enc(EN_SELECT)) != 0) {
+-        vb.k.bpm = (uint8_t)clamp((vb.k.bpm ? vb.k.bpm : (int32_t)vb.bpm) + s, 40, 240);
++    for (id = EN_SELECT; id <= EN_K4; id++)
++        if ((s = panel_enc(id)) != 0)
++            vb_knob(ENC[id], s);
++    vb_black(notes);
++    vb_white(notes);
++    vb_fav_poll();
++    if (!song.playing && memcmp(&vb.s, &vb.k, sizeof vb.k)) {
++        vb_knob_song();                             /* (stopped: what the knobs turned while it played) */
+         ui.force = 1;
+     }
+ }
+ 
+-/* the screen (a first one: the names and the section) */
++/* ------------------------------------------------------------- screen --- */
++/* (BRIEF 2.3) above: the genre, the subgenre, tempo, key and seed, the section and its bar, the energy of the whole song
++ * with the bar playing; below: the six tracks (playing, MUTE, SOLO), or the knob turned last big, or (SAVE or GLO
++ * held) the favourites; a message (ui_message) in the bottom line. Two canvases of 240 x 120 */
++static char *vb_num(char *p, uint32_t v)            /* v in decimal at p; the end */
++{
++    char t[6];
++    uint32_t n = 0;
++    do
++        t[n++] = (char)('0' + v % 10u);
++    while ((v /= 10u) && n < 6u);
++    while (n)
++        *p++ = t[--n];
++    *p = 0;
++    return p;
++}
++static char *vb_hex(char *p, uint32_t v)
++{
++    uint32_t i;
++    for (i = 0; i < 4u; i++)
++        *p++ = "0123456789ABCDEF"[(v >> (12u - 4u * i)) & 15u];
++    *p = 0;
++    return p;
++}
++static void vb_curve(int32_t y, int32_t h)          /* the plan's energy, the bar playing marked */
++{
++    uint32_t i, all = 0, at = 0, x0;
++    for (i = 0; i < vb.nplan; i++)
++        all += vb.plan[i].bars;
++    for (i = 0; i < vb.sec && i < vb.nplan; i++)
++        at += vb.plan[i].bars;
++    at += vb.sbar;
++    cv_rect(8, y + h, 224, 1, T_LINE);
++    for (i = 0, x0 = 0; all && i < vb.nplan; i++) {
++        const vb_sec_t *c = &vb.plan[i];
++        int32_t xa = 8 + (int32_t)(224u * x0 / all), xb = 8 + (int32_t)(224u * (x0 + c->bars) / all);
++        int32_t ya = y + h - h * c->e0 / 100, yb = y + h - h * c->e1 / 100;
++        cv_line_t(xa, ya, xb, yb, i == vb.sec && vb.own ? T_ACCENT : T_THEME, 2);
++        x0 += c->bars;
++    }
++    if (all && vb.own && song.playing)
++        cv_rect(8 + (int32_t)(224u * at / all), y, 2, h + 1, T_ACCENT);
++}
+ static void vb_draw(void)
+ {
+-    char b[32];
++    static const char *const SEC[7] = {"READY", "INTRO", "GROOVE", "BUILD", "DROP", "BREAK", "OUTRO"};
++    char b[40], *p;
++    uint32_t k, i, list = (fm1_in.buttons >> panel.btn[B_SAVE] | fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
++    const vb_song_t *w = vb.own && song.playing ? &vb.s : &vb.k;
++    if (ui.msg_t)
++        ui.msg_t--;
+     if (!ui.force && (ui.frame & 7u))
+         return;
+     ui.force = 0;
++    if (vb_ov && fm1_ms - vb_ov_t > 1200u)
++        vb_ov = VO_NONE;
++    /* above */
+     cv_begin(240, 120, T_BG);
+-    cv_text(8, 8, &AF_M, VB_GNAME[vb.k.genre % 10u], T_TEXT);
+-    cv_text(8, 30, &AF_M, VB_SNAME[(vb_sub0(vb.k.genre) + vb.k.sub) % 36u], T_THEME);
+-    str_cpy(b, "BPM ", sizeof b);
+-    cv_text(8, 60, &AF_S, b, T_MID);
++    cv_text(8, 4, &AF_S, VB_GNAME[w->genre % 10u], T_MID);
++    cv_text_r(232, 4, &AF_S, VB_LEN[w->len % 3u], T_MID, T_BG);
++    cv_text(8, 18, &AF_V, VB_SNAME[vb_ri(w)], T_TEXT);
++    p = vb_num(b, vb.bpm);
++    str_cpy(p, song.g[G_CLOCK] ? " BPM EXT" : " BPM", 10);
++    cv_text(8, 52, &AF_M, b, T_THEME);
++    str_cpy(b, N_NOTE[vb.root % 12u], sizeof b);
++    str_cpy(b + str_len(b), " ", 4);
++    str_cpy(b + str_len(b), N_SCALE[vb.scale % 16u], 8);
++    cv_text(96, 52, &AF_M, b, T_THEME);
++    vb_hex(b, w->seed);
++    cv_text_r(232, 52, &AF_M, b, T_MID, T_BG);
++    str_cpy(b, SEC[vb.own && song.playing ? vb_cur()->type % 7u : 0u], sizeof b);
++    if (vb.own && song.playing) {                   /* (BUILD 12/16) */
++        p = b + str_len(b);
++        *p++ = ' ';
++        p = vb_num(p, (uint32_t)vb.sbar + 1u);
++        *p++ = '/';
++        vb_num(p, vb_cur()->bars);
++    }
++    cv_text(8, 72, &AF_M, b, vb.own && song.playing ? T_ACCENT : T_MID);
++    p = b;
++    *p++ = 'E';
++    p = vb_num(p, w->energy);
++    str_cpy(p, "  V", 4);
++    vb_num(p + 3, w->var);
++    cv_text_r(232, 72, &AF_S, b, T_MID, T_BG);
++    vb_curve(92, 22);
+     cv_blit(0, 0);
++    /* below */
++    cv_begin(240, 120, T_BG);
++    if (list) {                                     /* the favourites: SAVE stores, GLO loads (a white key) */
++        cv_text(8, 0, &AF_S, (fm1_in.buttons >> panel.btn[B_SAVE]) & 1u ? "SAVE: A WHITE KEY STORES" :
++                                                                          "GLO: A WHITE KEY LOADS", T_ACCENT);
++        for (i = 0; i < VB_NFAV; i++) {
++            const vb_song_t *f = &vb_fav.f[i];
++            p = vb_num(b, i + 1u);
++            *p++ = ' ';
++            str_cpy(p, f->genre < 10u ? VB_SNAME[vb_ri(f)] : "-", 18);
++            cv_text(8 + 116 * (int32_t)(i / 8u), 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < 10u ? T_TEXT : T_DIM);
++        }
++    } else if (vb_ov) {                             /* the control turned last, big */
++        static const char *const NAME[8] = {"", "GENRE", "SUBGENRE", "ENERGY", "VARIATION", "TEMPO", "LENGTH", "SEED"};
++        cv_text(8, 4, &AF_M, NAME[vb_ov % 8u], T_MID);
++        b[0] = 0;
++        if (vb_ov == VO_GENRE)
++            str_cpy(b, VB_GNAME[vb.k.genre % 10u], sizeof b);
++        else if (vb_ov == VO_SUB)
++            str_cpy(b, VB_SNAME[vb_ri(&vb.k)], sizeof b);
++        else if (vb_ov == VO_LEN)
++            str_cpy(b, VB_LEN[vb.k.len % 3u], sizeof b);
++        else if (vb_ov == VO_SEED)
++            vb_hex(b, vb.k.seed);
++        else
++            vb_num(b, vb_ov == VO_ENERGY ? vb.k.energy : vb_ov == VO_VAR ? vb.k.var : vb.k.bpm ? vb.k.bpm : vb.bpm);
++        cv_text(8, 28, &AF_V, b, T_ACCENT);
++        if (vb.own && song.playing && vb_ov != VO_TEMPO)
++            cv_text(8, 64, &AF_S, "FROM THE NEXT SECTION", T_MID);
++    } else {                                        /* the six tracks: lit playing, M muted, S soloed */
++        for (k = 0; k < NTRK; k++) {
++            int32_t x = 6 + 78 * (int32_t)(k % 3u), y = 2 + 44 * (int32_t)(k / 3u);
++            int mute = trk[k].p[P_MUTE] || ((perf_cut >> k) & 1u) || (perf_solo && !((perf_solo >> k) & 1u));
++            int on = vb.own && song.playing && ((vb.act >> k) & 1u) && !mute;
++            cv_rrect(x, y, 72, 38, 6, on ? T_TRK(k) : T_SURF, T_BG);
++            b[0] = (char)('1' + k);
++            b[1] = 0;
++            cv_text(x + 6, y + 4, &AF_S, b, on ? T_INK : T_MID);
++            cv_text(x + 6, y + 18, &AF_S, VB_ROLE[k], on ? T_INK : mute ? T_DIM : T_TEXT);
++            if (mute || ((perf_solo >> k) & 1u))
++                cv_text_r(x + 66, y + 4, &AF_S, (perf_solo >> k) & 1u ? "S" : "M", on ? T_INK : T_ACCENT, T_SURF);
++        }
++    }
++    if (ui.msg_t && !list)
++        cv_text(8, 102, &AF_S, ui.msg, T_ACCENT);
++    else if (!list && !vb_ov)
++        cv_text(8, 102, &AF_S, song.playing ? "FX DROP  ARP BREAK  SEQ HOLD  REC NEW" : "PLAY: A SONG  REC: NEW SEED",
++                T_DIM);
++    cv_blit(0, 120);
++}
++
++/* the LEDs (main.c, instead of ui_leds): PLAY green while playing; FX, ARP, SEQ lit for DROP NOW, BREAK NOW and HOLD;
++ * the black keys of the tracks sounding lit; the white keys of the stored favourites glowing (SAVE or GLO held: lit) */
++static void vb_leds(void)
++{
++    uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0};
++    uint32_t k, c, list = (fm1_in.buttons >> panel.btn[B_SAVE] | fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
++    static uint8_t ready;
++    if (fm1_led_anim_on())
++        return;
++    if (!ready) {
++        led_pos_init();
++        ready = 1;
++    }
++    for (k = 0; k < NB; k++)
++        led_put(nd, panel.btn[k], k != B_PLAY || !song.playing);
++    led_put(nl, panel.btn[B_FX], (vb.req & VQ_DROP) != 0u);
++    led_put(nl, panel.btn[B_ARP], (vb.req & VQ_BREAK) != 0u);
++    led_put(nl, panel.btn[B_SEQ], (vb.req & VQ_HOLD) != 0u);
++    for (k = 0; k < 27u; k++) {
++        uint32_t p = key_place(k);
++        if (key_black(k))
++            led_put(nl, LED_KEY0 + k, p < NTRK && !trk[p].p[P_MUTE] && !((perf_cut >> p) & 1u) &&
++                                          (!perf_solo || ((perf_solo >> p) & 1u)));
++        else if (p < VB_NFAV && vb_fav.f[p].genre < 10u)
++            led_put(list ? nl : nd, LED_KEY0 + k, 1);
++    }
++    if (song.playing)
++        nl[LED_PLAY_GREEN >> 3] |= (uint8_t)(1u << (LED_PLAY_GREEN & 7u));
++    for (c = 0; c < FM1_NCOL; c++) {
++        fm1_led_dim[c] = nd[c];
++        fm1_led_breath[c] = 0;
++        fm1_led_mid[c] = 0;
++        fm1_led[c] = nl[c];
++    }
+ }
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+new file mode 100644
+index 0000000..08cad5b
+--- /dev/null
++++ b/tests/producer_test.c
+@@ -0,0 +1,695 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) tests/producer_test.c: the producer (BRIEF-VIZZBOX.md 9), on the browser emulator's device built natively
++ * (web/emu/felucca_web.c with VIZZBOX=1: the firmware's sources, the main loop every ms, the audio ISR every I2S half),
++ * what it sends over USB MIDI read back as the unit sends it. Each case on a device of its own (fork), four at a time.
++ *   - every subgenre a whole song in every LENGTH: it ends by itself (SHORT 2:20 .. 3:45, NORMAL 4:30 .. 6:15; ENDLESS
++ *     runs on), its sections in a form's order and lengths (INTRO first, OUTRO last, a DROP after its BUILD, bars a
++ *     multiple of 4, CC 106 counting), its tempo in the subgenre's range, its notes in the key, each role in its
++ *     register, no voice stolen; each DROP: CC 104 4 before the kick on its one, the BUILD before it a roll or a riser;
++ *     CC 104 .. 109 on channel 16 only, all six at each bar's first step before its notes, CC 105 at most once a 1/16
++ *   - determinism: a song twice, and with the main loop in another phase (another render chunk): the same MIDI bytes and
++ *     the same audio; another seed: another song
++ *   - PLAY: Start, Vizz' six CC 103, then the six; stop: CC 104 0; SEQ MIDI OUT OFF: none of it; the GROOVEBOX: none
++ *   - the knobs while playing: ENERGY and GENRE from the next section on; DROP NOW, BREAK NOW, HOLD
++ *   - the user's MUTE and SOLO: they silence, CC 103 says them, and only them (never the arrangement's pauses)
++ *   - ENDLESS for 60 minutes: related subgenres come, 8 BPM at most each time, the plan does not grow, no voice stolen
++ *   - favourites: stored, the unit off and on again (its flash kept), loaded, played: the same song, bit for bit
++ *   - VIZZBOX <-> GROOVEBOX, playing too: the song goes on; stopped in the GROOVEBOX, its music comes back
++ *   producer_test [CASE]      (no CASE: all; prints "producer: all passed" or the failures) */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <math.h>
++#include <stdarg.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++static int fails;
++static uint32_t nchecks;
++static char tag[96];
++static void ok(int c, const char *fmt, ...)
++{
++    va_list a;
++    nchecks++;
++    if (c)
++        return;
++    fails++;
++    printf("FAIL %s: ", tag);
++    va_start(a, fmt);
++    vprintf(fmt, a);
++    va_end(a);
++    printf("\n");
++}
++
++/* ---------------------------------------------------------------- the device and what it sends */
++typedef struct { uint64_t t; uint8_t st, d1, d2; } ev_t;    /* t: the frame (sample) it went out by */
++static ev_t *ev;
++static uint32_t nev, cap;
++static uint64_t frames;
++static uint32_t ahash = 2166136261u, mhash = 2166136261u;
++static uint32_t chunk = 128;
++static void drain(void)
++{
++    while (mo_r != mo_w) {
++        uint32_t pkt = midi_out_q[mo_r % MQ], st = (pkt >> 8) & 0xFFu;
++        mo_r++;
++        if (nev == cap) {
++            cap = cap ? 2u * cap : 65536u;
++            ev = realloc(ev, cap * sizeof *ev);
++        }
++        ev[nev].t = frames;
++        ev[nev].st = (uint8_t)st;
++        ev[nev].d1 = (uint8_t)((pkt >> 16) & 0x7Fu);
++        ev[nev].d2 = (uint8_t)((pkt >> 24) & 0x7Fu);
++        if (st != 0xF8u) {                          /* (the clock aside) */
++            mhash = (mhash ^ st) * 16777619u;
++            mhash = (mhash ^ ev[nev].d1) * 16777619u;
++            mhash = (mhash ^ ev[nev].d2) * 16777619u;
++        }
++        nev++;
++    }
++}
++static void run_frames(uint64_t n)
++{
++    while (n) {
++        uint32_t m = n < chunk ? (uint32_t)n : chunk, k;
++        web_render(m);
++        for (k = 0; k < m; k++) {
++            int32_t s = (int32_t)lrintf(out_l[k] * 32767.0f) * 3 + (int32_t)lrintf(out_r[k] * 32767.0f);
++            ahash = (ahash ^ (uint32_t)s) * 16777619u;
++        }
++        frames += m;
++        drain();
++        n -= m;
++    }
++}
++static void run_s(double s) { run_frames((uint64_t)(s * FS)); }
++static void boot(void)
++{
++    web_nor_erase();
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    run_s(0.6);
++    nev = 0;
++    frames = 0;
++    ahash = mhash = 2166136261u;
++}
++static void knobs(uint32_t g, uint32_t s, uint32_t seed, uint32_t e, uint32_t v, uint32_t len)
++{
++    vb.k.genre = (uint8_t)g;
++    vb.k.sub = (uint8_t)s;
++    vb.k.seed = (uint16_t)seed;
++    vb.k.energy = (uint8_t)e;
++    vb.k.var = (uint8_t)v;
++    vb.k.len = (uint8_t)len;
++    vb.k.bpm = 0;
++}
++static void press(uint32_t labels)
++{
++    web_buttons(labels);
++    run_s(0.04);
++    web_buttons(0);
++    run_s(0.02);
++}
++static void play_to_end(double max_s)              /* PLAY, until it stops by itself or max_s */
++{
++    double t = 0;
++    press(1u << B_PLAY);
++    while (song.playing && t < max_s) {
++        run_s(0.5);
++        t += 0.5;
++    }
++}
++
++/* ---------------------------------------------------------------- what a song sent */
++/* the bars as the six CCs began them: their event index, section, energy, bar, length, genre, subgenre */
++typedef struct { uint32_t i; uint8_t cc[6]; } bar_t;
++static bar_t *bars;
++static uint32_t nbars;
++static void read_bars(void)
++{
++    uint32_t i, j;
++    free(bars);
++    bars = calloc(nev / 6u + 2u, sizeof *bars);
++    nbars = 0;
++    for (i = 0; i + 5u < nev; i++) {
++        if (ev[i].st != 0xBFu || ev[i].d1 != 104u)
++            continue;
++        for (j = 0; j < 6u && ev[i + j].st == 0xBFu && ev[i + j].d1 == 104u + j; j++)
++            ;
++        if (j < 6u || !ev[i].d2)
++            continue;
++        bars[nbars].i = i;
++        for (j = 0; j < 6u; j++)
++            bars[nbars].cc[j] = ev[i + j].d2;
++        nbars++;
++        i += 5u;
++    }
++}
++static int key_has(uint32_t note)                   /* note in the song's key (vb.root, vb.scale) */
++{
++    return (int)((SCALE_MASK[vb.scale % 16u] >> ((note + 12u - vb.root % 12u) % 12u)) & 1u);
++}
++
++/* every subgenre in every length: the song as a whole */
++static void case_song(uint32_t ri, uint32_t len)
++{
++    uint32_t g, s, i, j, b, kicks = 0, drops = 0, in_key = 0, notes = 0, tempo_ok = 1, cc105 = 0;
++    const vb_sub_t *u = &VB_SUB[ri];
++    double secs;
++    int slice;
++    for (g = 0; g < 9u && ri >= vb_sub0(g + 1u); g++)
++        ;
++    s = ri - vb_sub0(g);
++    snprintf(tag, sizeof tag, "%s / %s %s", VB_GNAME[g], VB_SNAME[ri], len == 0 ? "SHORT" : len == 1 ? "NORMAL" : "ENDLESS");
++    boot();
++    knobs(g, s, 0x5EEDu + ri * 7u, 70, 40, len);
++    press(1u << B_PLAY);
++    for (secs = 0; song.playing && secs < (len == 2 ? 200.0 : 420.0); secs += 0.5) {   /* (ENDLESS: before a related
++                                                     * subgenre comes, case_endless) */
++        run_s(0.5);
++        if (song.g[G_BPM] < u->bpm0 || song.g[G_BPM] > u->bpm1)
++            tempo_ok = 0;
++    }
++    if (len == 2) {
++        ok(song.playing, "ENDLESS stopped after %.0f s", secs);
++        press(1u << B_PLAY);
++    } else {
++        ok(!song.playing, "never ended");
++        ok(secs >= (len ? 270.0 : 140.0) && secs <= (len ? 375.0 : 225.0), "length %.0f s", secs);
++    }
++    run_s(1.0);
++    ok(tempo_ok, "tempo outside %u .. %u", u->bpm0, u->bpm1);
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++    read_bars();
++    ok(nbars > 16u, "%u bars announced", nbars);
++    ok(bars[0].cc[0] == 1u && bars[0].cc[2] == 0u, "starts with section %u bar %u", bars[0].cc[0], bars[0].cc[2]);
++    if (len != 2)
++        ok(bars[nbars - 1u].cc[0] == 6u, "ends in section %u", bars[nbars - 1u].cc[0]);
++    for (b = 0; b < nbars; b++) {
++        const uint8_t *c = bars[b].cc;
++        ok(c[0] >= 1u && c[0] <= 6u && c[4] == g && c[5] == s && c[3] % 4u == 0u && c[2] < c[3],
++           "bar %u: CC 104..109 %u %u %u %u %u %u", b, c[0], c[1], c[2], c[3], c[4], c[5]);
++        if (b && c[2])
++            ok(c[2] == bars[b - 1u].cc[2] + 1u && c[0] == bars[b - 1u].cc[0], "bar %u: CC 106 %u after %u", b, c[2],
++               bars[b - 1u].cc[2]);
++        if (c[0] == 4u && !c[2]) {                  /* a DROP's one: the kick after CC 104 4, the BUILD before it */
++            uint32_t k = 0, before = b ? bars[b - 1u].cc[0] : 0u;
++            drops++;
++            for (i = bars[b].i; i < nev && ev[i].t <= ev[bars[b].i].t + 128u; i++)
++                k |= ev[i].st == 0x90u && ev[i].d1 == 36u && ev[i].d2;
++            kicks += k;
++            if (before == 3u) {                     /* a roll (four snare hits in its last bar) or a riser (T6) */
++                uint32_t sn = 0, rs = 0, st = b ? bars[b - 1u].i : 0u;
++                for (i = st; i < bars[b].i; i++) {
++                    sn += ev[i].st == 0x90u && ev[i].d1 == 38u && ev[i].d2;
++                    rs += ev[i].st == 0x95u && ev[i].d2;
++                }
++                for (j = b; j > 0u && bars[j - 1u].cc[0] == 3u; j--)
++                    ;
++                for (i = bars[j].i; i < bars[b].i; i++)
++                    rs += ev[i].st == 0x95u && ev[i].d2;
++                ok(sn >= 4u || rs > 0u, "the BUILD into DROP %u: no roll, no riser", drops);
++            } else                                  /* (the forms: T's DROP after its BREAK, V's after a GROOVE or
++                                                     * its BREAK) */
++                ok((before == 5u && (u->form == FO_T || u->form == FO_V)) || (before == 2u && u->form == FO_V),
++                   "DROP %u after section %u", drops, before);
++        }
++        if (c[0] == 4u && b && bars[b - 1u].cc[0] != 4u)
++            ok(!c[2], "a DROP starts at bar %u", c[2]);
++    }
++    if (drops)
++        ok(kicks == drops, "%u of %u DROPs with the kick on their one", kicks, drops);
++    slice = VB_SND[vb.snd[R_A] % NELEM(VB_SND)].eng == ENGI_SLICE;
++    for (i = 0; i < nev; i++) {
++        uint32_t st = ev[i].st, ch = (st & 15u) + 1u, n = ev[i].d1;
++        if ((st & 0xF0u) == 0xB0u && ev[i].d1 >= 104u && ev[i].d1 <= 109u)
++            ok(ch == 16u, "CC %u on channel %u", ev[i].d1, ch);
++        if ((st & 0xF0u) == 0xB0u && ev[i].d1 == 105u && i && ev[i - 1u].st == 0xBFu && ev[i - 1u].d1 == 105u &&
++            !(ev[i - 2u].d1 == 104u))
++            cc105 += ev[i].t - ev[i - 1u].t < div_samples(2) / 2u;
++        if ((st & 0xF0u) != 0x90u || !ev[i].d2 || ch < 2u || ch > 5u || (ch == 5u && slice))
++            continue;
++        notes++;
++        in_key += (uint32_t)key_has(n);
++        if (ch == 2u)
++            ok(n <= 52u, "bass note %u above E3", n);
++        else if (ch == 3u)
++            ok(n >= 48u && n <= 76u, "chord note %u outside C3 .. E5", n);
++        else
++            ok(n >= 55u && n <= 88u, "%s note %u outside G3 .. E6", ch == 4u ? "lead" : "arp", n);
++    }
++    ok(notes > 0u && in_key == notes, "%u of %u notes in the key", in_key, notes);
++    ok(cc105 == 0u, "CC 105 twice within a 1/16 %u times", cc105);
++    for (b = 0; b < nbars; b++) {                   /* the six before the bar's first note */
++        uint32_t t0 = (uint32_t)ev[bars[b].i].t;
++        for (i = bars[b].i; i > 0u && ev[i - 1u].t == t0; i--)
++            ok(!((ev[i - 1u].st & 0xF0u) == 0x90u && ev[i - 1u].d2), "bar %u: a note before the six", b);
++    }
++}
++
++/* a run on a device of its own (fork: a device powers on once): fn fills out, it comes back through a pipe */
++static int spawn(void (*fn)(void *), void *out, size_t n)
++{
++    int p[2], st;
++    if (pipe(p))
++        return -1;
++    fflush(stdout);
++    if (!fork()) {
++        fn(out);
++        if (write(p[1], out, n) != (ssize_t)n)
++            _exit(1);
++        _exit(0);
++    }
++    close(p[1]);
++    {
++        size_t got = 0;
++        ssize_t r;
++        while (got < n && (r = read(p[0], (uint8_t *)out + got, n - got)) > 0)
++            got += (size_t)r;
++        close(p[0]);
++        wait(&st);
++        return got == n ? 0 : -1;
++    }
++}
++/* the same song twice; with the main loop in another phase; another seed */
++typedef struct { uint32_t seed, chunk, midi, audio; } det_t;
++static void det_run(void *a)
++{
++    det_t *d = a;
++    chunk = d->chunk;
++    boot();
++    knobs(3, 1, d->seed, 80, 60, 0);
++    play_to_end(400.0);
++    run_s(2.0);
++    d->midi = mhash;
++    d->audio = ahash;
++}
++static void case_determinism(void)
++{
++    det_t r[4] = {{0xBEEFu, 128, 0, 0}, {0xBEEFu, 128, 0, 0}, {0xBEEFu, 44, 0, 0}, {0xBEF0u, 128, 0, 0}};
++    uint32_t i;
++    snprintf(tag, sizeof tag, "determinism");
++    for (i = 0; i < 4u; i++)
++        ok(!spawn(det_run, &r[i], sizeof r[i]), "run %u: no answer", i);
++    ok(r[0].midi == r[1].midi && r[0].audio == r[1].audio, "the same song twice: MIDI %08x / %08x, audio %08x / %08x",
++       r[0].midi, r[1].midi, r[0].audio, r[1].audio);
++    ok(r[0].midi == r[2].midi && r[0].audio == r[2].audio, "another render chunk: MIDI %08x / %08x, audio %08x / %08x",
++       r[0].midi, r[2].midi, r[0].audio, r[2].audio);
++    ok(r[3].midi != r[0].midi && r[3].audio != r[0].audio, "another seed, the same song");
++}
++
++/* PLAY and stop; SEQ MIDI OUT OFF; the GROOVEBOX */
++static void case_transport(void)
++{
++    uint32_t i, n103 = 0, fa = 0, first104 = 0, any = 0;
++    snprintf(tag, sizeof tag, "transport");
++    boot();
++    knobs(0, 0, 0x1234u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(10.0);
++    for (i = 0; i < nev && !first104; i++) {
++        if (ev[i].st == 0xFAu)
++            fa = i + 1u;
++        if (fa && (ev[i].st & 0xF0u) == 0xB0u && ev[i].d1 == 103u)
++            n103++;
++        if (ev[i].st == 0xBFu && ev[i].d1 == 104u)
++            first104 = i + 1u;
++    }
++    ok(fa && n103 == 6u && first104 > fa, "PLAY: Start, %u CC 103, then the six (at %u, Start at %u)", n103, first104,
++       fa);
++    for (i = first104 - 1u; i < first104 + 5u && i < nev; i++)
++        ok(ev[i].st == 0xBFu && ev[i].d1 == 104u + (i - first104 + 1u), "PLAY: the six in order");
++    nev = 0;
++    press(1u << B_PLAY);
++    run_s(0.5);
++    for (i = 0, any = 0; i < nev; i++)
++        any |= ev[i].st == 0xBFu && ev[i].d1 == 104u && ev[i].d2 == 0u;
++    ok(any, "stop: no CC 104 0");
++    CPU2_BYTE |= 8u;                                /* SEQ MIDI OUT OFF (ui.c SEQOUT_OFF): nothing of it */
++    nev = 0;
++    press(1u << B_PLAY);
++    run_s(20.0);
++    for (i = 0, any = 0; i < nev; i++)
++        any |= ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u;
++    ok(!any, "SEQ MIDI OUT OFF: CC 104 .. 109 sent");
++    press(1u << B_PLAY);
++    CPU2_BYTE &= ~8u;
++    run_s(0.5);
++    web_buttons(1u << B_HOME);                      /* the GROOVEBOX: its own music, none of it */
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(0.5);
++    ok(!vb_mode, "HOME + PLAY: still the VIZZBOX");
++    nev = 0;
++    press(1u << B_PLAY);
++    run_s(20.0);
++    press(1u << B_PLAY);
++    for (i = 0, any = 0; i < nev; i++)
++        any |= ev[i].st == 0xBFu && ev[i].d1 >= 104u && ev[i].d1 <= 109u;
++    ok(!any, "the GROOVEBOX playing: CC 104 .. 109 sent");
++    ok(!vb.own, "the GROOVEBOX: the producer still holds the tracks");
++}
++
++/* the knobs while playing; DROP NOW, BREAK NOW, HOLD */
++static uint32_t sec_at(uint32_t b) { return b < nbars ? bars[b].cc[0] : 0u; }
++typedef struct { uint32_t turn, n, at; uint8_t cc[160][6]; } en_t;
++static void en_run(void *a)                         /* 60 s, ENERGY turned up at 20 s (or not): the bars' six */
++{
++    en_t *d = a;
++    uint32_t b;
++    boot();
++    knobs(1, 1, 0x4242u, 60, 30, 1);
++    press(1u << B_PLAY);
++    run_s(20.0);
++    read_bars();
++    d->at = nbars;                                  /* (the bars before the turn) */
++    if (d->turn)
++        web_enc(EN_K3, 40);
++    run_s(40.0);
++    read_bars();
++    for (b = 0; b < nbars && b < 160u; b++)
++        memcpy(d->cc[b], bars[b].cc, 6);
++    d->n = b;
++}
++static void case_live(void)
++{
++    static en_t ref, turned;
++    uint32_t b, start, from = 0, same = 1, differs = 0;
++    snprintf(tag, sizeof tag, "live");
++    ref.turn = 0;
++    turned.turn = 1;
++    ok(!spawn(en_run, &ref, sizeof ref) && !spawn(en_run, &turned, sizeof turned), "no answer");
++    for (b = 0; b < ref.n && b < turned.n; b++) {   /* ENERGY: from the next section on (turned at 20 s) */
++        if (!from && b > turned.at && ref.cc[b][2] == 0u)
++            from = b;
++        if (!from)
++            same &= !memcmp(ref.cc[b], turned.cc[b], 6);
++        else
++            differs |= ref.cc[b][1] != turned.cc[b][1];
++    }
++    ok(from && same, "ENERGY came in before the next section (bar %u)", from);
++    ok(differs, "ENERGY never came in");
++    boot();
++    knobs(1, 1, 0x4242u, 60, 30, 1);
++    press(1u << B_PLAY);
++    run_s(30.0);
++    read_bars();
++    press(1u << B_FX);                              /* DROP NOW: a BUILD, then the DROP */
++    start = nbars;
++    run_s(40.0);
++    read_bars();
++    for (b = start; b < nbars && sec_at(b) != 3u; b++)
++        ;
++    ok(b < nbars && b <= start + 2u, "DROP NOW: no BUILD next");
++    for (; b < nbars && sec_at(b) == 3u; b++)
++        ;
++    ok(b < nbars && sec_at(b) == 4u, "DROP NOW: no DROP after the BUILD");
++    press(1u << B_ARP);                             /* BREAK NOW: a BREAK next */
++    start = nbars;
++    run_s(12.0);
++    read_bars();
++    for (b = start; b < nbars && sec_at(b) != 5u; b++)
++        ;
++    ok(b < nbars && b <= start + 2u, "BREAK NOW: no BREAK next");
++    press(1u << B_SEQ);                             /* HOLD: the section again */
++    run_s(60.0);
++    read_bars();
++    for (b = nbars - 1u; b > 0u && sec_at(b - 1u) == sec_at(nbars - 1u); b--)
++        ;
++    ok(nbars - b > 16u, "HOLD: the section changed (%u bars of it)", nbars - b);
++    press(1u << B_SEQ);
++    web_enc(EN_K1, 2);                              /* GENRE: a new style, a section later */
++    start = nbars;
++    run_s(1.0);
++    read_bars();
++    for (b = start; b < nbars; b++)
++        ok(bars[b].cc[4] == 1u, "GENRE came in before the next section");
++    run_s(120.0);
++    read_bars();
++    ok(bars[nbars - 1u].cc[4] == 3u, "GENRE never came in (%u)", bars[nbars - 1u].cc[4]);
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
++
++/* the user's MUTE and SOLO; CC 103 says them and only them */
++static void case_mute(void)
++{
++    uint32_t i, t2_on = 0, cc103_wrong = 0, cc103_t2 = 0, k, solo_ok = 1;
++    snprintf(tag, sizeof tag, "mute");
++    boot();
++    knobs(0, 0, 0x7777u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(40.0);                                    /* (the INTRO: the arrangement pauses tracks) */
++    for (i = 0; i < nev; i++)
++        cc103_wrong += (ev[i].st & 0xF0u) == 0xB0u && ev[i].d1 == 103u && ev[i].d2 != 0u;
++    ok(!cc103_wrong, "CC 103 127 for an arrangement's pause (%u)", cc103_wrong);
++    for (k = 0; k < 27u && !(key_black(k) && key_place(k) == 1u); k++)
++        ;
++    web_keys(1u << k);                              /* T2's black key tapped: its MUTE */
++    run_s(0.08);
++    web_keys(0);
++    run_s(0.1);
++    ok(trk[1].p[P_MUTE] == 1, "a tap: T2 not muted");
++    nev = 0;
++    run_s(20.0);
++    for (i = 0; i < nev; i++) {
++        t2_on += ev[i].st == 0x91u && ev[i].d2;
++        cc103_t2 += ev[i].st == 0xB1u && ev[i].d1 == 103u && ev[i].d2 == 127u;
++    }
++    ok(!t2_on, "T2 muted: %u notes", t2_on);
++    ok(cc103_t2 > 0u, "T2 muted: no CC 103 127");
++    web_buttons(1u << B_GLO);                       /* GLO + T3's black key held: T3 alone */
++    run_s(0.05);
++    for (k = 0; k < 27u && !(key_black(k) && key_place(k) == 2u); k++)
++        ;
++    web_keys(1u << k);
++    nev = 0;
++    run_s(4.0);
++    for (i = 0; i < nev; i++)
++        solo_ok &= !((ev[i].st & 0xF0u) == 0x90u && ev[i].d2 && (ev[i].st & 15u) != 2u && (ev[i].st & 15u) < 6u);
++    ok(solo_ok && perf_solo == 4u, "GLO + T3's key: not T3 alone");
++    web_keys(0);
++    web_buttons(0);
++    run_s(0.1);
++    ok(!perf_solo, "SOLO stayed");
++}
++
++/* ENDLESS for 60 minutes */
++static void case_endless(void)
++{
++    uint32_t b, changes = 0, maxplan = 0, last_ri, jump_ok = 1, t, bpm = 0;
++    snprintf(tag, sizeof tag, "ENDLESS 60 min");
++    boot();
++    knobs(5, 0, 0xC0DEu, 70, 50, 2);
++    press(1u << B_PLAY);
++    last_ri = vb.ri;
++    bpm = vb.bpm;
++    for (t = 0; t < 3600u; t++) {
++        run_s(1.0);
++        if (vb.nplan > maxplan)
++            maxplan = vb.nplan;
++        if (vb.ri != last_ri && vb.sbar == 0u) {
++            changes++;
++            jump_ok &= vb.bpm + 8u >= bpm && vb.bpm <= bpm + 8u;
++            last_ri = vb.ri;
++            bpm = vb.bpm;
++        }
++        if (!vb.xfer)
++            bpm = vb.bpm;
++        if (!song.playing)
++            break;
++    }
++    ok(song.playing, "ENDLESS stopped after %u s", t);
++    ok(changes >= 5u, "%u subgenre changes in 60 minutes", changes);
++    ok(jump_ok, "a change glided more than 8 BPM");
++    ok(maxplan <= VB_PLAN, "the plan grew to %u", maxplan);
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++    read_bars();
++    {
++        uint32_t i, drops = 0, kicks = 0;
++        for (b = 1; b < nbars; b++) {
++            ok(bars[b].cc[0] != 6u, "an OUTRO in ENDLESS");
++            if (bars[b].cc[0] == 4u && !bars[b].cc[2]) {   /* every DROP's one, after a new style too: the kick */
++                uint32_t k = 0;
++                drops++;
++                for (i = bars[b].i; i < nev && ev[i].t <= ev[bars[b].i].t + 128u; i++)
++                    k |= ev[i].st == 0x90u && ev[i].d1 == 36u && ev[i].d2;
++                kicks += k;
++                if (!k)
++                    ok(0, "the DROP at bar %u (genre %u, subgenre %u): no kick on its one", b, bars[b].cc[4],
++                       bars[b].cc[5]);
++            }
++        }
++        ok(drops > 10u, "%u DROPs in 60 minutes", drops);
++    }
++    press(1u << B_PLAY);
++}
++
++/* favourites: stored, off and on, loaded, played */
++static uint8_t nor_kept[sizeof nor];
++static void case_favourites(void)
++{
++    uint32_t direct, k, a;
++    int p[2];
++    snprintf(tag, sizeof tag, "favourites");
++    boot();
++    knobs(7, 2, 0xABCDu, 55, 35, 0);
++    vb_knob_song();
++    for (k = 0; k < 27u && !(!key_black(k) && key_place(k) == 4u); k++)
++        ;
++    web_buttons(1u << B_SAVE);                      /* SAVE + the fifth white key */
++    run_s(0.1);
++    web_keys(1u << k);
++    run_s(0.08);
++    web_keys(0);
++    web_buttons(0);
++    run_s(0.3);
++    ok(vb_fav.f[4].genre == 7u && vb_fav.f[4].sub == 2u && vb_fav.f[4].seed == 0xABCDu, "not stored");
++    ok(nor[0x95000] == 0x56 || nor[0x96000] == 0x56, "not in the flash");
++    memcpy(nor_kept, nor, sizeof nor);
++    play_to_end(300.0);
++    run_s(2.0);
++    direct = mhash;
++    if (pipe(p))
++        return;
++    if (!fork()) {                                  /* off and on: a new device on the flash kept */
++        uint32_t r;
++        memcpy(nor, nor_kept, sizeof nor);
++        web_boot();
++        usb.config = 1;
++        web_master(1023);
++        run_s(0.6);
++        knobs(0, 0, 0x1111u, 90, 90, 1);           /* (other knobs) */
++        web_buttons(1u << B_GLO);
++        run_s(0.1);
++        web_keys(1u << k);
++        run_s(0.08);
++        web_keys(0);
++        web_buttons(0);
++        run_s(0.3);
++        nev = 0;
++        frames = 0;
++        mhash = 2166136261u;
++        play_to_end(300.0);
++        run_s(2.0);
++        r = mhash;
++        if (write(p[1], &r, sizeof r) != (ssize_t)sizeof r)
++            _exit(1);
++        _exit(0);
++    }
++    a = 0;
++    wait(NULL);
++    if (read(p[0], &a, sizeof a) != (ssize_t)sizeof a)
++        ok(0, "no answer");
++    ok(a == direct, "loaded after off and on: MIDI %08x, played directly %08x", a, direct);
++}
++
++/* VIZZBOX <-> GROOVEBOX, playing too */
++static void case_modes(void)
++{
++    uint32_t i, notes = 0;
++    int16_t lvl;
++    snprintf(tag, sizeof tag, "modes");
++    boot();
++    lvl = trk[0].p[P_LEVEL];
++    knobs(4, 0, 0x2222u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(10.0);
++    web_buttons(1u << B_HOME);
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    nev = 0;
++    run_s(10.0);
++    ok(!vb_mode && song.playing && vb.own, "into the GROOVEBOX playing: the song stopped");
++    for (i = 0; i < nev; i++)
++        notes += (ev[i].st & 0xF0u) == 0x90u && ev[i].d2;
++    ok(notes > 20u, "into the GROOVEBOX playing: %u notes in 10 s", notes);
++    web_buttons(1u << B_HOME);                      /* SHIFT + PLAY: back */
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(1.0);
++    ok(vb_mode && song.playing, "back in the VIZZBOX: stopped or not there");
++    press(1u << B_PLAY);
++    run_s(0.5);
++    web_buttons(1u << B_HOME);
++    run_s(0.06);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    run_s(0.06);
++    web_buttons(0);
++    run_s(0.5);
++    ok(!vb_mode && !vb.own && trk[0].p[P_LEVEL] == lvl, "stopped into the GROOVEBOX: its music not back");
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
++
++/* ---------------------------------------------------------------- the cases, four at a time */
++typedef struct { const char *name; uint32_t a, b; } case_t;
++static void one(const case_t *c)
++{
++    if (!strcmp(c->name, "song"))
++        case_song(c->a, c->b);
++    else if (!strcmp(c->name, "determinism"))
++        case_determinism();
++    else if (!strcmp(c->name, "transport"))
++        case_transport();
++    else if (!strcmp(c->name, "live"))
++        case_live();
++    else if (!strcmp(c->name, "mute"))
++        case_mute();
++    else if (!strcmp(c->name, "endless"))
++        case_endless();
++    else if (!strcmp(c->name, "favourites"))
++        case_favourites();
++    else
++        case_modes();
++}
++int main(int argc, char **argv)
++{
++    static case_t cs[200];
++    uint32_t n = 0, i, ri, len, running = 0, failed = 0;
++    const char *only = argc > 1 ? argv[1] : NULL;
++    cs[n++] = (case_t){"endless", 0, 0};
++    for (ri = 0; ri < 36u; ri++)
++        for (len = 0; len < 3u; len++)
++            cs[n++] = (case_t){"song", ri, len};
++    cs[n++] = (case_t){"determinism", 0, 0};
++    cs[n++] = (case_t){"transport", 0, 0};
++    cs[n++] = (case_t){"live", 0, 0};
++    cs[n++] = (case_t){"mute", 0, 0};
++    cs[n++] = (case_t){"favourites", 0, 0};
++    cs[n++] = (case_t){"modes", 0, 0};
++    fflush(stdout);
++    for (i = 0; i < n; i++) {
++        int st;
++        if (only && strcmp(only, cs[i].name))
++            continue;
++        if (running == 4u) {
++            wait(&st);
++            failed += !WIFEXITED(st) || WEXITSTATUS(st) != 0;
++            running--;
++        }
++        if (!fork()) {
++            one(&cs[i]);
++            printf("producer: %-40s %u checks, %d failed\n", tag, nchecks, fails);
++            fflush(stdout);
++            _exit(fails ? 1 : 0);
++        }
++        running++;
++    }
++    while (running) {
++        int st;
++        wait(&st);
++        failed += !WIFEXITED(st) || WEXITSTATUS(st) != 0;
++        running--;
++    }
++    if (failed)
++        printf("producer: %u cases FAILED\n", failed);
++    else
++        printf("producer: all passed\n");
++    return failed ? 1 : 0;
++}
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index fd01b01..ea9ceb8 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -266,6 +266,12 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "2.0 TIES (#25): notes going on while others start, a miss, a tie never starts a note, MONO, RATCH, STOP; record version 3" "$OUT/ties_test"
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/seqmidi_test" tests/seqmidi_test.c -lm
+     run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (2.0) own lengths, overlaps, ties, chains, SONG ONCE; (Vizz) mutes, held MUTE and solo as CC 103" "$OUT/seqmidi_test"
++    # (Vizzbox) the producer and its screens, on the browser emulator's device built natively with VIZZBOX=1
++    $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/producer_test" tests/producer_test.c -lm
++    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF / GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX" "$OUT/producer_test"
++    $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_ui" tests/vizzbox_ui.c -lm
++    run "(Vizzbox) the VIZZBOX's screens in every palette, as tests/vizzbox_ui_golden.txt has them" \
++        sh -c "\"$OUT/vizzbox_ui\" > \"$OUT/vizzbox_ui.txt\" && diff tests/vizzbox_ui_golden.txt \"$OUT/vizzbox_ui.txt\""
+     $CC -O1 -w -Ibuild/gen -Ifirmware/src -o "$OUT/midi_control_test" tests/midi_control_test.c -lm
+     run "USB/TRS clock, bend, sustain, ownership and panic recovery" "$OUT/midi_control_test"
+     $CC -O1 -w -DFELUCCA_FM4=1 -Ibuild/gen -Ifirmware/src -o "$OUT/digital_test" tests/digital_test.c -lm
+diff --git a/tests/vizzbox_ui.c b/tests/vizzbox_ui.c
+new file mode 100644
+index 0000000..bbd7cd4
+--- /dev/null
++++ b/tests/vizzbox_ui.c
+@@ -0,0 +1,142 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox) the VIZZBOX's screens (BRIEF-VIZZBOX.md 2.3, 9: UI goldens for every new screen): the browser emulator's
++ * device (web/emu/felucca_web.c, VIZZBOX=1) driven through its scenes, each screen's FNV-1a hash printed and, with
++ * OUTDIR, written as OUTDIR/<scene>.ppm (tests/ui_render.py's way: tools/vizzbox_ui.py makes the PNGs).
++ *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_ui tests/vizzbox_ui.c -lm
++ *   build/host/vizzbox_ui [OUTDIR]          (tests/run_tests.sh: compared with tests/vizzbox_ui_golden.txt) */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <sys/wait.h>
++#include <unistd.h>
++
++static const char *outdir;
++static char pal_name[16];
++static void ms(uint32_t n)                          /* the device runs n ms */
++{
++    while (n--)
++        web_render(44);
++}
++static void shot(const char *name)
++{
++    uint32_t h = 2166136261u, i;
++    ui.force = 1;
++    ms(140);                                        /* (a few frames: the screen drawn) */
++    for (i = 0; i < 240u * 240u; i++) {
++        h = (h ^ (web_fb[i] & 0xFFu)) * 16777619u;
++        h = (h ^ (web_fb[i] >> 8)) * 16777619u;
++    }
++    printf("%s_%-22s %08x\n", pal_name, name, h);
++    if (outdir) {
++        char path[512];
++        FILE *f;
++        snprintf(path, sizeof path, "%s/%s_%s.ppm", outdir, pal_name, name);
++        if ((f = fopen(path, "wb")) != NULL) {
++            fprintf(f, "P6\n240 240\n255\n");
++            for (i = 0; i < 240u * 240u; i++) {
++                uint32_t c = (uint32_t)(web_fb[i] >> 8 | (web_fb[i] & 0xFFu) << 8);   /* (high byte first) */
++                fputc((int)((c >> 11) * 255u / 31u), f);
++                fputc((int)(((c >> 5) & 63u) * 255u / 63u), f);
++                fputc((int)((c & 31u) * 255u / 31u), f);
++            }
++            fclose(f);
++        }
++    }
++}
++static void press(uint32_t labels, uint32_t hold_ms)
++{
++    web_buttons(labels);
++    ms(hold_ms);
++    web_buttons(0);
++    ms(60);
++}
++static uint32_t key_of(int black, uint32_t place)   /* the key (0 F3 .. 26 G5) that is the place-th of its colour */
++{
++    uint32_t k;
++    for (k = 0; k < 27u; k++)
++        if (key_black(k) == black && key_place(k) == place)
++            return k;
++    return 0;
++}
++
++static void scenes(uint32_t pal)
++{
++    web_nor_erase();
++    web_boot();
++    web_master(1023);
++    ms(1200);                                       /* (the splash) */
++    settings.palette = (uint8_t)pal;                /* (MENU > THEME's palette) */
++    theme_apply();
++    str_cpy(pal_name, UI_PALETTES[pal % NPALETTES].name, sizeof pal_name);
++    shot("vb_ready");                               /* a new unit: the VIZZBOX, the knobs' song */
++    web_enc(EN_K1, 1);
++    ms(30);
++    shot("vb_knob_genre");                          /* GENRE turned: big */
++    web_enc(EN_K2, 2);
++    ms(30);
++    web_enc(EN_K3, 10);
++    ms(1400);
++    shot("vb_techno_ready");                        /* the knob's value gone: TECHNO / DUB TECHNO's song */
++    web_enc(EN_ALGO, 1);
++    ms(30);
++    shot("vb_knob_length");
++    web_enc(EN_ALGO, -1);
++    ms(1400);
++    press(1u << B_PLAY, 40);
++    ms(30000);
++    shot("vb_playing");                             /* 30 s in: its section, the bar, the tracks playing */
++    web_keys(1u << key_of(1, 1));                   /* the second black key: T2 */
++    ms(80);
++    web_keys(0);
++    ms(100);
++    shot("vb_muted_t2");                            /* T2 muted (a tap) */
++    web_keys(1u << key_of(1, 1));
++    ms(80);
++    web_keys(0);
++    ms(100);
++    web_buttons(1u << B_SAVE);
++    ms(100);
++    web_keys(1u << key_of(0, 2));                   /* SAVE + the third white key: favourite 3 */
++    ms(80);
++    web_keys(0);
++    ms(100);
++    shot("vb_favourites_save");
++    web_buttons(0);
++    ms(200);
++    shot("vb_saved_message");
++    web_enc(EN_K1, 3);
++    ms(30);
++    shot("vb_knob_live");                           /* playing: FROM THE NEXT SECTION */
++    press(1u << B_PLAY, 40);
++    ms(3000);
++    shot("vb_stopped");                             /* stopped: the knobs' song (the favourite written now) */
++    web_buttons(1u << B_GLO);
++    ms(100);
++    shot("vb_favourites_load");
++    web_buttons(0);
++    ms(100);
++    web_buttons(1u << B_HOME);
++    ms(60);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    ms(60);
++    web_buttons(0);
++    ms(600);
++    shot("vb_groovebox");                           /* HOME + PLAY: the GROOVEBOX */
++    if (nor[0x95000] != 0x56 && nor[0x96000] != 0x56)
++        printf("%s: the favourite not in the flash\n", pal_name);
++}
++/* every palette on a device of its own (fork), in order */
++int main(int argc, char **argv)
++{
++    uint32_t p;
++    outdir = argc > 1 ? argv[1] : NULL;
++    for (p = 0; p < NPALETTES; p++) {
++        fflush(stdout);
++        if (!fork()) {
++            scenes(p);
++            fflush(stdout);
++            _exit(0);
++        }
++        wait(NULL);
++    }
++    return 0;
++}
+diff --git a/tests/vizzbox_ui_golden.txt b/tests/vizzbox_ui_golden.txt
+new file mode 100644
+index 0000000..ca3e9b3
+--- /dev/null
++++ b/tests/vizzbox_ui_golden.txt
+@@ -0,0 +1,72 @@
++SKIFF_vb_ready               1fcdf24f
++SKIFF_vb_knob_genre          a27d9add
++SKIFF_vb_techno_ready        c3db5ee6
++SKIFF_vb_knob_length         3cf5c2e2
++SKIFF_vb_playing             9b902b30
++SKIFF_vb_muted_t2            9c9e101f
++SKIFF_vb_favourites_save     13dd2b49
++SKIFF_vb_saved_message       2e9e7781
++SKIFF_vb_knob_live           b72f8738
++SKIFF_vb_stopped             f4f8da19
++SKIFF_vb_favourites_load     cc33ac0d
++SKIFF_vb_groovebox           0ff0a1ac
++HI-CON_vb_ready               3edc1ad8
++HI-CON_vb_knob_genre          e520bb6c
++HI-CON_vb_techno_ready        ef702197
++HI-CON_vb_knob_length         04e1cd50
++HI-CON_vb_playing             789fa18b
++HI-CON_vb_muted_t2            b596c112
++HI-CON_vb_favourites_save     900aaac2
++HI-CON_vb_saved_message       82925c94
++HI-CON_vb_knob_live           af951491
++HI-CON_vb_stopped             26f87998
++HI-CON_vb_favourites_load     a3ec6c86
++HI-CON_vb_groovebox           c7197e7f
++PAPER_vb_ready               ee7334b5
++PAPER_vb_knob_genre          aecc7918
++PAPER_vb_techno_ready        eb55c0d1
++PAPER_vb_knob_length         8c64b9c0
++PAPER_vb_playing             c5df6986
++PAPER_vb_muted_t2            1afb03d4
++PAPER_vb_favourites_save     1cbc94a3
++PAPER_vb_saved_message       acc6cfe3
++PAPER_vb_knob_live           4f39baf8
++PAPER_vb_stopped             69ebad0a
++PAPER_vb_favourites_load     e93d8c0b
++PAPER_vb_groovebox           bfa61eea
++CRYPT_vb_ready               f9d52929
++CRYPT_vb_knob_genre          436def34
++CRYPT_vb_techno_ready        920c70b9
++CRYPT_vb_knob_length         f80b5935
++CRYPT_vb_playing             87e895d6
++CRYPT_vb_muted_t2            8fbe54d2
++CRYPT_vb_favourites_save     0fcd4af2
++CRYPT_vb_saved_message       cd12bd5e
++CRYPT_vb_knob_live           c8267084
++CRYPT_vb_stopped             30e4148c
++CRYPT_vb_favourites_load     99566b5f
++CRYPT_vb_groovebox           0aa487f7
++NEON_vb_ready               f198afa2
++NEON_vb_knob_genre          7fb3acd8
++NEON_vb_techno_ready        b2fe4804
++NEON_vb_knob_length         47dcaab1
++NEON_vb_playing             c42cf688
++NEON_vb_muted_t2            9e6c3b5c
++NEON_vb_favourites_save     17137a69
++NEON_vb_saved_message       3723ff94
++NEON_vb_knob_live           fb01325b
++NEON_vb_stopped             cec19a74
++NEON_vb_favourites_load     5eeedbcb
++NEON_vb_groovebox           d4f3380a
++QUARK_vb_ready               c841162e
++QUARK_vb_knob_genre          12fe58ec
++QUARK_vb_techno_ready        a830c051
++QUARK_vb_knob_length         76efca21
++QUARK_vb_playing             32d6d4f2
++QUARK_vb_muted_t2            7e413d7f
++QUARK_vb_favourites_save     0f8854b0
++QUARK_vb_saved_message       4ac7930a
++QUARK_vb_knob_live           de9eb1cd
++QUARK_vb_stopped             7fe40e60
++QUARK_vb_favourites_load     d03456aa
++QUARK_vb_groovebox           05444732
+diff --git a/tools/vizzbox_render.c b/tools/vizzbox_render.c
+index e46c4dd..e94e929 100644
+--- a/tools/vizzbox_render.c
++++ b/tools/vizzbox_render.c
+@@ -78,7 +78,12 @@ static void drain(void)                           /* the unit's MIDI OUT since t
+             continue;                             /* (realtime: not in a file) */
+         mevent((uint32_t)tick_acc, d, (st & 0xE0u) == 0xC0u ? 2u : 3u);
+         if (st == 0xBFu && d[1] >= 104u && d[1] <= 109u) {
+-            cc_last[d[1] - 104u] = d[2];
++            if (d[1] == 109u && cc_last[5] != (cc_last[4] << 8 | d[2]) + 1u)   /* (a style: at PLAY; ENDLESS, a
++                                                                                   * knob: another) */
++                printf("  %6.1f s  %s / %s, %d BPM, key %s %s\n", (double)frames / FS, VB_GNAME[cc_last[4] % 10u],
++                       VB_SNAME[(vb_sub0(cc_last[4] % 10u) + d[2]) % 36u], vb.bpm, N_NOTE[vb.root % 12u],
++                       N_SCALE[vb.scale % 16u]);
++            cc_last[d[1] - 104u] = d[1] == 109u ? (cc_last[4] << 8 | d[2]) + 1u : d[2];
+             if (d[1] == 107u && !cc_last[2])        /* (a section's first bar) */
+                 printf("  %6.1f s  %-6s %3u bars\n", (double)frames / FS, SEC[cc_last[0] % 7u], d[2]);
+         }
+-- 
+2.43.0
+

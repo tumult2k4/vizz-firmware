@@ -1,0 +1,31 @@
+From d9c4abb9038077754c23759080b81d6ed53f64ae Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 20:41:19 +0000
+Subject: [PATCH 10/11] build.py: the FM-1's development build without the
+ serial console too
+
+With the console (about 7.4 KB) the development build no longer fits the app area beside the producer;
+FELUCCA_CDC=1 still asks for it. The release has no console anyway (Skiff 2.0).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ tools/build.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/tools/build.py b/tools/build.py
+index 3aa509a..94c30e6 100755
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -409,6 +409,8 @@ def main():
+         VERSION = "v" + a.release.lower()      # e.g. v1.0, v1.1-rc1
+         os.environ.setdefault("FELUCCA_CDC", "0")   # (Skiff 2.0) no serial console in a release (see the top)
+         name = f"{stem}-{a.release}.fwsc"
++    if BOARD == "fm1":                # (Vizzbox) the development build without the serial console too: with it (about
++        os.environ.setdefault("FELUCCA_CDC", "0")   # 7.4 KB) it no longer fits beside the producer (FELUCCA_CDC=1: ask)
+     fm1pkg_make.SDK = a.sdk
+     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
+         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
+-- 
+2.43.0
+
