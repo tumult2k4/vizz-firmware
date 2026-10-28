@@ -32,10 +32,14 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 2. **Tests von Vizz 2.0:** `tests/run_tests.sh` auf diesem Stand (Entwicklungs-Build): **`ALL HOST TESTS PASSED`**,
    126 Test-Schritte, 8 280 Einzelprüfungen „ok“, 0 Fehler – darunter `seqmidi_test` (alle Fälle von Vizz 2.0), die
    **176 Regressions-Renders mit 0 Änderungen** gegen `tests/golden.txt` von Skiff 2.0.1, die UI-Goldens (3 388 Bilder,
-   0 geändert), der zweite Kern bitgleich, ASan/UBSan und Fuzzer, die Web-Tests. Dieser erste Lauf ohne Emscripten
-   (Browser-Emulator, Konverter als WebAssembly, Installer-Test übersprungen); der vollständige Lauf mit
-   `./build-vizzbox.sh` (Release, Konverter, Ein-Datei-Installer, Installer-Test in Chromium, Neubau von
-   `tests/vizz10_unit.json` aus Vizz 1.0, Gegenprobe) läuft und wird hier nachgetragen.
+   0 geändert), der zweite Kern bitgleich, ASan/UBSan und Fuzzer, die Web-Tests.
+   Der vollständige Lauf mit `./build-vizzbox.sh` (Emscripten 6.0.13: Browser-Emulator, Konverter als WebAssembly,
+   Release `vizz-2.0.fwsc`, Ein-Datei-Installer, `tests/run_tests.sh` mit Web-, Backup- und Konverter-Tests, Neubau
+   von `tests/vizz10_unit.json` aus Vizz 1.0, Installer-Test in Chromium, Gegenprobe `tests/vizz_mutants.py`):
+   **`ALL HOST TESTS PASSED`**, „install tests passed“, „web tests passed“, „backup web tests passed“, „converter
+   (wasm) test passed“, „vizz installer: all ok“ (Entwicklungs-Build, Vizz 2.0, Skiff 2.0.1 und Vizz 1.0 als
+   Ausgangsstand), „vizz_mutants: every fault caught“, Rückgabewert 0. Der erste Lauf scheiterte an
+   `emsdk_env.sh`, das unter `dash` keinen Pfad setzt; `build-vizzbox.sh` setzt ihn jetzt selbst.
 3. **Platz im Flash gemessen** (Abschnitt „Platz im Flash“ unten).
 
 ### Als Nächstes

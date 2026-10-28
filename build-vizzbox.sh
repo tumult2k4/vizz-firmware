@@ -40,6 +40,7 @@ if ! command -v emcc >/dev/null 2>&1; then
     [ -x "$EMSDK/emsdk" ] || git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK"
     "$EMSDK/emsdk" install "$EMSDK_VERSION" && "$EMSDK/emsdk" activate "$EMSDK_VERSION"
     . "$EMSDK/emsdk_env.sh"
+    command -v emcc >/dev/null 2>&1 || PATH="$EMSDK/upstream/emscripten:$PATH"   # (emsdk_env.sh sets nothing under dash)
 fi
 
 # the release (build/vizz-2.0.fwsc, FM-1_820) and its converter, the installer; then the development build the tests
