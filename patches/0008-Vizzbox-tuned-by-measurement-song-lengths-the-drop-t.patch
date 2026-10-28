@@ -1,7 +1,7 @@
 From ac4f51417530436c7efce9e861f2b63100479cd4 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 19:59:28 +0000
-Subject: [PATCH 08/13] Vizzbox: tuned by measurement (song lengths, the drop,
+Subject: [PATCH 08/14] Vizzbox: tuned by measurement (song lengths, the drop,
  the mix, the loudness)
 
 The plan fits the length at the song's tempo: NORMAL 4:45 .. 6:10, SHORT 2:30 .. 3:35 (the middle again,

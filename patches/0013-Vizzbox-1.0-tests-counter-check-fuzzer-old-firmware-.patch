@@ -1,7 +1,7 @@
 From 2abdddc183f05bbedf4d36eb29da82a0f83b0dd4 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 22:15:01 +0000
-Subject: [PATCH 13/13] Vizzbox 1.0, tests: counter-check, fuzzer, old firmware
+Subject: [PATCH 13/14] Vizzbox 1.0, tests: counter-check, fuzzer, old firmware
  on a unit with favourites, the heaviest drop
 
 tests/vizzbox_mutants.py: 22 deliberate faults in the producer, its ISR part, its screen, the autosave hook

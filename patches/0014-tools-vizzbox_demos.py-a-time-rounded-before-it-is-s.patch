@@ -1,0 +1,45 @@
+From afc066a39c45dccf351b385d737e67aac4268c26 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 23:25:41 +0000
+Subject: [PATCH 14/14] tools/vizzbox_demos.py: a time rounded before it is
+ split into minutes and seconds
+
+A song of 299.6 s read 4:60 in demos/README.md; now 5:00 (and the excerpts' times the same way).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ tools/vizzbox_demos.py | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/tools/vizzbox_demos.py b/tools/vizzbox_demos.py
+index 60f5e2c..5c5d8b9 100644
+--- a/tools/vizzbox_demos.py
++++ b/tools/vizzbox_demos.py
+@@ -27,6 +27,12 @@ KICK, FS = 36, 44100
+ PART = 60.0                                        # the demo's length, s
+ 
+ 
++def mmss(t, d=0):
++    """t seconds as m:ss (d decimals), rounded first: 299.6 s is 5:00, not 4:60"""
++    t = round(t, d)
++    return f"{int(t // 60)}:{t % 60:0{3 + d if d else 2}.{d}f}"
++
++
+ def slug(s):
+     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+ 
+@@ -217,8 +223,8 @@ def main(argv):
+              "| ---: | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- | ---: | --- |"]
+     for n, name, info, c, a, b, pk, rm in rows:
+         lines.append(f"| {n} | {info['genre']} | {info['sub']} | `{seed}` | {info['bpm']} | {info['key']} | {pk:.1f} | "
+-                     f"{rm:.1f} | {a // 60:.0f}:{a % 60:04.1f} – {b // 60:.0f}:{b % 60:04.1f} | {c.get('into', '–')} | "
+-                     f"{info['length'] // 60:.0f}:{info['length'] % 60:02.0f} | [MP3]({name}.mp3) · [MIDI]({name}.mid) |")
++                     f"{rm:.1f} | {mmss(a, 1)} – {mmss(b, 1)} | {c.get('into', '–')} | "
++                     f"{mmss(info['length'])} | [MP3]({name}.mp3) · [MIDI]({name}.mid) |")
+     lines += ["", "Geprüft am ganzen Song (Render und MIDI-Datei):", "",
+               "| # | Subgenre | Spitze Song | Stimmen gestohlen | Noten außerhalb der Tonart | Kick mit Bass | "
+               "Sprung hinein | leiseste 1/16 im letzten Beat | FX-Noten davor (Riser) | Abschnitte |",
+-- 
+2.43.0
+
