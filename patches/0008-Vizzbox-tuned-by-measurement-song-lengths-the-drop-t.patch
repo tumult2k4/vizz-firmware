@@ -1,0 +1,936 @@
+From ac4f51417530436c7efce9e861f2b63100479cd4 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Wed, 28 Oct 2026 19:59:28 +0000
+Subject: [PATCH 8/8] Vizzbox: tuned by measurement (song lengths, the drop,
+ the mix, the loudness)
+
+The plan fits the length at the song's tempo: NORMAL 4:45 .. 6:10, SHORT 2:30 .. 3:35 (the middle again,
+the calm sections halved; ambient's middle without a DROP). A BUILD's last beat goes silent where the style
+has it (else by chance with VARIATION): every track's notes end, the FX layer's FILTER takes what rings on.
+The riser is the budget's last to go in a BUILD; a held chord, riser or atmosphere starts a beat later
+instead of going. The BUILD's HPF reaches further.
+
+The mix: the role levels from the measurements now keep the drops out of Skiff's master limiter (its gain
+reduction about 1 dB on average, was 3..9 dB): each role's loudness lower, each sound's peak alone capped.
+VB_TRIM (tools/vizzbox_level.py) brings the subgenres' demos to one loudness.
+
+tools/vizzbox_render: the boot no longer in the WAV (it ran 0.6 s behind the MIDI file); prints the key's
+scale and the six sounds. tools/vizzbox_demos.py: every subgenre rendered, its part from a BUILD into the
+DROP as MP3, the whole song's MIDI file, and the checks of BRIEF 8 (clipping, loudness, notes outside the
+key, sections, kick on bass, the jump into the drop, the silence before it, the riser).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01R1rawnvCsrvDZVbc37ZFUY
+---
+ firmware/src/producer.c        | 108 ++++++++++----
+ firmware/src/producer_isr.c    |   4 +-
+ firmware/src/producer_tables.c | 205 ++++++++++++++-------------
+ tools/vizzbox_demos.py         | 248 +++++++++++++++++++++++++++++++++
+ tools/vizzbox_level.py         |  56 ++++++++
+ tools/vizzbox_pick.py          |  13 +-
+ tools/vizzbox_render.c         |  24 ++--
+ 7 files changed, 518 insertions(+), 140 deletions(-)
+ create mode 100644 tools/vizzbox_demos.py
+ create mode 100644 tools/vizzbox_level.py
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index 7afcbf2..73c23d8 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -21,7 +21,7 @@
+ 
+ enum { VS_INTRO = 1, VS_GROOVE, VS_BUILD, VS_DROP, VS_BREAK, VS_OUTRO };   /* CC 104's values */
+ enum { VL_SHORT, VL_NORMAL, VL_ENDLESS };
+-#define VB_PLAN 16u
++#define VB_PLAN 24u
+ typedef struct { uint8_t genre, sub, energy, var, len, bpm; uint16_t seed; } vb_song_t;   /* a favourite */
+ typedef struct { uint8_t type, bars, e0, e1; } vb_sec_t;   /* a section: VS_*, its bars, its energy at its start, end */
+ static struct {
+@@ -48,6 +48,7 @@ static struct {
+     uint8_t bpm_to;                  /* .. gliding to (ENDLESS, a new style) */
+     uint16_t sub_bars;               /* ENDLESS: bars since the subgenre came in */
+     uint8_t cprev[4], cn;            /* the chord voiced last (voice leading) */
++    uint8_t sil;                     /* the staged bar ends in a beat of silence (a BUILD's last, before its DROP) */
+ } vb __attribute__((section(".pool")));
+ #define VQ_DROP 1u
+ #define VQ_BREAK 2u
+@@ -185,30 +186,44 @@ static void vb_sec_put(uint32_t i, uint32_t type, uint32_t bars)
+     }
+ }
+ static uint32_t vb_bars_ms(uint32_t bars) { return bars * 240000u / vb_tempo(); }
+-/* the plan: the form, NORMAL ~4.25 min at least (its middle again), SHORT about half of it; ENDLESS: without the
+- * outro, more comes as it plays (vb_more) */
++/* the plan: the form at the song's tempo, NORMAL 4:45 .. 6:10, SHORT 2:30 .. 3:35 (its sections of 16 bars and more
++ * halved, a BUILD kept): while shorter its middle again (from the section after the first DROP to the last DROP; with
++ * no DROP from the first GROOVE's end to the OUTRO) unless that is further off, while longer its longest INTRO, GROOVE,
++ * BREAK or OUTRO halved. ENDLESS: the form without its outro, more comes as it plays
++ * (vb_more) */
+ static void vb_plan(void)
+ {
+     const uint8_t *f = VB_FORM[vb_sub()->form % 7u];
+-    uint32_t n = 0, i, total = 0, mid0 = 0, mid1 = 0, rep;
++    uint32_t n = 0, i, total = 0, mid0, mid1, b, j, sh = vb.s.len == VL_SHORT;
++    uint32_t lo = sh ? 150000u : 285000u, hi = sh ? 215000u : 370000u;
+     for (i = 0; i < 8u && f[i]; i++) {
+-        uint32_t t = f[i] >> 4, b = 4u * ((f[i] & 15u) + 1u);
+-        if (vb.s.len == VL_SHORT && t != VS_BUILD)
+-            b = b >= 16u ? b / 2u : b;
++        uint32_t t = f[i] >> 4;
++        b = 4u * ((f[i] & 15u) + 1u);
++        if (sh && t != VS_BUILD && b >= 16u)
++            b /= 2u;
+         if (vb.s.len == VL_ENDLESS && t == VS_OUTRO)
+             break;
+         vb_sec_put(n++, t, b);
+         total += b;
+     }
+-    /* the middle: from the first section after the first DROP to the last DROP */
++    if (vb.s.len == VL_ENDLESS)
++        goto done;
+     for (i = 0; i < n && vb.plan[i].type != VS_DROP; i++)
+         ;
+     mid0 = i + 1u;
+     for (mid1 = n; mid1 > mid0 && vb.plan[mid1 - 1u].type != VS_DROP; mid1--)
+         ;
+-    for (rep = 0; vb.s.len == VL_NORMAL && rep < 4u && vb_bars_ms(total) < 255000u && mid1 > mid0 &&
+-                  n + (mid1 - mid0) <= VB_PLAN; rep++) {
+-        uint32_t m = mid1 - mid0, j;
++    if (i == n) {                                   /* (no DROP, ambient: what lies between the first GROOVE and the
++                                                     * OUTRO) */
++        mid0 = 2u;
++        mid1 = n - 1u;
++    }
++    while (vb_bars_ms(total) < lo && mid1 > mid0 && n + (mid1 - mid0) <= VB_PLAN) {
++        uint32_t m = mid1 - mid0;
++        for (b = 0, j = mid0; j < mid1; j++)
++            b += vb.plan[j].bars;
++        if (vb_bars_ms(total + b) > hi && vb_bars_ms(total + b) - hi > lo - vb_bars_ms(total))
++            break;                                  /* (again would be further off) */
+         for (j = n; j-- > mid1;)                    /* (the outro and what follows the middle move on) */
+             vb.plan[j + m] = vb.plan[j];
+         for (j = 0; j < m; j++) {
+@@ -219,6 +234,19 @@ static void vb_plan(void)
+         mid0 = mid1;
+         mid1 += m;
+     }
++    while (vb_bars_ms(total) > hi) {
++        for (b = 0, j = n, i = 0; i < n; i++)
++            if (vb.plan[i].type != VS_BUILD && vb.plan[i].type != VS_DROP && vb.plan[i].bars >= 16u &&
++                vb.plan[i].bars > b) {
++                b = vb.plan[i].bars;
++                j = i;
++            }
++        if (j == n)
++            break;
++        vb.plan[j].bars = (uint8_t)(b / 2u);
++        total -= b / 2u;
++    }
++done:
+     vb.nplan = (uint8_t)n;
+ }
+ /* ENDLESS: the next cycle when the plan runs out: GROOVE or BREAK, BUILD, DROP; the played sections leave */
+@@ -464,9 +492,6 @@ static void vb_drums(uint32_t e)
+                 step_set_ratchet(&vb_o[i], 2u);
+         }
+     }
+-    if (c->type == VS_BUILD && left == 1u && (u->flags & VF_SIL))
+-        for (i = 12u; i < 16u; i++)                 /* a beat of silence before the drop */
+-            step_clear(&vb_o[i]);
+     if (c->type == VS_DROP && !vb.sbar) {           /* the drop's one: the crash (the open hat, accented), the kick */
+         vb_hit(0, LN_HATO, 120u);
+         vb_o[0].acc |= (uint8_t)(1u << LN_HATO | ((lanes & 1u) ? 1u << LN_KICK : 0u));
+@@ -742,7 +767,7 @@ static void vb_fxt(uint32_t e)
+     if (c->type == VS_BUILD) {
+         if (!vb.sbar)
+             vb_put(0, 72u, 100u);
+-        vb_hold(vb.sbar ? 0u : 1u, vb_left() == 1u && (vb_sub()->flags & VF_SIL) ? 12u : 16u);
++        vb_hold(vb.sbar ? 0u : 1u, 16u);
+     } else if (c->type == VS_DROP) {
+         if (!vb.sbar)
+             vb_put(0, 48u, 120u);
+@@ -797,17 +822,20 @@ static void vb_ctl_make(uint32_t e, uint32_t e1)
+         k->rp[i].k = 0xFFu;
+     vb_stream(VR_FX, vb.nsec, vb.sbar);
+     if (c->type == VS_BUILD) {
+-        h = 25 + 45 * (int32_t)vb.s.energy / 100;   /* the sweep: HPF up (techno: the LPF closing) */
++        h = 40 + 50 * (int32_t)vb.s.energy / 100;   /* the sweep: HPF up (techno: the LPF closing) */
+         if (u->form == FO_T)
+             h = -h;
+         k->flt0 = (int8_t)(h * (int32_t)vb.sbar / (int32_t)len);
+         k->flt1 = (int8_t)(h * (int32_t)(vb.sbar + 1u) / (int32_t)len);
+         vb_ramp(k, R_F, P_LEVEL, 20 + 90 * (int32_t)vb.sbar / (int32_t)len, 20 + 90 * (int32_t)(vb.sbar + 1u) / (int32_t)len);
+         vb_ramp(k, R_F, t6, 10 + 100 * (int32_t)vb.sbar / (int32_t)len, 10 + 100 * (int32_t)(vb.sbar + 1u) / (int32_t)len);
+-        if (left == 1u) {                           /* the last beat: a reverb throw, a stutter or the reverse */
++        if (vb.sil)
++            k->cut = 12;                            /* (the silence: every track's notes end, vb_write, and the
++                                                     * FILTER takes what rings on) */
++        else if (left == 1u) {                      /* the last beat: a reverb throw, a stutter or the reverse */
+             k->thr = (int8_t)(40 + e / 2u);
+             k->thr_at = 12;
+-            if (!(u->flags & VF_SIL) && vb_pct(70)) {
++            if (vb_pct(70)) {
+                 k->fx = vb_pct(50) && vb.bpm >= 81u ? PF_REV : PF_R16;
+                 k->fx_at = 12;
+                 k->fx_to = 15;
+@@ -874,8 +902,9 @@ static uint32_t vb_gate(uint32_t k)
+  * one), the bass, lead, arp and FX one voice each (MONO / LEGATO) while a note or its tail lasts, each chord note while
+  * it or its tail lasts (a note struck again keeps its voice); the bar before rings on into it, and the bar keeps room
+  * for the next one's kick and bass. Over: the most recent note sounding at the first step over goes, the arp's first,
+- * then the chords' top note, the percussion (TOM RIM BELL HAT OP), the FX's, the lead's, the chord; what still does not
+- * fit (the bar before ringing on), the step's new closed hat, clap or snare. The rings and tails are the sounds'
++ * then the chords' top note, the percussion (TOM RIM BELL HAT OP), the FX's, the lead's, the chord (in a BUILD the FX's,
++ * its riser, after the chord; a held chord or riser comes a beat later instead); what still does not fit (the bar
++ * before ringing on), the step's new closed hat, clap or snare. The rings and tails are the sounds'
+  * measured ones (producer_tables.c), in quarter steps at the tempo, a swung step's late start and a ratchet's last hit
+  * added */
+ #define VB_BUDGET NVOICE
+@@ -1038,6 +1067,18 @@ static int32_t vb_last(step_t *const *dst, uint32_t k, uint32_t s, uint32_t lane
+     }
+     return -1;
+ }
++/* a held note (TIEs after it) on step i of o later, on step i + 4 (a beat; what rang there before has gone by then):
++ * 0, none to hold */
++static int vb_later(step_t *o, int32_t i)
++{
++    int32_t j;
++    if (i + 4 >= 16 || o[i + 4].time != ST_TIE)
++        return 0;
++    o[i + 4] = o[i];
++    for (j = i; j < i + 4; j++)
++        step_clear(&o[j]);
++    return 1;
++}
+ static void vb_budget(step_t *const *dst)
+ {
+     static const uint8_t PERC = 1u << LN_TOM | 1u << LN_RIM | 1u << LN_BELL | 1u << LN_HATO;
+@@ -1055,13 +1096,18 @@ static void vb_budget(step_t *const *dst)
+             dst[R_D][i].hit &= (uint8_t)~(1u << l);
+             if (!dst[R_D][i].hit)
+                 dst[R_D][i].time = ST_REST;
+-        } else if ((i = vb_last(dst, R_F, s, 0)) >= 0)
+-            step_clear(&dst[R_F][i]);
+-        else if ((i = vb_last(dst, R_L, s, 0)) >= 0)
++        } else if (vb_cur()->type != VS_BUILD && (i = vb_last(dst, R_F, s, 0)) >= 0) {
++            if (!vb_later(dst[R_F], i))             /* (a held atmosphere a beat later; else gone) */
++                step_clear(&dst[R_F][i]);
++        } else if ((i = vb_last(dst, R_L, s, 0)) >= 0)
+             step_clear(&dst[R_L][i]);
+-        else if ((i = vb_last(dst, R_C, s, 0)) >= 0)
+-            step_clear(&dst[R_C][i]);
+-        else if (s < 16u && (vb_onl & (1u << LN_HATC | 1u << LN_CLAP | 1u << LN_SNARE))) {
++        else if ((i = vb_last(dst, R_C, s, 0)) >= 0) {
++            if (!vb_later(dst[R_C], i))             /* (a held chord a beat later; else gone) */
++                step_clear(&dst[R_C][i]);
++        } else if ((i = vb_last(dst, R_F, s, 0)) >= 0) {   /* (a BUILD's riser: last of all, a beat later) */
++            if (!vb_later(dst[R_F], i))
++                step_clear(&dst[R_F][i]);
++        } else if (s < 16u && (vb_onl & (1u << LN_HATC | 1u << LN_CLAP | 1u << LN_SNARE))) {
+             uint32_t l = vb_onl & 1u << LN_HATC ? LN_HATC : vb_onl & 1u << LN_CLAP ? LN_CLAP : LN_SNARE;
+             dst[R_D][s].hit &= (uint8_t)~(1u << l);  /* (the last resort: that step's new hat, clap or snare; never
+                                                      * the kick) */
+@@ -1076,8 +1122,12 @@ static void vb_budget(step_t *const *dst)
+ /* the staged bar's steps of every track: into dst[k] (launch_q's, or the tracks' own at PLAY) */
+ static void vb_write(step_t *const *dst)
+ {
+-    uint32_t e = vb_energy(), m = vb_roles(e), k;
++    uint32_t e = vb_energy(), m = vb_roles(e), k, i;
+     int fresh;
++    vb_stream(VR_PLAN, vb.nsec, 1u);                /* (a BUILD's last bar: a beat of silence before the drop, where
++                                                     * the style has it, else by chance) */
++    vb.sil = (uint8_t)(vb_cur()->type == VS_BUILD && vb_left() == 1u &&
++                       ((vb_sub()->flags & VF_SIL) || vb_pct(35u + vb.s.var / 2u)));
+     for (k = 0; k < NTRK; k++) {
+         vb_o = dst[k];
+         vb_clear();
+@@ -1094,6 +1144,8 @@ static void vb_write(step_t *const *dst)
+         }
+         if (fresh && vb_o[0].time == ST_TIE)        /* (a TIE with nothing before it: silent; the PAD starts) */
+             vb_o[0].time = ST_REST;
++        for (i = 12u; vb.sil && i < 16u; i++)       /* (the silence: every track, the reverb throw rings) */
++            step_clear(&vb_o[i]);
+     }
+     vb_budget(dst);
+     {   /* the energy at the bar's end: the next bar's start */
+@@ -1312,7 +1364,7 @@ static void vb_load(void)
+     int16_t tv[5];
+     for (k = 0; k < NTRK; k++) {
+         const vb_snd_t *s = &VB_SND[vb.snd[k] % NELEM(VB_SND)];
+-        vb_sound(k, s->eng, s->pre, s->lvl);
++        vb_sound(k, s->eng, s->pre, (uint32_t)clamp((int32_t)s->lvl + VB_TRIM[vb.ri % 36u], 0, 127));
+     }
+     song.g[G_BPM] = vb.bpm;                          /* (the tails in steps at it, and its swing) */
+     song.g[G_SWING] = u->swing;
+diff --git a/firmware/src/producer_isr.c b/firmware/src/producer_isr.c
+index b2d4703..8b1d74c 100644
+--- a/firmware/src/producer_isr.c
++++ b/firmware/src/producer_isr.c
+@@ -18,6 +18,8 @@ typedef struct {
+     uint8_t e1;                                     /* CC 105 at its last step: a line from cc[1] */
+     uint8_t bpm;                                    /* the tempo from its first step */
+     int8_t flt0, flt1;                              /* FILTER (perf_k[0]: -100 LPF .. 100 HPF) at its first step, its last */
++    uint8_t cut;                                    /* from this step on FILTER all the way down (0: none): the silence
++                                                     * before a drop */
+     int8_t thr;                                     /* THROW (perf_k[2]) from step thr_at on (0: none) */
+     uint8_t thr_at;
+     uint8_t fx, fx_at, fx_to;                       /* an FX layer effect (PF_*; PF_N none) on steps fx_at .. fx_to */
+@@ -70,7 +72,7 @@ static __attribute__((noinline)) void vb_isr(void)
+         }
+         if (!s && c->bpm && !song.g[G_CLOCK])
+             song.g[G_BPM] = c->bpm;
+-        perf_k[0] = (int16_t)vb_line(c->flt0, c->flt1, s);
++        perf_k[0] = (int16_t)(c->cut && s >= c->cut ? -100 : vb_line(c->flt0, c->flt1, s));
+         perf_k[2] = (int16_t)(c->thr && s >= c->thr_at ? c->thr : 0);
+         vb_hold_fx(c->fx < PF_N && s >= c->fx_at && s <= c->fx_to ? c->fx : PF_N);
+         for (i = 0; i < VB_NRAMP; i++)
+diff --git a/firmware/src/producer_tables.c b/firmware/src/producer_tables.c
+index 572b5f8..299e635 100644
+--- a/firmware/src/producer_tables.c
++++ b/firmware/src/producer_tables.c
+@@ -148,106 +148,106 @@ typedef struct { uint8_t eng, pre, lvl, tail; } vb_snd_t;
+ typedef struct { uint8_t snd, ring[NLANE]; } vb_kit_t;   /* a drum kit (VB_SND), each lane's ring (32 ms) */
+ /* BEGIN GENERATED by tools/vizzbox_pick.py from tools/vizzbox_sounds' measurements: do not edit */
+ static const vb_snd_t VB_SND[] = {
+-    {10, 0, 116, 75},   /* DRUM KIT (drums) */
+-    {10, 8, 118, 39},   /* TIGHT KIT (drums) */
+-    {10, 7, 116, 165},   /* STUDIO KIT (drums) */
+-    {14, 2, 114, 87},   /* FACTORY KIT (drums) */
+-    {10, 2, 114, 36},   /* NEON KIT (drums) */
+-    {10, 3, 108, 101},   /* BOOM KIT (drums) */
+-    {10, 6, 117, 41},   /* ELECTRO KIT (drums) */
+-    {10, 9, 117, 84},   /* LOFI KIT (drums) */
+-    {10, 5, 117, 23},   /* RHYTHM BOX (drums) */
+-    {10, 10, 114, 255},   /* DEEP DRUMS (drums) */
+-    {14, 6, 118, 75},   /* SOFT KIT (drums) */
+-    {10, 12, 114, 99},   /* PERC KIT (drums) */
+-    {14, 8, 113, 113},   /* TRIBAL KIT (drums) */
+-    {14, 5, 111, 162},   /* INDUSTRIAL (drums) */
+-    {10, 1, 103, 174},   /* WAR DRUMS (drums) */
+-    {10, 11, 118, 37},   /* SNAP KIT (drums) */
+-    {14, 3, 110, 119},   /* DEEP KIT (drums) */
+-    {14, 4, 122, 37},   /* CLICK KIT (drums) */
+-    {14, 7, 115, 23},   /* GLITCH KIT (drums) */
+-    {14, 1, 109, 29},   /* HADRON KIT (drums) */
+-    {0, 2, 125, 3},   /* SQR BASS (bass) */
+-    {0, 15, 124, 3},   /* NIGHT BASS (bass) */
+-    {0, 24, 113, 3},   /* SUB SAW (bass) */
+-    {2, 7, 127, 3},   /* PD BASS (bass) */
+-    {0, 4, 127, 3},   /* ACID (bass) */
+-    {0, 7, 106, 3},   /* SUB BASS (bass) */
+-    {7, 6, 114, 3},   /* PEDAL BASS (bass) */
+-    {3, 6, 121, 3},   /* TRI BASS (bass) */
+-    {3, 1, 125, 3},   /* WAVE BASS (bass) */
+-    {0, 21, 116, 3},   /* REESE (bass) */
+-    {12, 13, 122, 28},   /* GROWL BASS (bass) */
+-    {0, 22, 120, 3},   /* DRIVE BASS (bass) */
+-    {6, 0, 127, 3},   /* FAT BASS (bass) */
+-    {12, 2, 127, 6},   /* FM BASS (bass) */
+-    {12, 12, 127, 24},   /* PICK BASS (bass) */
+-    {0, 3, 97, 19},   /* PWM STR (chords) */
+-    {2, 2, 92, 18},   /* PD STRINGS (chords) */
+-    {0, 11, 93, 19},   /* STRINGS (chords) */
+-    {6, 4, 99, 18},   /* CHIP CHOIR (chords) */
+-    {0, 8, 114, 9},   /* SYNTH PLUCK (chords) */
+-    {2, 6, 104, 16},   /* NEUTRINO (chords) */
+-    {3, 5, 125, 3},   /* PHOTON (chords) */
+-    {4, 9, 116, 4},   /* KOTO (chords) */
+-    {4, 0, 101, 19},   /* PIANO (chords) */
+-    {4, 5, 99, 19},   /* LOFI PIANO (chords) */
+-    {2, 8, 102, 9},   /* SOFT KEYS (chords) */
+-    {0, 18, 100, 6},   /* HERO BRASS (chords) */
+-    {5, 5, 90, 19},   /* MONK CHANT (chords) */
+-    {2, 1, 88, 3},   /* PD ORGAN (chords) */
+-    {7, 0, 102, 4},   /* FULL ORGAN (chords) */
+-    {7, 2, 100, 4},   /* GOSPEL (chords) */
+-    {12, 6, 110, 3},   /* FM ORGAN (chords) */
+-    {0, 0, 111, 5},   /* SAW LEAD (lead) */
+-    {0, 16, 107, 6},   /* NEON LEAD (lead) */
+-    {0, 23, 107, 3},   /* HARD SYNC (lead) */
+-    {3, 0, 110, 3},   /* PULSE LD (lead) */
+-    {0, 6, 108, 9},   /* RAVE (lead) */
+-    {6, 2, 111, 3},   /* SYNC LEAD (lead) */
+-    {6, 5, 112, 3},   /* TURBO SYNC (lead) */
+-    {3, 4, 108, 4},   /* STEP LEAD (lead) */
+-    {3, 2, 110, 3},   /* ARP 8BIT (lead) */
+-    {3, 3, 123, 3},   /* WAVE LEAD (lead) */
+-    {4, 2, 112, 9},   /* FLUTE (lead) */
+-    {4, 3, 111, 9},   /* SAX (lead) */
+-    {0, 12, 105, 9},   /* BONE FLUTE (lead) */
+-    {7, 7, 111, 3},   /* CLARINET (lead) */
+-    {2, 0, 100, 3},   /* PD BRASS (lead) */
+-    {2, 5, 113, 9},   /* WIRE (lead) */
+-    {5, 1, 109, 6},   /* VOX LEAD (lead) */
+-    {2, 6, 109, 8},   /* NEUTRINO (lead) */
+-    {0, 4, 120, 3},   /* ACID (lead) */
+-    {2, 3, 127, 8},   /* RESO (lead) */
+-    {5, 7, 100, 3},   /* ROBOT TALK (lead) */
+-    {0, 20, 95, 5},   /* QUANTA (lead) */
+-    {0, 10, 100, 9},   /* WIND SWEEP (lead) */
+-    {0, 8, 108, 3},   /* SYNTH PLUCK (arp) */
+-    {2, 6, 96, 3},   /* NEUTRINO (arp) */
+-    {6, 6, 109, 3},   /* NEON ARP (arp) */
+-    {6, 1, 101, 3},   /* ARP LEAD (arp) */
+-    {4, 6, 105, 3},   /* MUSIC BOX (arp) */
+-    {6, 3, 114, 3},   /* RING BELL (arp) */
+-    {3, 7, 116, 3},   /* CHIP BELL (arp) */
+-    {12, 7, 111, 14},   /* NYLON PICK (arp) */
+-    {3, 2, 100, 3},   /* ARP 8BIT (arp) */
+-    {3, 0, 102, 3},   /* PULSE LD (arp) */
+-    {3, 4, 97, 3},   /* STEP LEAD (arp) */
+-    {13, 8, 104, 6},   /* FUNK BREAK (arp) */
+-    {13, 3, 117, 3},   /* BACK BREAK (arp) */
+-    {13, 6, 117, 3},   /* FAST BREAK (arp) */
+-    {13, 0, 116, 3},   /* CHOP (arp) */
+-    {4, 9, 108, 3},   /* KOTO (arp) */
+-    {2, 8, 98, 3},   /* SOFT KEYS (arp) */
+-    {0, 10, 99, 38},   /* WIND SWEEP (fx) */
+-    {11, 0, 116, 77},   /* WIND (fx) */
+-    {0, 20, 85, 5},   /* QUANTA (fx) */
+-    {11, 4, 124, 77},   /* CAVE WIND (fx) */
+-    {11, 7, 108, 77},   /* OCEAN (fx) */
+-    {11, 1, 118, 19},   /* RAIN (fx) */
+-    {5, 3, 107, 78},   /* WHISPER (fx) */
+-    {11, 6, 115, 78},   /* PLASMA (fx) */
++    {10, 0, 92, 75},   /* DRUM KIT (drums) */
++    {10, 8, 93, 39},   /* TIGHT KIT (drums) */
++    {10, 7, 96, 165},   /* STUDIO KIT (drums) */
++    {14, 2, 94, 87},   /* FACTORY KIT (drums) */
++    {10, 2, 92, 36},   /* NEON KIT (drums) */
++    {10, 3, 88, 101},   /* BOOM KIT (drums) */
++    {10, 6, 94, 41},   /* ELECTRO KIT (drums) */
++    {10, 9, 97, 84},   /* LOFI KIT (drums) */
++    {10, 5, 94, 23},   /* RHYTHM BOX (drums) */
++    {10, 10, 94, 255},   /* DEEP DRUMS (drums) */
++    {14, 6, 98, 75},   /* SOFT KIT (drums) */
++    {10, 12, 94, 99},   /* PERC KIT (drums) */
++    {14, 8, 93, 113},   /* TRIBAL KIT (drums) */
++    {14, 5, 91, 162},   /* INDUSTRIAL (drums) */
++    {10, 1, 83, 174},   /* WAR DRUMS (drums) */
++    {10, 11, 93, 37},   /* SNAP KIT (drums) */
++    {14, 3, 90, 119},   /* DEEP KIT (drums) */
++    {14, 4, 97, 37},   /* CLICK KIT (drums) */
++    {14, 7, 94, 23},   /* GLITCH KIT (drums) */
++    {14, 1, 89, 29},   /* HADRON KIT (drums) */
++    {0, 2, 107, 3},   /* SQR BASS (bass) */
++    {0, 15, 107, 3},   /* NIGHT BASS (bass) */
++    {0, 24, 99, 3},   /* SUB SAW (bass) */
++    {2, 7, 108, 3},   /* PD BASS (bass) */
++    {0, 4, 106, 3},   /* ACID (bass) */
++    {0, 7, 92, 3},   /* SUB BASS (bass) */
++    {7, 6, 100, 3},   /* PEDAL BASS (bass) */
++    {3, 6, 107, 3},   /* TRI BASS (bass) */
++    {3, 1, 111, 3},   /* WAVE BASS (bass) */
++    {0, 21, 102, 3},   /* REESE (bass) */
++    {12, 13, 108, 28},   /* GROWL BASS (bass) */
++    {0, 22, 106, 3},   /* DRIVE BASS (bass) */
++    {6, 0, 115, 3},   /* FAT BASS (bass) */
++    {12, 2, 113, 6},   /* FM BASS (bass) */
++    {12, 12, 115, 24},   /* PICK BASS (bass) */
++    {0, 3, 83, 19},   /* PWM STR (chords) */
++    {2, 2, 78, 18},   /* PD STRINGS (chords) */
++    {0, 11, 79, 19},   /* STRINGS (chords) */
++    {6, 4, 85, 18},   /* CHIP CHOIR (chords) */
++    {0, 8, 91, 9},   /* SYNTH PLUCK (chords) */
++    {2, 6, 89, 16},   /* NEUTRINO (chords) */
++    {3, 5, 98, 3},   /* PHOTON (chords) */
++    {4, 9, 91, 4},   /* KOTO (chords) */
++    {4, 0, 87, 19},   /* PIANO (chords) */
++    {4, 5, 85, 19},   /* LOFI PIANO (chords) */
++    {2, 8, 88, 9},   /* SOFT KEYS (chords) */
++    {0, 18, 86, 6},   /* HERO BRASS (chords) */
++    {5, 5, 76, 19},   /* MONK CHANT (chords) */
++    {2, 1, 74, 3},   /* PD ORGAN (chords) */
++    {7, 0, 88, 4},   /* FULL ORGAN (chords) */
++    {7, 2, 86, 4},   /* GOSPEL (chords) */
++    {12, 6, 96, 3},   /* FM ORGAN (chords) */
++    {0, 0, 97, 5},   /* SAW LEAD (lead) */
++    {0, 16, 93, 6},   /* NEON LEAD (lead) */
++    {0, 23, 93, 3},   /* HARD SYNC (lead) */
++    {3, 0, 96, 3},   /* PULSE LD (lead) */
++    {0, 6, 94, 9},   /* RAVE (lead) */
++    {6, 2, 97, 3},   /* SYNC LEAD (lead) */
++    {6, 5, 98, 3},   /* TURBO SYNC (lead) */
++    {3, 4, 94, 4},   /* STEP LEAD (lead) */
++    {3, 2, 96, 3},   /* ARP 8BIT (lead) */
++    {3, 3, 109, 3},   /* WAVE LEAD (lead) */
++    {4, 2, 98, 9},   /* FLUTE (lead) */
++    {4, 3, 97, 9},   /* SAX (lead) */
++    {0, 12, 91, 9},   /* BONE FLUTE (lead) */
++    {7, 7, 97, 3},   /* CLARINET (lead) */
++    {2, 0, 86, 3},   /* PD BRASS (lead) */
++    {2, 5, 99, 9},   /* WIRE (lead) */
++    {5, 1, 95, 6},   /* VOX LEAD (lead) */
++    {2, 6, 95, 8},   /* NEUTRINO (lead) */
++    {0, 4, 103, 3},   /* ACID (lead) */
++    {2, 3, 108, 8},   /* RESO (lead) */
++    {5, 7, 86, 3},   /* ROBOT TALK (lead) */
++    {0, 20, 81, 5},   /* QUANTA (lead) */
++    {0, 10, 86, 9},   /* WIND SWEEP (lead) */
++    {0, 8, 94, 3},   /* SYNTH PLUCK (arp) */
++    {2, 6, 82, 3},   /* NEUTRINO (arp) */
++    {6, 6, 93, 3},   /* NEON ARP (arp) */
++    {6, 1, 87, 3},   /* ARP LEAD (arp) */
++    {4, 6, 91, 3},   /* MUSIC BOX (arp) */
++    {6, 3, 100, 3},   /* RING BELL (arp) */
++    {3, 7, 97, 3},   /* CHIP BELL (arp) */
++    {12, 7, 97, 14},   /* NYLON PICK (arp) */
++    {3, 2, 86, 3},   /* ARP 8BIT (arp) */
++    {3, 0, 88, 3},   /* PULSE LD (arp) */
++    {3, 4, 83, 3},   /* STEP LEAD (arp) */
++    {13, 8, 90, 6},   /* FUNK BREAK (arp) */
++    {13, 3, 103, 3},   /* BACK BREAK (arp) */
++    {13, 6, 103, 3},   /* FAST BREAK (arp) */
++    {13, 0, 102, 3},   /* CHOP (arp) */
++    {4, 9, 94, 3},   /* KOTO (arp) */
++    {2, 8, 84, 3},   /* SOFT KEYS (arp) */
++    {0, 10, 85, 38},   /* WIND SWEEP (fx) */
++    {11, 0, 102, 77},   /* WIND (fx) */
++    {0, 20, 71, 5},   /* QUANTA (fx) */
++    {11, 4, 110, 77},   /* CAVE WIND (fx) */
++    {11, 7, 94, 77},   /* OCEAN (fx) */
++    {11, 1, 100, 19},   /* RAIN (fx) */
++    {5, 3, 93, 78},   /* WHISPER (fx) */
++    {11, 6, 101, 78},   /* PLASMA (fx) */
+ };
+ /* each drum kit of VB_SND (its index), its lanes' ring in 32 ms (KICK .. BELL) */
+ static const vb_kit_t VB_KIT[] = {
+@@ -313,6 +313,11 @@ static const uint8_t VB_LIST[][4] = {
+     {99, 92, 94, 255},   /* 37 fx: metal, plasma */
+ };
+ /* END GENERATED */
++/* BEGIN LEVEL by tools/vizzbox_level.py from the demos' loudness: do not edit */
++/* each subgenre's trim on all six tracks' levels (P_LEVEL steps, 0.5 dB): its demo at the common loudness (BRIEF 3.6) */
++static const int8_t VB_TRIM[36] = {0, 5, 8, 8, 1, 8, -4, 3, 0, 4, 2, 3, 8, 2, 8, 6, 4, 4, 1, 8, 7, -2, -1, 3, 8, -1,
++                                   4, 8, 6, 2, -5, -7, 5, 7, -1, 5};
++/* END LEVEL */
+ 
+ /* ----------------------------------------------------------- subgenres --- */
+ enum { FO_D, FO_T, FO_N, FO_S, FO_V, FO_A, FO_H };                  /* the forms (BRIEF-VIZZBOX.md 3.5) */
+diff --git a/tools/vizzbox_demos.py b/tools/vizzbox_demos.py
+new file mode 100644
+index 0000000..60f5e2c
+--- /dev/null
++++ b/tools/vizzbox_demos.py
+@@ -0,0 +1,248 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++"""(Vizzbox) The demos (BRIEF-VIZZBOX.md 8): every subgenre's song rendered as the unit plays it (tools/vizzbox_render,
++LENGTH NORMAL), a part of about 60 s from a BUILD into its DROP as MP3 (128 kbps, ffmpeg), the whole song's MIDI file,
++and what can be measured checked on each: no clipping, the loudness, the notes outside the key, the sections, kick and
++bass not on top of each other all the time, the jump into the DROP, the silence before it, the riser in the BUILD.
++  vizzbox_demos.py RENDER OUT [SEED] [ENERGY] [VARIATION] [G S ...]
++RENDER: build/host/vizzbox_render; OUT: the demos' directory (OUT/README.md, OUT/NN-genre-subgenre.mp3 / .mid; the
++renders in OUT/.work, removed unless KEEP=1). SEED (hex, default 5EED), ENERGY 70, VARIATION 40; G S: only those.
++The table it prints (and writes into OUT/README.md between its GENERATED markers) is the demos' list."""
++import os
++import re
++import shutil
++import struct
++import subprocess
++import sys
++import wave
++from concurrent.futures import ThreadPoolExecutor
++from pathlib import Path
++
++import numpy as np
++
++NSUB = [6, 6, 3, 4, 3, 4, 2, 3, 3, 2]
++SEC = {"INTRO": 1, "GROOVE": 2, "BUILD": 3, "DROP": 4, "BREAK": 5, "OUTRO": 6}
++NAME = {v: k for k, v in SEC.items()}
++KICK, FS = 36, 44100
++PART = 60.0                                        # the demo's length, s
++
++
++def slug(s):
++    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
++
++
++def smf(path):
++    """a format 0 file's channel messages: (tick, status, d1, d2), its tempo changes (tick, us a quarter), its PPQ"""
++    d = Path(path).read_bytes()
++    ppq = struct.unpack(">H", d[12:14])[0]
++    i, end, tick, ev, tempo = 22, len(d), 0, [], []
++    while i < end:
++        v = 0
++        while True:
++            b = d[i]
++            i += 1
++            v = v << 7 | (b & 127)
++            if b < 128:
++                break
++        tick += v
++        st = d[i]
++        if st == 0xFF:
++            t, n = d[i + 1], d[i + 2]
++            if t == 0x51:
++                tempo.append((tick, d[i + 3] << 16 | d[i + 4] << 8 | d[i + 5]))
++            i += 3 + n
++            continue
++        n = 2 if st & 0xE0 == 0xC0 else 3
++        ev.append((tick, st, d[i + 1], d[i + 2] if n == 3 else 0))
++        i += n
++    return ev, tempo, ppq
++
++
++def sec_of(tick, tempo, ppq):
++    """a tick in seconds through the tempo map"""
++    t, last, us = 0.0, 0, 500000
++    for tk, u in tempo:
++        if tk >= tick:
++            break
++        t += (tk - last) * us / ppq / 1e6
++        last, us = tk, u
++    return t + (tick - last) * us / ppq / 1e6
++
++
++def render(job):
++    exe, work, g, s, seed, e, v = job
++    out = work / f"g{g}s{s}"
++    r = subprocess.run([exe, str(g), str(s), seed, str(e), str(v), "1", str(out)], capture_output=True, text=True,
++                       check=True)
++    return g, s, out, r.stdout
++
++
++def parse(txt):
++    m = re.search(r"vizzbox_render: (.+?) / (.+?), seed", txt)
++    info = {"genre": m.group(1), "sub": m.group(2)}
++    m = re.search(r"tempo (\d+) BPM, key (\S+ \S+) \(root (\d+), scale 0x([0-9A-F]+)\)", txt)
++    info.update(bpm=int(m.group(1)), key=m.group(2), root=int(m.group(3)), mask=int(m.group(4), 16))
++    info["sounds"] = dict(re.findall(r"^  (T\d) (.+)$", txt, re.M))
++    info["secs"] = [(float(t), SEC[n], int(b)) for t, n, b in re.findall(r"^\s+([\d.]+) s\s+(\w+)\s+(\d+) bars", txt, re.M)]
++    m = re.search(r"([\d.]+) s, peak (-?[\d.]+) dBFS, RMS (-?[\d.]+) dBFS, voices stolen (\d+)", txt)
++    info.update(length=float(m.group(1)), peak=float(m.group(2)), rms=float(m.group(3)), stolen=int(m.group(4)))
++    return info
++
++
++def db(x):
++    return 20.0 * np.log10(max(float(x), 1e-9))
++
++
++def rms(x):
++    return db(np.sqrt(np.mean(x.astype(np.float64) ** 2))) if len(x) else -180.0
++
++
++def checks(info, wavp, midp):
++    with wave.open(str(wavp)) as w:
++        x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float64).reshape(-1, 2) / 32768.0
++    ev, tempo, ppq = smf(midp)
++    bar = 240.0 / info["bpm"]
++    c = {}
++    # the notes outside the key: bass, chords, lead and arp (T5 a break on SLICE: its notes are slices; the FX not)
++    melodic = {2, 3, 4} | (set() if info["sounds"].get("T5", "").startswith("SLICE") else {5})
++    n_on = [(t, (st & 15) + 1, d1) for t, st, d1, d2 in ev if st & 0xF0 == 0x90 and d2]
++    mel = [d1 for t, ch, d1 in n_on if ch in melodic]
++    out = [d1 for d1 in mel if not (info["mask"] >> ((d1 - info["root"]) % 12)) & 1]
++    c["outside"] = (len(out), len(mel))
++    # kick and bass: of the kicks, how many the bass strikes with (the same 1/16)
++    q16 = ppq // 4
++    kicks = [t for t, ch, d1 in n_on if ch == 1 and d1 == KICK]
++    bass = {t // q16 for t, ch, d1 in n_on if ch == 2}
++    c["kickbass"] = (sum(1 for t in kicks if (t + q16 // 2) // q16 in bass or t // q16 in bass), len(kicks))
++    # the sections as CC 104 / CC 106 say them (the bar's first step: CC 106 0), in seconds
++    secs, cur, at = [], 0, {}
++    for t, st, d1, d2 in ev:
++        if st == 0xBF and d1 in (104, 106):
++            at[d1] = d2
++            if d1 == 106 and d2 == 0 and at.get(104):
++                secs.append((sec_of(t, tempo, ppq), at[104], 0))
++    info["secs_midi"] = secs
++    # the first DROP after a BUILD (form V has none: the first DROP; form A no DROP: the first BREAK): the jump into it,
++    # the quietest 1/16 in the beat before it, the riser in the section before it
++    drop = next((i for i in range(1, len(secs)) if secs[i][1] == 4 and secs[i - 1][1] == 3), None)
++    if drop is None:
++        drop = next((i for i in range(1, len(secs)) if secs[i][1] == 4), None)
++    if drop is None:
++        drop = next((i for i in range(1, len(secs)) if secs[i][1] == 5), None)
++    if drop is not None:
++        c["into"] = f"{NAME[secs[drop - 1][1]]} → {NAME[secs[drop][1]]}"
++        t0, tb = secs[drop][0], secs[drop - 1][0]
++        a = x[int((t0 - 4 * bar) * FS):int(t0 * FS)]
++        b = x[int(t0 * FS):int((t0 + 4 * bar) * FS)]
++        c["jump"] = rms(b) - rms(a)
++        last = x[int((t0 - bar / 4) * FS):int(t0 * FS)]
++        w16 = max(1, int(bar / 16 * FS))
++        c["gap"] = min(rms(last[i:i + w16]) for i in range(0, len(last) - w16 + 1, w16)) - rms(a)
++        fx = [t for t, ch, d1 in n_on if ch == 6 and tb - 0.005 <= sec_of(t, tempo, ppq) < t0 - 0.005]
++        c["riser"] = len(fx)
++        c["drop_t"], c["build_t"] = t0, tb
++    return c
++
++
++def part(info, c, wavp, mp3, tag):
++    """about 60 s from the BUILD into the DROP, on bar lines, faded in and out; its peak and RMS"""
++    bar = 240.0 / info["bpm"]
++    t0 = c.get("drop_t", 60.0)
++    before = round(0.6 * PART / bar)                # (60 %: the BUILD and what leads into it)
++    start = max(0.0, t0 - before * bar)
++    end = min(start + round(PART / bar) * bar, info["length"])
++    with wave.open(str(wavp)) as w:
++        w.setpos(int(start * FS))
++        x = np.frombuffer(w.readframes(int((end - start) * FS)), dtype=np.int16).astype(np.float64).reshape(-1, 2)
++    fi, fo = int(0.25 * FS), int(2.0 * FS)
++    env = np.ones(len(x))
++    env[:fi] = np.linspace(0.0, 1.0, fi)
++    env[-fo:] = np.minimum(env[-fo:], np.linspace(1.0, 0.0, fo))
++    y = np.clip(np.round(x * env[:, None]), -32768, 32767).astype(np.int16)
++    tmp = mp3.with_suffix(".part.wav")
++    with wave.open(str(tmp), "wb") as w:
++        w.setnchannels(2)
++        w.setsampwidth(2)
++        w.setframerate(FS)
++        w.writeframes(y.tobytes())
++    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmp), "-codec:a", "libmp3lame", "-b:a", "128k",
++                    "-metadata", f"title={tag}", "-metadata", "artist=Vizzbox", str(mp3)], check=True)
++    tmp.unlink()
++    z = y.astype(np.float64) / 32768.0
++    return start, end, db(np.max(np.abs(z))), rms(z)
++
++
++def main(argv):
++    exe, out = argv[0], Path(argv[1])
++    seed = argv[2] if len(argv) > 2 else "5EED"
++    e = int(argv[3]) if len(argv) > 3 else 70
++    v = int(argv[4]) if len(argv) > 4 else 40
++    pick = [(int(argv[i]), int(argv[i + 1])) for i in range(5, len(argv) - 1, 2)]
++    work = out / ".work"
++    work.mkdir(parents=True, exist_ok=True)
++    jobs = [(exe, work, g, s, seed, e, v) for g in range(10) for s in range(NSUB[g]) if not pick or (g, s) in pick]
++    with ThreadPoolExecutor(os.cpu_count() or 2) as pool:
++        done = list(pool.map(render, jobs))
++    rows, fail = [], 0
++    for g, s, base, txt in done:
++        info = parse(txt)
++        n = sum(NSUB[:g]) + s + 1
++        name = f"{n:02d}-{slug(info['genre'])}-{slug(info['sub'])}"
++        c = checks(info, base.with_suffix(".wav"), base.with_suffix(".mid"))
++        tag = f"Vizzbox - {info['genre']} / {info['sub']} (seed {seed})"
++        a, b, pk, rm = part(info, c, base.with_suffix(".wav"), out / f"{name}.mp3", tag)
++        shutil.copy(base.with_suffix(".mid"), out / f"{name}.mid")
++        rows.append((n, name, info, c, a, b, pk, rm))
++        bad = []
++        if info["peak"] >= -0.3:
++            bad.append("clips")
++        if info["stolen"]:
++            bad.append(f"{info['stolen']} voices stolen")
++        if c["outside"][0]:
++            bad.append(f"{c['outside'][0]} notes outside the key")
++        if "drop_t" not in c:
++            bad.append("no DROP or BREAK to lead into")
++        fail |= bool(bad)
++        print(f"{n:2d} {info['genre']} / {info['sub']}: {info['bpm']} BPM {info['key']}, part {a:.1f}..{b:.1f} s, "
++              f"peak {pk:.1f} RMS {rm:.1f} dBFS; song {info['length']:.0f} s peak {info['peak']:.1f}; kick+bass "
++              f"{c['kickbass'][0]}/{c['kickbass'][1]}; jump {c.get('jump', 0):+.1f} dB, gap {c.get('gap', 0):+.1f} dB, "
++              f"riser {c.get('riser', 0)} ({c.get('into', '-')})" + (f"  !! {', '.join(bad)}" if bad else ""))
++    rows.sort()
++    rm_all = [r[7] for r in rows]
++    med = float(np.median(rm_all))
++    lines = ["<!-- BEGIN GENERATED by tools/vizzbox_demos.py: do not edit -->",
++             f"Seed `{seed}`, ENERGIE {e}, VARIATION {v}, LÄNGE NORMAL. Spitze und RMS: der MP3-Ausschnitt (vor der "
++             f"Kodierung), dBFS. RMS über alle: {min(rm_all):.1f} bis {max(rm_all):.1f} dBFS, Median {med:.1f}.", "",
++             "| # | Genre | Subgenre | Seed | BPM | Tonart | Spitze | RMS | Ausschnitt | in | Song | Dateien |",
++             "| ---: | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- | ---: | --- |"]
++    for n, name, info, c, a, b, pk, rm in rows:
++        lines.append(f"| {n} | {info['genre']} | {info['sub']} | `{seed}` | {info['bpm']} | {info['key']} | {pk:.1f} | "
++                     f"{rm:.1f} | {a // 60:.0f}:{a % 60:04.1f} – {b // 60:.0f}:{b % 60:04.1f} | {c.get('into', '–')} | "
++                     f"{info['length'] // 60:.0f}:{info['length'] % 60:02.0f} | [MP3]({name}.mp3) · [MIDI]({name}.mid) |")
++    lines += ["", "Geprüft am ganzen Song (Render und MIDI-Datei):", "",
++              "| # | Subgenre | Spitze Song | Stimmen gestohlen | Noten außerhalb der Tonart | Kick mit Bass | "
++              "Sprung hinein | leiseste 1/16 im letzten Beat | FX-Noten davor (Riser) | Abschnitte |",
++              "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
++    for n, name, info, c, a, b, pk, rm in rows:
++        k, kn = c["kickbass"]
++        o, on = c["outside"]
++        sec = " ".join(f"{'?IGBDRO'[t]}{bars}" for _, t, bars in info["secs"])
++        lines.append(f"| {n} | {info['sub']} | {info['peak']:.1f} | {info['stolen']} | {o} von {on} | "
++                     f"{k} von {kn} | {c.get('jump', 0):+.1f} dB | {c.get('gap', 0):+.1f} dB | {c.get('riser', 0)} | "
++                     f"{sec} |")
++    lines.append("<!-- END GENERATED -->")
++    with open(out / "levels.tsv", "w") as f:       # (tools/vizzbox_level.py reads it)
++        for n, name, info, c, a, b, pk, rm in rows:
++            f.write(f"{n - 1}\t{rm:.2f}\t{pk:.2f}\n")
++    readme = out / "README.md"
++    txt = readme.read_text() if readme.exists() else "# Vizzbox – Demos\n\n<!-- BEGIN GENERATED -->\n<!-- END GENERATED -->\n"
++    txt = re.sub(r"<!-- BEGIN GENERATED.*?<!-- END GENERATED -->", lambda m: "\n".join(lines), txt, flags=re.S)
++    readme.write_text(txt)
++    print(f"RMS {min(rm_all):.1f} .. {max(rm_all):.1f} dBFS, median {med:.1f}")
++    if os.environ.get("KEEP") != "1":
++        shutil.rmtree(work)
++    return 1 if fail else 0
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/tools/vizzbox_level.py b/tools/vizzbox_level.py
+new file mode 100644
+index 0000000..db0887f
+--- /dev/null
++++ b/tools/vizzbox_level.py
+@@ -0,0 +1,56 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: GPL-3.0-only
++"""(Vizzbox) The subgenres at one loudness (BRIEF-VIZZBOX.md 3.6: RMS within +-3 dB over all demos): each subgenre's
++demo part (tools/vizzbox_demos.py) measured for some seeds, the mean RMS (dB) brought to TARGET by a trim on all six
++tracks' levels (P_LEVEL steps of 0.5 dB, added to what is there; up by at most MAXUP), written into firmware/src/producer_tables.c between
++its LEVEL markers. Build build/host/vizzbox_render again after it and repeat until the trims stay.
++  vizzbox_level.py RENDER [SEED ...]        (default seeds 5EED 1234 BEEF)"""
++import re
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++TABLES = ROOT / "firmware" / "src" / "producer_tables.c"
++TARGET = -22.5
++MAXUP = 8                                          # (at most 4 dB up: past it the master limiter holds the loud parts
++                                                   # (fx.c LIM_T), more level would be more limiting and the roles
++                                                   # nearest P_LEVEL 127 would stop at it and leave the balance)
++
++
++def main(argv):
++    exe, seeds = argv[0], argv[1:] or ["5EED", "1234", "BEEF"]
++    rms = {}
++    for sd in seeds:
++        with tempfile.TemporaryDirectory() as d:
++            subprocess.run([sys.executable, str(ROOT / "tools" / "vizzbox_demos.py"), exe, d, sd], check=False,
++                           stdout=subprocess.DEVNULL)
++            for line in open(Path(d) / "levels.tsv"):
++                i, r, _ = line.split("\t")
++                rms.setdefault(int(i), []).append(float(r))
++    src = TABLES.read_text()
++    m = re.search(r"VB_TRIM\[36\] = \{(.*?)\};", src, re.S)
++    old = [int(x) for x in m.group(1).replace("\n", " ").split(",")]
++    new = []
++    for i in range(36):
++        mean = sum(rms[i]) / len(rms[i])
++        new.append(max(-40, min(MAXUP, old[i] + round(2.0 * (TARGET - mean)))))
++        print(f"{i:2d} RMS {mean:6.2f} ({' '.join(f'{x:.1f}' for x in rms[i])})  trim {old[i]:+d} -> {new[i]:+d}")
++    body, line = [], "static const int8_t VB_TRIM[36] = {"
++    for i, v in enumerate(new):
++        piece = f"{v}" + (", " if i < 35 else "};")
++        if len(line) + len(piece) > 119:
++            body.append(line.rstrip())
++            line = " " * 35
++        line += piece
++    body.append(line)
++    src = re.sub(r"static const int8_t VB_TRIM\[36\] = \{.*?\};", "\n".join(body), src, flags=re.S)
++    TABLES.write_text(src)
++    all_rms = [sum(v) / len(v) for v in rms.values()]
++    print(f"mean RMS {min(all_rms):.1f} .. {max(all_rms):.1f} dBFS (target {TARGET})")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/tools/vizzbox_pick.py b/tools/vizzbox_pick.py
+index 712a214..928a4dc 100644
+--- a/tools/vizzbox_pick.py
++++ b/tools/vizzbox_pick.py
+@@ -3,7 +3,7 @@
+ """(Vizzbox) The producer's sound lists from the measurements (BRIEF-VIZZBOX.md 3.4: chosen by rendering and measuring,
+ not by guessing): tools/vizzbox_sounds renders every factory sound in every role, tools/vizzbox_sounds.py measures
+ them (DIR/measured.tsv); this picks each list's candidates and writes them into firmware/src/producer_tables.c between
+-its GENERATED markers: VB_SND (engine, preset, the level that brings it to its role's loudness, its tail), VB_KIT
++its GENERATED markers: VB_SND (engine, preset, the level that brings it to its role's loudness in the mix and keeps its peak down, its tail), VB_KIT
+ (each drum kit's lanes: how long each rings) and VB_LIST.
+   vizzbox_pick.py DIR [LANES.tsv]      (LANES.tsv: the kits' lane rings, ms, from tools/vizzbox_sounds LANES)
+ A list is a role and a colour: the sounds allowed by name (the colour), of those the ones whose measurements fit the
+@@ -17,6 +17,11 @@ from pathlib import Path
+ ROOT = Path(__file__).resolve().parents[1]
+ TABLES = ROOT / "firmware" / "src" / "producer_tables.c"
+ 
++# each role's loudness alone in the mix (RMS of its pattern, dBFS at MASTER full) and the peak it may reach alone: the
++# drops under the master limiter (fx.c LIM_T, -5.2 dBFS: its gain reduction about 1 dB on average, not 5 to 9), the drums
++# 10 dB, the rest 7 dB under what chose the sounds (need, below: which sounds are loud enough for a role)
++MIX = {"drums": -25.0, "bass": -24.0, "chords": -28.0, "lead": -26.5, "arp": -30.0, "fx": -31.0}
++PEAK = {"drums": -8.0, "bass": -10.0, "chords": -11.0, "lead": -11.0, "arp": -13.0, "fx": -13.0}
+ # role: (the measurement's role, the tail it may have (ms), centroid range (Hz), least low share)
+ RULE = {"drums": ("drums", 99999, (0, 99999), 0.0),
+         "bass": ("bass", 500, (0, 400), 0.5),      # (mono: a tail holds its one voice a little longer)
+@@ -86,7 +91,9 @@ def main(d, lanes_path=None):
+                 if r["name"] != n or r["role"] != mrole:
+                     continue
+                 need = 100 + 2 * (float({"drums": -15, "bass": -17, "chords": -21, "lead": -19.5, "arp": -23,
+-                                         "fx": -24}[mrole]) - float(r["rms"]))
++                                         "fx": -24}[mrole]) - float(r["rms"]))   # (which may be chosen)
++                lvl = min(100 + 2 * (MIX[mrole] - float(r["rms"])),         # (its level: the role's loudness in
++                          100 + 2 * (PEAK[mrole] - float(r["peak"])))        # the mix, its peak alone under PEAK)
+                 tail = int(r["tail_ms"])
+                 why = []
+                 if need > 133.0:                   # (up to 3 dB under the role's loudness at LEVEL 127)
+@@ -102,7 +109,7 @@ def main(d, lanes_path=None):
+                     report.append(f"  - {n} ({key[0]},{key[1]}): {', '.join(why)}")
+                     continue
+                 if key not in [c[0] for c in cand]:
+-                    cand.append((key, int(round(min(127.0, max(40.0, need)))), max(0, tail), n))
++                    cand.append((key, int(round(min(127.0, max(40.0, lvl)))), max(0, tail), n))
+                 break
+         cand = cand[:4]
+         if len(cand) < (1 if colour == "acid" else 2):   # (ACID: the factory's one acid line)
+diff --git a/tools/vizzbox_render.c b/tools/vizzbox_render.c
+index 305ecc6..e46c4dd 100644
+--- a/tools/vizzbox_render.c
++++ b/tools/vizzbox_render.c
+@@ -6,17 +6,19 @@
+  *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_render tools/vizzbox_render.c -lm
+  *   build/host/vizzbox_render GENRE SUBGENRE SEED ENERGY VARIATION LENGTH OUT    (LENGTH 0 SHORT, 1 NORMAL, 2 ENDLESS;
+  *                                                                               SEED in hex; OUT.wav, OUT.mid)
+- * env: SECS=n (ENDLESS's length, default 600), BPM=n (the TEMPO knob), CHAN=1 (sends the six tracks' channels as set).
++ * env: SECS=n (ENDLESS's length, default 600), BPM=n (the TEMPO knob). The tracks send on their channels as a new
++ * unit has them (T1..T6 CHANNEL: 1..6).
+  * The MIDI file (format 0, 480 ticks a quarter, the song's tempo as tempo events) holds every channel message the unit
+  * sends over USB, in its order: the notes of T1..T6 on their channels, CC 102 and CC 103 (Vizz) and CC 104..109 on
+  * channel 16; not the realtime bytes (Clock, Start, Stop). Each message's time is the end of the 128-sample I2S half it
+  * was sent in (2.9 ms). Printed: the sections as CC 104 announced them (bar, time), the tempo, the key, the peak and RMS
+- * (dBFS), the voices the budget took (stolen) */
++ * (dBFS), the voices the budget took (stolen); the key's root and scale (the pitch classes above the root, bit 0 the
++ * root), the six tracks' sounds */
+ #define VIZZBOX 1
+ #include "../web/emu/felucca_web.c"
+ #include <math.h>
+ 
+-static FILE *wav, *mid;
++static FILE *wav, *wav_f, *mid;                  /* (wav: the file once PLAY comes) */
+ static uint8_t *mev;                              /* the MIDI track's events */
+ static uint32_t mev_n, mev_cap, mev_tick;
+ static uint64_t frames;                           /* rendered so far */
+@@ -153,18 +155,19 @@ int main(int argc, char **argv)
+         return 2;
+     }
+     snprintf(path, sizeof path, "%s.wav", argv[7]);
+-    wav = fopen(path, "wb");
++    wav_f = fopen(path, "wb");
+     snprintf(path, sizeof path, "%s.mid", argv[7]);
+     mid = fopen(path, "wb");
+-    if (!wav || !mid)
++    if (!wav_f || !mid)
+         return 2;
+-    wav_head(wav, 0);
+     web_nor_erase();
+     web_boot();
+     usb.config = 1;                               /* (a host is there: the MIDI goes out) */
+     web_master(1023);                             /* (MASTER all the way up) */
+-    render(FS * 6u / 10u);
++    render(FS * 6u / 10u);                        /* (the boot: not in the files) */
+     mo_r = mo_w;                                  /* (from PLAY on) */
++    wav = wav_f;
++    wav_head(wav, 0);
+     vb.k.genre = (uint8_t)atoi(argv[1]);
+     vb.k.sub = (uint8_t)atoi(argv[2]);
+     vb.k.seed = (uint16_t)strtoul(argv[3], 0, 16);
+@@ -184,7 +187,12 @@ int main(int argc, char **argv)
+     web_buttons(1u << B_PLAY);
+     render(FS / 20u);
+     web_buttons(0);
+-    printf("  tempo %d BPM, key %s %s\n", song.g[G_BPM], N_NOTE[vb.root % 12u], N_SCALE[vb.scale % 16u]);
++    printf("  tempo %d BPM, key %s %s (root %u, scale 0x%03X)\n", song.g[G_BPM], N_NOTE[vb.root % 12u],
++           N_SCALE[vb.scale % 16u], vb.root, SCALE_MASK[vb.scale % 16u]);
++    for (t = 0; t < NTRK; t++) {                  /* (the six sounds: engine, preset) */
++        const vb_snd_t *d = &VB_SND[vb.snd[t] % NELEM(VB_SND)];
++        printf("  T%u %s %s\n", t + 1, ENGINES[d->eng]->name, ENGINES[d->eng]->presets[d->pre].name);
++    }
+     for (t = 0; song.playing && t < secs * 10u; t++)
+         render(FS / 10u);
+     if (song.playing) {                           /* (ENDLESS, or a song longer than SECS: stopped) */
+-- 
+2.43.0
+

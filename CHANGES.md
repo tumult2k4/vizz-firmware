@@ -1,9 +1,9 @@
 # Vizzbox 1.0 – Änderungen gegenüber Skiff 2.0.1
 
-> **Zwischenstand: Etappe 2 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
-> Flash ist gemessen, der Produzent spielt auf dem Host ganze Songs in allen 36 Subgenres (Patch 0007). Noch nicht da:
-> die fertige Bedienung, Favoriten, ENDLOS-Wechsel, Name/Kennung, Tests und Demos. Was steht, was getestet ist und was
-> als Nächstes kommt: unten, „Stand“.
+> **Zwischenstand: Etappe 3 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
+> Flash ist gemessen, der Produzent spielt auf dem Host ganze Songs in allen 36 Subgenres (Patch 0007) und ist über
+> Messungen getunt (Patch 0008). Noch nicht da: die fertige Bedienung, Favoriten, ENDLOS-Wechsel, Name/Kennung, Tests
+> und Demos. Was steht, was getestet ist und was als Nächstes kommt: unten, „Stand“.
 
 Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (illuminus5, <https://github.com/illuminus5/skiff>, GPL-3.0; Skiff
 baut auf Felucca von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf (Branch `vizz-2.0` dieses
@@ -15,6 +15,7 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 | --- | --- |
 | 0001–0005 | **Vizz 2.0**, unverändert von `origin/vizz-2.0` (SEQ MIDI OUT, CC 103, Name Vizz, Installer-Test, Gegenprobe) – siehe `CHANGES.md` dort |
 | 0006 | `tools/size_report.py`: wohin der Flash geht, je Quelldatei und Symbol (Messwerkzeug für Abschnitt 7) |
+| 0008 | **Tuning über Messungen:** Songlängen je Tempo, Stille vor dem DROP, Riser geschützt, Pegel unter Skiffs Master-Limiter, Lautheit je Subgenre (`VB_TRIM`), `tools/vizzbox_demos.py`, `tools/vizzbox_level.py` |
 | 0007 | **Der Produzent** (`producer.c`, `producer_isr.c`, `producer_tables.c`, erster `ui_vizzbox.c`), Haken in Skiffs Quellen, `tools/vizzbox_render.c`, die Sound-Messung (`tools/vizzbox_sounds.c`, `vizzbox_sounds.py`, `vizzbox_pick.py`) |
 
 ## Stand
@@ -82,12 +83,34 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
    (`VIZZBOX` 0, wie Vizz 2.0): die 176 Regressions-Renders und die UI-Goldens prüfen damit die GROOVEBOX mit den
    Haken. Ein Regressionslauf **mit** einkompiliertem, aber inaktivem Produzenten kommt mit den Tests (Etappe 7).
 
+8. **Tuning (Etappe 3, Patch 0008)** – alles gemessen mit `tools/vizzbox_demos.py` (rendert jedes Subgenre, schneidet
+   ~60 s über einen BUILD in den DROP heraus, prüft Abschnitt 8 des Auftrags am ganzen Song) und `vizzbox_level.py`:
+   - **Songlängen:** der Plan passt die Form an das Tempo des Songs an (NORMAL 4:45–6:10, KURZ 2:30–3:35: die Mitte
+     noch einmal, solange zu kurz; die längste ruhige Strecke halbiert, solange zu lang; Ambient ohne DROP wiederholt
+     BREAK–GROOVE). Gemessen über 36 Subgenres × 6 Seeds: NORMAL **4:32–6:09**, KURZ **2:22–3:42**. Abweichung vom
+     Auftrag: KURZ wiederholt bei schnellen Tempi die Mitte (DnB mit halbierten Abschnitten käme sonst auf 1:50).
+   - **Der DROP:** der letzte Beat des BUILD wird still, wo das Subgenre es hat (`VF_SIL`), sonst mit
+     35 % + VARIATION/2 Wahrscheinlichkeit: alle Spuren enden, der FILTER des FX-Layers nimmt, was nachklingt
+     (gemessen: −18 bis −36 dB gegenüber den vier Takten davor). Der Riser im BUILD geht im Stimmenbudget als Letztes;
+     ein gehaltener Akkord, Riser oder Atmo-Ton kommt einen Beat später, statt zu entfallen (vorher fehlte der Riser
+     in 9 Subgenres). Die HPF-Fahrt des BUILD geht weiter hinauf (40–90 statt 25–70).
+   - **Der Mix:** gemessen lief jeder Drop 3–9 dB tief in Skiffs Master-Limiter (`fx.c`, Schwelle −5,2 dBFS; Acid
+     House im Mittel 8,7 dB), weil die Rollen nach RMS eingepegelt waren und die Drum-Kits 15–19 dB Crest haben. Jetzt:
+     jede Rolle 7 dB (Drums 10 dB) leiser im Mix, jeder Sound mit seiner gemessenen Spitze gedeckelt; der Limiter
+     regelt im Drop im Mittel **0,1–2 dB**.
+   - **Lautheit:** `VB_TRIM` je Subgenre (aus drei Seeds gemessen, höchstens +4 dB): die 36 Demo-Ausschnitte (Seed
+     `5EED`) liegen bei RMS **−25,5 bis −20,3 dBFS** (Median −22,1), Spitzen −11,1 bis −8,1 dBFS – innerhalb ±3 dB
+     (Spanne 5,2 dB).
+   - `tools/vizzbox_render`: das Booten stand vorher im WAV (das Audio lief 0,6 s hinter der MIDI-Datei); jetzt nicht
+     mehr. Es gibt Tonart (Skalenmaske) und die sechs Sounds aus.
+   - **Geprüft:** Stimmenbudget 936 Songs, **0 gestohlene Stimmen**; keine Note außerhalb der Tonart (alle 36);
+     Flash **569 748 Bytes** (+720), frei 11 816; `tests/run_tests.sh` auf Patch 0008: **`ALL HOST TESTS PASSED`**
+     (8 322 Einzelprüfungen, 176 Regressions-Renders 0 geändert, „vizz installer: all ok“).
+
 ### Als Nächstes
 
-Etappe 3 (läuft): Tuning über die Messwerkzeuge – Songlängen (KURZ ~3 min, NORMAL 5–6 min je Tempo), Lautheit (RMS
-±3 dB über alle Demos), der Moment Stille vor dem DROP, Riser im BUILD, Pegelsprung am DROP; `tools/vizzbox_demos.py`
-(Renders, MP3-Ausschnitte, Prüfungen, `demos/README.md`). Danach Etappe 4: Bedienung, Bildschirm, Favoriten,
-ENDLOS.
+Etappe 4 (läuft): Bedienung (Bildschirm, Regler, schwarze/weiße Tasten, LEDs), Favoriten in eigenem Speicherobjekt,
+Stilwechsel während der Wiedergabe und ENDLOS (verwandtes Subgenre nach 4–8 min, Tempo ±8 BPM), UI-Goldens.
 
 ## Platz im Flash
 
