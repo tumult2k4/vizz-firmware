@@ -1,8 +1,9 @@
 # Vizzbox 1.0 – Änderungen gegenüber Skiff 2.0.1
 
-> **Zwischenstand: Etappe 1 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
-> Flash ist gemessen. Der Produzent existiert noch nicht. Was steht, was getestet ist und was als Nächstes kommt: unten,
-> „Stand“.
+> **Zwischenstand: Etappe 2 von 8** (BRIEF-VIZZBOX.md, Abschnitt 10). Vizz 2.0 ist nachgebaut und grün, der Platz im
+> Flash ist gemessen, der Produzent spielt auf dem Host ganze Songs in allen 36 Subgenres (Patch 0007). Noch nicht da:
+> die fertige Bedienung, Favoriten, ENDLOS-Wechsel, Name/Kennung, Tests und Demos. Was steht, was getestet ist und was
+> als Nächstes kommt: unten, „Stand“.
 
 Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (illuminus5, <https://github.com/illuminus5/skiff>, GPL-3.0; Skiff
 baut auf Felucca von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf (Branch `vizz-2.0` dieses
@@ -14,6 +15,7 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
 | --- | --- |
 | 0001–0005 | **Vizz 2.0**, unverändert von `origin/vizz-2.0` (SEQ MIDI OUT, CC 103, Name Vizz, Installer-Test, Gegenprobe) – siehe `CHANGES.md` dort |
 | 0006 | `tools/size_report.py`: wohin der Flash geht, je Quelldatei und Symbol (Messwerkzeug für Abschnitt 7) |
+| 0007 | **Der Produzent** (`producer.c`, `producer_isr.c`, `producer_tables.c`, erster `ui_vizzbox.c`), Haken in Skiffs Quellen, `tools/vizzbox_render.c`, die Sound-Messung (`tools/vizzbox_sounds.c`, `vizzbox_sounds.py`, `vizzbox_pick.py`) |
 
 ## Stand
 
@@ -42,10 +44,50 @@ Repos: Skiff `v2.0.1` + fünf Patches). Basis ist der Tag `v2.0.1` (`b03d98a`); 
    `emsdk_env.sh`, das unter `dash` keinen Pfad setzt; `build-vizzbox.sh` setzt ihn jetzt selbst.
 3. **Platz im Flash gemessen** (Abschnitt „Platz im Flash“ unten).
 
+4. **Der Produzent (Etappe 2, Patch 0007).** Gebaut wie im Plan unten; was er tut und wie, steht vorn in
+   `firmware/src/producer.c`. Kurz:
+   - Generatoren für DRUMS (Raster 16 Steps × 8 Lanes je Stil mit Ankern, Dichte nach Energie, Akzente, Fills am
+     Phrasenende, Roll im BUILD 1/4 → 1/8 → 1/16 → Ratchets), BASS (14 Stile: ROOT, OFFBEAT, ROLLING, ACID, WOBBLE,
+     SUB, REESE, OCTAVE, 808, synkopiert, Dub, Riff, Psy, Hard), CHORDS (Progressionen als Stufen, PAD/STAB/PLUCK/
+     GATE/PIANO/SKANK, Stimmführung), LEAD (ein Motiv von 1–2 Takten je Song, Akkordtöne auf betonten Steps, kehrt
+     wieder), ARP (Modi über den Akkord, oder ein Break über SLICE), FX (Riser über den BUILD, Impact und Downlifter
+     am DROP, Atmo). Alles in Skalenstufen; die Tonart vom Seed und Subgenre aus einer genretypischen Auswahl.
+   - Arrangement in Abschnitten (INTRO, GROOVE, BUILD, DROP, BREAK, OUTRO) nach den sieben Formen des Auftrags, mit
+     Energiekurve; welche Rollen spielen, folgt aus Abschnitt und Energie; höchstens zwei dichte melodische Rollen.
+     Übergänge mit Skiffs Mitteln: HPF-Fahrt (Techno: LPF zu) über den FX-Layer-FILTER, THROW, REPEAT/REVERSE im
+     letzten Beat, TAPE STOP höchstens einmal, DUB-Throws, VINYL, Kick-Ausfall am BUILD-Ende, Crash auf der Eins.
+   - Erzeugt wird jeder Takt in der Hauptschleife einen Takt im Voraus in `launch_q` (LOOP); der Audio-Interrupt
+     wendet je 1/16 nur vorbereitete Werte an (`producer_isr.c`: Tempo, Filter, Throw, Effekt, Parameterfahrten,
+     CC 104–109). Jede Rolle zieht aus einem eigenen Strom (Seed, Rolle, Abschnitt, Takt).
+   - **Stimmenbudget 8** (auch mit zweitem Kern, der dann 4 Stimmen fürs Mitspielen frei hat): je Step des
+     vorbereiteten Takts werden die klingenden Stimmen aus den gemessenen Ausklangzeiten der Sounds gezählt (Lanes,
+     Mono-Rollen, Akkordnoten samt Ausklang, Swing-Verzögerung, Ratchets, was der Takt davor nachklingen lässt, Platz
+     für Kick und Bass des nächsten Takts); zu viel wird in fester Reihenfolge weggenommen (Arp-Note, oberste
+     Akkordnote, Percussion, FX, Lead, Akkord; im BUILD der Riser zuletzt).
+   - Die GROOVEBOX-Musik wartet gepackt (SKF4) im RAM, in einem eigenen Abschnitt `.vbox` **hinter** `.bss` (app.ld):
+     keine bestehende Variable verschiebt sich, der Pool behält seine 8 KiB Reserve (Skiffs Prüfung in `build.py`).
+     Autosave, Pattern-Pool und SONG lassen die Spuren in Ruhe, solange der Produzent sie hat.
+5. **Gemessen auf dem Host** (`tools/vizzbox_render`, Seed `5EED`, ENERGIE 70, VARIATION 40, NORMAL):
+   - alle 36 Subgenres spielen einen ganzen Song durch: 4:17–7:10 min, Spitze −7,1 bis −10,4 dBFS (kein Clipping),
+     RMS −18,7 bis −24,2 dBFS, **0 gestohlene Stimmen**;
+   - **Stimmenbudget:** 936 Songs (36 Subgenres × 26 Kombinationen aus Seed, ENERGIE 0/30/60/100 und VARIATION
+     0/40/100) – **0 gestohlene Stimmen** in allen Abschnitten;
+   - **Determinismus:** derselbe Song zweimal und mit `-O1` statt `-O2` gebaut: WAV und MIDI-Datei bytegleich.
+6. **Platz und RAM** (Release, `./build.sh --release 2.0`, noch mit Vizz' Namen und Kennung): App **569 028 Bytes**
+   (+15 976 gegenüber Vizz 2.0), frei **12 536 Bytes**. Der Produzent wird wie Skiffs übrige Hauptschleife auf Größe
+   gebaut (`tools/size_fns.py`; das sparte 2 736 Bytes). RAM `.data`+`.bss` **unverändert 79 924 Bytes**, dahinter
+   `.vbox` 2 560 Bytes; Pool 346 860 Bytes (+360), Reserve 9 492 Bytes.
+7. **Tests auf diesem Stand (Patch 0007):** `tests/run_tests.sh` im Entwicklungs-Build mit Emscripten:
+   **`ALL HOST TESTS PASSED`**, „vizz installer: all ok“. Die Host-Tests bauen Skiffs Quellen ohne den Produzenten
+   (`VIZZBOX` 0, wie Vizz 2.0): die 176 Regressions-Renders und die UI-Goldens prüfen damit die GROOVEBOX mit den
+   Haken. Ein Regressionslauf **mit** einkompiliertem, aber inaktivem Produzenten kommt mit den Tests (Etappe 7).
+
 ### Als Nächstes
 
-Etappe 2: der Produzent auf dem Host – Generatoren, Arrangement, Determinismus, `tools/vizzbox_render`, erste Renders.
-Die Architektur steht fest (Abschnitt „Plan“ unten).
+Etappe 3 (läuft): Tuning über die Messwerkzeuge – Songlängen (KURZ ~3 min, NORMAL 5–6 min je Tempo), Lautheit (RMS
+±3 dB über alle Demos), der Moment Stille vor dem DROP, Riser im BUILD, Pegelsprung am DROP; `tools/vizzbox_demos.py`
+(Renders, MP3-Ausschnitte, Prüfungen, `demos/README.md`). Danach Etappe 4: Bedienung, Bildschirm, Favoriten,
+ENDLOS.
 
 ## Platz im Flash
 
