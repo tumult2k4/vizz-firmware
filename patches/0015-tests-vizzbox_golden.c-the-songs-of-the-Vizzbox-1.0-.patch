@@ -1,0 +1,531 @@
+From 95f70512784cb381d55f14ac5f1acac801534617 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 05:03:04 +0000
+Subject: [PATCH 15/15] tests/vizzbox_golden.c: the songs of the Vizzbox 1.0,
+ bit for bit (the 1.1 golden)
+
+With nobody's hand on the controls the Vizzbox 1.1 must make the songs 1.0 made (BRIEF-VIZZBOX-1.1.md 1, 9):
+every subgenre of 1.0 with three seeds (each with its own ENERGY and VARIATION) in every LENGTH (SHORT and
+NORMAL to their end, ENDLESS 180 s) and ENDLESS ten minutes twice, 326 songs: everything the unit sends over
+USB MIDI (each byte, the clock too, with the sample it went out by) and its audio, each as a hash.
+tests/vizzbox_golden10.txt was made by this file built against Vizzbox 1.0's tree (patches 0001-0014);
+tests/run_tests.sh compares.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/run_tests.sh         |   7 +-
+ tests/vizzbox_golden.c     | 142 ++++++++++++++++
+ tests/vizzbox_golden10.txt | 326 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 474 insertions(+), 1 deletion(-)
+ create mode 100644 tests/vizzbox_golden.c
+ create mode 100644 tests/vizzbox_golden10.txt
+
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 98515a5..5207041 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -94,7 +94,9 @@
+ #                   in = without it, bit for bit), tests/vizzbox_compat.c (a unit with favourites through Skiff 2.0.1
+ #                   and Vizz 2.0, from git), tests/vizzbox_budget.c (the heaviest drop against Skiff's heavy song),
+ #                   tests/vizzbox_fuzz.c (ASan / UBSan); with emcc the one-file Vizzbox in Chromium
+-#                   (web/emu/test_vizzbox_emu.mjs). The counter-check: tests/vizzbox_mutants.py (build-vizzbox.sh)
++#                   (web/emu/test_vizzbox_emu.mjs). The counter-check: tests/vizzbox_mutants.py (build-vizzbox.sh).
++#                   (Vizzbox 1.1) tests/vizzbox_golden.c: the songs of 1.0 (every subgenre, three seeds, every LENGTH,
++#                   ENDLESS) as tests/vizzbox_golden10.txt has them from 1.0's tree: USB MIDI and audio bit for bit
+ # Browser emulator (web/emu, when emcc is there): the firmware in WebAssembly (build/emu) boots, plays keys and MIDI,
+ #                   draws, lights its LEDs, keeps a save across instances, plays a song bit for bit as the same file
+ #                   built with cc (web/emu/native_check.c); the cost of 1 s of a heavy song against real time.
+@@ -280,6 +282,9 @@ if [ -f build/gen/felucca_tables.h ]; then
+     # (Vizzbox) the producer and its screens, on the browser emulator's device built natively with VIZZBOX=1
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/producer_test" tests/producer_test.c -lm
+     run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX" "$OUT/producer_test"
++    $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_golden" tests/vizzbox_golden.c -lm
++    run "(Vizzbox 1.1) the songs of the Vizzbox 1.0 with nobody's hand on them: every subgenre of 1.0, three seeds, every LENGTH, ENDLESS 10 min twice: USB MIDI (bytes and times) and audio as tests/vizzbox_golden10.txt has them" \
++        sh -c "\"$OUT/vizzbox_golden\" > \"$OUT/vizzbox_golden.txt\" && diff tests/vizzbox_golden10.txt \"$OUT/vizzbox_golden.txt\""
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_ui" tests/vizzbox_ui.c -lm
+     run "(Vizzbox) the VIZZBOX's screens in every palette, as tests/vizzbox_ui_golden.txt has them" \
+         sh -c "\"$OUT/vizzbox_ui\" > \"$OUT/vizzbox_ui.txt\" && diff tests/vizzbox_ui_golden.txt \"$OUT/vizzbox_ui.txt\""
+diff --git a/tests/vizzbox_golden.c b/tests/vizzbox_golden.c
+new file mode 100644
+index 0000000..db5d2c7
+--- /dev/null
++++ b/tests/vizzbox_golden.c
+@@ -0,0 +1,142 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox 1.1) tests/vizzbox_golden.c: the songs of the Vizzbox 1.0 (BRIEF-VIZZBOX-1.1.md 1, 9): with nobody's hand on
++ * the controls the producer makes the same songs as 1.0 did, bit for bit. Every subgenre of 1.0 with three seeds (each
++ * with its own ENERGY and VARIATION) in every LENGTH (SHORT and NORMAL to their end, ENDLESS for 180 s), and ENDLESS for
++ * ten minutes twice (its subgenres changing): what the unit sends over USB MIDI (every byte, the clock too, and the
++ * sample it went out by) and its audio, each as a hash. tests/vizzbox_golden10.txt holds them as Vizzbox 1.0's tree
++ * made them (this file built against it); a line that differs is a song that changed.
++ * On the browser emulator's device built natively (web/emu/felucca_web.c with VIZZBOX=1), as tests/producer_test.c.
++ *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_golden tests/vizzbox_golden.c -lm
++ *   build/host/vizzbox_golden > out.txt; diff tests/vizzbox_golden10.txt out.txt
++ *   build/host/vizzbox_golden N      (case N only) */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <math.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++static uint64_t frames;
++static uint32_t ahash, mhash, nmidi;
++static void drain(void)
++{
++    while (mo_r != mo_w) {
++        uint32_t pkt = midi_out_q[mo_r % MQ], i;
++        uint64_t t = frames;
++        mo_r++;
++        for (i = 0; i < 4u; i++)
++            mhash = (mhash ^ ((pkt >> (8u * i)) & 0xFFu)) * 16777619u;
++        for (i = 0; i < 4u; i++)
++            mhash = (mhash ^ (uint32_t)((t >> (8u * i)) & 0xFFu)) * 16777619u;
++        nmidi++;
++    }
++}
++static void run_frames(uint64_t n)
++{
++    while (n) {
++        uint32_t m = n < 128u ? (uint32_t)n : 128u, k;
++        web_render(m);
++        for (k = 0; k < m; k++) {
++            int32_t s = (int32_t)lrintf(out_l[k] * 32767.0f) * 3 + (int32_t)lrintf(out_r[k] * 32767.0f);
++            ahash = (ahash ^ (uint32_t)s) * 16777619u;
++        }
++        frames += m;
++        drain();
++        n -= m;
++    }
++}
++static void run_s(double s) { run_frames((uint64_t)(s * FS)); }
++static void press(uint32_t labels)
++{
++    web_buttons(labels);
++    run_s(0.04);
++    web_buttons(0);
++    run_s(0.02);
++}
++
++/* case n: subgenre n / 9, its seed n / 3 % 3, its LENGTH n % 3; 324, 325: ENDLESS ten minutes */
++static const uint16_t SEED[3] = {0x5EEDu, 0x0B0Bu, 0xC0DEu};
++static const uint8_t EN[3] = {70, 100, 25}, VA[3] = {40, 90, 10};
++static void one(uint32_t n)
++{
++    uint32_t ri = n / 9u, si = n / 3u % 3u, len = n % 3u, g;
++    double secs, max;
++    if (n >= 324u) {                                /* (ENDLESS ten minutes: DEEP HOUSE, LIQUID) */
++        ri = n == 324u ? 0u : 22u;
++        si = 0;
++        len = 2;
++    }
++    for (g = 0; g < 9u && ri >= vb_sub0(g + 1u); g++)
++        ;
++    web_nor_erase();
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    run_s(0.6);
++    frames = 0;
++    nmidi = 0;
++    ahash = mhash = 2166136261u;
++    vb.k.genre = (uint8_t)g;
++    vb.k.sub = (uint8_t)(ri - vb_sub0(g));
++    vb.k.seed = (uint16_t)(SEED[si] + ri * 13u);
++    vb.k.energy = EN[si];
++    vb.k.var = VA[si];
++    vb.k.len = (uint8_t)len;
++    vb.k.bpm = 0;
++    press(1u << B_PLAY);
++    max = len == 2u ? (n >= 324u ? 600.0 : 180.0) : 420.0;
++    for (secs = 0; song.playing && secs < max; secs += 0.5)
++        run_s(0.5);
++    if (song.playing)
++        press(1u << B_PLAY);
++    run_s(1.0);
++    printf("%3u %-10s %-16s %04X E%-3u V%-3u %-7s %4.0f s  midi %08x (%u)  audio %08x\n", n, VB_GNAME[g],
++           VB_SNAME[ri], vb.k.seed, vb.k.energy, vb.k.var, len == 0u ? "SHORT" : len == 1u ? "NORMAL" : "ENDLESS",
++           secs, mhash, nmidi, ahash);
++}
++
++int main(int argc, char **argv)
++{
++    uint32_t n, running = 0, failed = 0, at = 0;
++    static char out[326][160];
++    int fd[326][2];
++    pid_t pid[326];
++    if (argc > 1) {
++        one((uint32_t)atoi(argv[1]));
++        return 0;
++    }
++    fflush(stdout);
++    for (n = 0; n < 326u; n++) {                    /* (four at a time, printed in order) */
++        if (running == 4u) {
++            int st;
++            ssize_t r = read(fd[at][0], out[at], sizeof out[at] - 1u);
++            out[at][r > 0 ? r : 0] = 0;
++            waitpid(pid[at], &st, 0);
++            failed += !WIFEXITED(st) || WEXITSTATUS(st) != 0;
++            fputs(out[at], stdout);
++            fflush(stdout);
++            close(fd[at][0]);
++            at++;
++            running--;
++        }
++        if (pipe(fd[n]))
++            return 2;
++        if (!(pid[n] = fork())) {
++            dup2(fd[n][1], 1);
++            one(n);
++            fflush(stdout);
++            _exit(0);
++        }
++        close(fd[n][1]);
++        running++;
++    }
++    for (; at < 326u; at++) {
++        int st;
++        ssize_t r = read(fd[at][0], out[at], sizeof out[at] - 1u);
++        out[at][r > 0 ? r : 0] = 0;
++        waitpid(pid[at], &st, 0);
++        failed += !WIFEXITED(st) || WEXITSTATUS(st) != 0;
++        fputs(out[at], stdout);
++        close(fd[at][0]);
++    }
++    return failed ? 1 : 0;
++}
+diff --git a/tests/vizzbox_golden10.txt b/tests/vizzbox_golden10.txt
+new file mode 100644
+index 0000000..4757645
+--- /dev/null
++++ b/tests/vizzbox_golden10.txt
+@@ -0,0 +1,326 @@
++  0 HOUSE      DEEP HOUSE       5EED E70  V40  SHORT    170 s  midi 3e19350d (21705)  audio 636dabad
++  1 HOUSE      DEEP HOUSE       5EED E70  V40  NORMAL   294 s  midi 25e2136d (37359)  audio 0eea159d
++  2 HOUSE      DEEP HOUSE       5EED E70  V40  ENDLESS  180 s  midi d1c5cbb5 (22502)  audio 2b929d66
++  3 HOUSE      DEEP HOUSE       0B0B E100 V90  SHORT    170 s  midi 4732e603 (22108)  audio f820feda
++  4 HOUSE      DEEP HOUSE       0B0B E100 V90  NORMAL   294 s  midi 276fba95 (37979)  audio af696204
++  5 HOUSE      DEEP HOUSE       0B0B E100 V90  ENDLESS  180 s  midi 280099cb (22846)  audio 26ebea71
++  6 HOUSE      DEEP HOUSE       C0DE E25  V10  SHORT    174 s  midi 7560ee4a (20839)  audio 16097259
++  7 HOUSE      DEEP HOUSE       C0DE E25  V10  NORMAL   302 s  midi 28f0b9d2 (35826)  audio 83be0523
++  8 HOUSE      DEEP HOUSE       C0DE E25  V10  ENDLESS  180 s  midi 4f01108b (21223)  audio a2a9fc1a
++  9 HOUSE      TECH HOUSE       5EFA E70  V40  SHORT    169 s  midi acb79297 (24172)  audio cb39414d
++ 10 HOUSE      TECH HOUSE       5EFA E70  V40  NORMAL   292 s  midi 2b6121a3 (41649)  audio 62ecc9bb
++ 11 HOUSE      TECH HOUSE       5EFA E70  V40  ENDLESS  180 s  midi f14fd51c (25171)  audio 9a8d93bc
++ 12 HOUSE      TECH HOUSE       0B18 E100 V90  SHORT    170 s  midi bff0f9f6 (24684)  audio 4796b3bd
++ 13 HOUSE      TECH HOUSE       0B18 E100 V90  NORMAL   294 s  midi f4684e57 (42549)  audio 9bd7af53
++ 14 HOUSE      TECH HOUSE       0B18 E100 V90  ENDLESS  180 s  midi 60e141a6 (25576)  audio 9c64f79c
++ 15 HOUSE      TECH HOUSE       C0EB E25  V10  SHORT    165 s  midi 7fa9fd92 (22959)  audio 9f788d38
++ 16 HOUSE      TECH HOUSE       C0EB E25  V10  NORMAL   285 s  midi f31db53c (39656)  audio 22e528e1
++ 17 HOUSE      TECH HOUSE       C0EB E25  V10  ENDLESS  180 s  midi 26324f52 (24474)  audio cd212457
++ 18 HOUSE      ACID HOUSE       5F07 E70  V40  SHORT    202 s  midi 92458665 (27962)  audio 8bea1f71
++ 19 HOUSE      ACID HOUSE       5F07 E70  V40  NORMAL   356 s  midi 96fb70b3 (49963)  audio 8508de5d
++ 20 HOUSE      ACID HOUSE       5F07 E70  V40  ENDLESS  180 s  midi 87ca9754 (25235)  audio 15d7b6a5
++ 21 HOUSE      ACID HOUSE       0B25 E100 V90  SHORT    208 s  midi 0ab8d303 (28172)  audio 81bd5acd
++ 22 HOUSE      ACID HOUSE       0B25 E100 V90  NORMAL   368 s  midi 40c27bc8 (50265)  audio f8d45e9d
++ 23 HOUSE      ACID HOUSE       0B25 E100 V90  ENDLESS  180 s  midi 723fa594 (24638)  audio e05303e9
++ 24 HOUSE      ACID HOUSE       C0F8 E25  V10  SHORT    203 s  midi 2fe4fce7 (26874)  audio 9c473c5d
++ 25 HOUSE      ACID HOUSE       C0F8 E25  V10  NORMAL   359 s  midi 8cb11f71 (48137)  audio c48fe4d9
++ 26 HOUSE      ACID HOUSE       C0F8 E25  V10  ENDLESS  180 s  midi 305b4759 (23860)  audio 01150061
++ 27 HOUSE      FILTER HOUSE     5F14 E70  V40  SHORT    169 s  midi 9e029f50 (23894)  audio 1fdb42dc
++ 28 HOUSE      FILTER HOUSE     5F14 E70  V40  NORMAL   292 s  midi e693b0a3 (41241)  audio eff7d2fc
++ 29 HOUSE      FILTER HOUSE     5F14 E70  V40  ENDLESS  180 s  midi 04b07f90 (25063)  audio b7f12fb1
++ 30 HOUSE      FILTER HOUSE     0B32 E100 V90  SHORT    168 s  midi e5e1d02d (24109)  audio d9841c84
++ 31 HOUSE      FILTER HOUSE     0B32 E100 V90  NORMAL   290 s  midi e4a2bf94 (41587)  audio 0603edcf
++ 32 HOUSE      FILTER HOUSE     0B32 E100 V90  ENDLESS  180 s  midi 2bed7a7d (25569)  audio 67edf7fc
++ 33 HOUSE      FILTER HOUSE     C105 E25  V10  SHORT    174 s  midi 549e37c8 (23559)  audio 931d0b09
++ 34 HOUSE      FILTER HOUSE     C105 E25  V10  NORMAL   299 s  midi 70e24388 (40727)  audio 3fe29b40
++ 35 HOUSE      FILTER HOUSE     C105 E25  V10  ENDLESS  180 s  midi c0d109f7 (24169)  audio 5341a8b2
++ 36 HOUSE      AFRO HOUSE       5F21 E70  V40  SHORT    202 s  midi a1783ea4 (27552)  audio 7a5d056f
++ 37 HOUSE      AFRO HOUSE       5F21 E70  V40  NORMAL   356 s  midi 23f886c3 (49665)  audio e6ad1c2a
++ 38 HOUSE      AFRO HOUSE       5F21 E70  V40  ENDLESS  180 s  midi 6030c7e3 (24821)  audio 1db8fb14
++ 39 HOUSE      AFRO HOUSE       0B3F E100 V90  SHORT    203 s  midi e19312e3 (28165)  audio 00ad993b
++ 40 HOUSE      AFRO HOUSE       0B3F E100 V90  NORMAL   359 s  midi daf2bbcb (50243)  audio 9b929a02
++ 41 HOUSE      AFRO HOUSE       0B3F E100 V90  ENDLESS  180 s  midi 4df00fee (25075)  audio 3f26a71c
++ 42 HOUSE      AFRO HOUSE       C112 E25  V10  SHORT    202 s  midi 0c330edd (25745)  audio 67b6ae11
++ 43 HOUSE      AFRO HOUSE       C112 E25  V10  NORMAL   356 s  midi 43759aea (46439)  audio f147bb3c
++ 44 HOUSE      AFRO HOUSE       C112 E25  V10  ENDLESS  180 s  midi 770c46cb (23046)  audio 90eca6b5
++ 45 HOUSE      DISCO HOUSE      5F2E E70  V40  SHORT    174 s  midi 5b92e5f8 (24001)  audio 60f7a6e2
++ 46 HOUSE      DISCO HOUSE      5F2E E70  V40  NORMAL   299 s  midi d1af1a6d (41509)  audio d0a87726
++ 47 HOUSE      DISCO HOUSE      5F2E E70  V40  ENDLESS  180 s  midi deca699d (24521)  audio 18307f8f
++ 48 HOUSE      DISCO HOUSE      0B4C E100 V90  SHORT    178 s  midi 01aa403e (24527)  audio fbcf1762
++ 49 HOUSE      DISCO HOUSE      0B4C E100 V90  NORMAL   306 s  midi cc64fa18 (42490)  audio d9cde319
++ 50 HOUSE      DISCO HOUSE      0B4C E100 V90  ENDLESS  180 s  midi c5e98ce8 (24716)  audio deabdd7b
++ 51 HOUSE      DISCO HOUSE      C11F E25  V10  SHORT    172 s  midi 08573ada (24343)  audio 650ffc23
++ 52 HOUSE      DISCO HOUSE      C11F E25  V10  NORMAL   297 s  midi 0d41b4ca (42212)  audio 9715956c
++ 53 HOUSE      DISCO HOUSE      C11F E25  V10  ENDLESS  180 s  midi 79eb0bdf (25358)  audio c071eb58
++ 54 TECHNO     MINIMAL          5F3B E70  V40  SHORT    202 s  midi b143e371 (23896)  audio 24d1eddc
++ 55 TECHNO     MINIMAL          5F3B E70  V40  NORMAL   356 s  midi 8d1e9db0 (42573)  audio 9231d0a9
++ 56 TECHNO     MINIMAL          5F3B E70  V40  ENDLESS  180 s  midi c36048b7 (21425)  audio ec730fb2
++ 57 TECHNO     MINIMAL          0B59 E100 V90  SHORT    198 s  midi a7a28ad4 (24553)  audio 5805277f
++ 58 TECHNO     MINIMAL          0B59 E100 V90  NORMAL   350 s  midi 8c52b5c3 (43709)  audio c75d5287
++ 59 TECHNO     MINIMAL          0B59 E100 V90  ENDLESS  180 s  midi 56ed74fc (22314)  audio afb70c1a
++ 60 TECHNO     MINIMAL          C12C E25  V10  SHORT    198 s  midi 884ea8f0 (23090)  audio 7bf50bee
++ 61 TECHNO     MINIMAL          C12C E25  V10  NORMAL   350 s  midi b96d51be (41075)  audio 35eba14a
++ 62 TECHNO     MINIMAL          C12C E25  V10  ENDLESS  180 s  midi f5a440d5 (20960)  audio 13853a62
++ 63 TECHNO     PEAK-TIME        5F48 E70  V40  SHORT    192 s  midi 4811c05b (28352)  audio 2720fda4
++ 64 TECHNO     PEAK-TIME        5F48 E70  V40  NORMAL   340 s  midi e4c56f55 (50962)  audio 73afdaf2
++ 65 TECHNO     PEAK-TIME        5F48 E70  V40  ENDLESS  180 s  midi 3ec3e36b (26793)  audio 23cf8f5d
++ 66 TECHNO     PEAK-TIME        0B66 E100 V90  SHORT    188 s  midi beb0d9c7 (29243)  audio 5f493f68
++ 67 TECHNO     PEAK-TIME        0B66 E100 V90  NORMAL   332 s  midi 51b0d54d (52451)  audio 553ec192
++ 68 TECHNO     PEAK-TIME        0B66 E100 V90  ENDLESS  180 s  midi 1e29a973 (28342)  audio 57de16bb
++ 69 TECHNO     PEAK-TIME        C139 E25  V10  SHORT    186 s  midi 1228abec (26986)  audio 1ba38ef1
++ 70 TECHNO     PEAK-TIME        C139 E25  V10  NORMAL   330 s  midi 060248f5 (48513)  audio ec2d9720
++ 71 TECHNO     PEAK-TIME        C139 E25  V10  ENDLESS  180 s  midi e7348f6c (26013)  audio 63ffc9e6
++ 72 TECHNO     DUB TECHNO       5F55 E70  V40  SHORT    190 s  midi 5a3b031d (21662)  audio e7a1aa39
++ 73 TECHNO     DUB TECHNO       5F55 E70  V40  NORMAL   349 s  midi 866559cf (39625)  audio a369154d
++ 74 TECHNO     DUB TECHNO       5F55 E70  V40  ENDLESS  180 s  midi f6e444c4 (20425)  audio 560a0489
++ 75 TECHNO     DUB TECHNO       0B73 E100 V90  SHORT    189 s  midi fb4386dc (21725)  audio 5bb60345
++ 76 TECHNO     DUB TECHNO       0B73 E100 V90  NORMAL   346 s  midi 9dfc10f0 (39684)  audio 6e210d5d
++ 77 TECHNO     DUB TECHNO       0B73 E100 V90  ENDLESS  180 s  midi a9ca6518 (20653)  audio 8bc7fdd9
++ 78 TECHNO     DUB TECHNO       C146 E25  V10  SHORT    190 s  midi 37a531d0 (21667)  audio 0038a931
++ 79 TECHNO     DUB TECHNO       C146 E25  V10  NORMAL   349 s  midi 71ae5686 (39596)  audio 8f153821
++ 80 TECHNO     DUB TECHNO       C146 E25  V10  ENDLESS  180 s  midi 091cf0e4 (20423)  audio ad2b2fa1
++ 81 TECHNO     HARD TECHNO      5F62 E70  V40  SHORT    170 s  midi 61dd1b3a (28929)  audio 31c75c98
++ 82 TECHNO     HARD TECHNO      5F62 E70  V40  NORMAL   300 s  midi 1161e6c8 (52025)  audio fd902ab3
++ 83 TECHNO     HARD TECHNO      5F62 E70  V40  ENDLESS  180 s  midi 9c2e53a8 (31670)  audio ddacaeeb
++ 84 TECHNO     HARD TECHNO      0B80 E100 V90  SHORT    166 s  midi d45bd1de (29063)  audio a719d257
++ 85 TECHNO     HARD TECHNO      0B80 E100 V90  NORMAL   294 s  midi 4a38c063 (52055)  audio a7bebdb1
++ 86 TECHNO     HARD TECHNO      0B80 E100 V90  ENDLESS  180 s  midi 5d08ff6c (32228)  audio fb49f4a7
++ 87 TECHNO     HARD TECHNO      C153 E25  V10  SHORT    177 s  midi 8ed38260 (27427)  audio 50debb06
++ 88 TECHNO     HARD TECHNO      C153 E25  V10  NORMAL   314 s  midi 17280df2 (49152)  audio ce3439b6
++ 89 TECHNO     HARD TECHNO      C153 E25  V10  ENDLESS  180 s  midi 45d17aff (28246)  audio e5d8080e
++ 90 TECHNO     DETROIT          5F6F E70  V40  SHORT    192 s  midi 6b046b57 (27818)  audio b5887387
++ 91 TECHNO     DETROIT          5F6F E70  V40  NORMAL   340 s  midi 2a4dd1d9 (49782)  audio 6f6a5569
++ 92 TECHNO     DETROIT          5F6F E70  V40  ENDLESS  180 s  midi 2b2ba8e3 (26037)  audio 94a06c9a
++ 93 TECHNO     DETROIT          0B8D E100 V90  SHORT    200 s  midi 8318a8da (28725)  audio a89cf663
++ 94 TECHNO     DETROIT          0B8D E100 V90  NORMAL   354 s  midi f3db1b38 (51279)  audio a7f3d673
++ 95 TECHNO     DETROIT          0B8D E100 V90  ENDLESS  180 s  midi 7c20b98f (25890)  audio 5ba443af
++ 96 TECHNO     DETROIT          C160 E25  V10  SHORT    198 s  midi aa9fb6d8 (26532)  audio a2f1ed7b
++ 97 TECHNO     DETROIT          C160 E25  V10  NORMAL   350 s  midi f301516c (47591)  audio b7dca0db
++ 98 TECHNO     DETROIT          C160 E25  V10  ENDLESS  180 s  midi 3a9da165 (23434)  audio c7405fcc
++ 99 TECHNO     MELODIC TECHNO   5F7C E70  V40  SHORT    174 s  midi 2317f490 (23470)  audio e0e9aa59
++100 TECHNO     MELODIC TECHNO   5F7C E70  V40  NORMAL   302 s  midi d3f6cd78 (40972)  audio ebb745fd
++101 TECHNO     MELODIC TECHNO   5F7C E70  V40  ENDLESS  180 s  midi 8367cca3 (23662)  audio dbbc3b08
++102 TECHNO     MELODIC TECHNO   0B9A E100 V90  SHORT    169 s  midi 9668f9e0 (23679)  audio e59802a9
++103 TECHNO     MELODIC TECHNO   0B9A E100 V90  NORMAL   292 s  midi 88f2f262 (41051)  audio 52752c27
++104 TECHNO     MELODIC TECHNO   0B9A E100 V90  ENDLESS  180 s  midi 76ec125b (24659)  audio bc38b452
++105 TECHNO     MELODIC TECHNO   C16D E25  V10  SHORT    172 s  midi bd908ad5 (22521)  audio 4cc98b43
++106 TECHNO     MELODIC TECHNO   C16D E25  V10  NORMAL   297 s  midi 6b8ec94b (39245)  audio e1cbe7a6
++107 TECHNO     MELODIC TECHNO   C16D E25  V10  ENDLESS  180 s  midi 7e198726 (23202)  audio e2596bf0
++108 ELECTRO    ELECTRO          5F89 E70  V40  SHORT    162 s  midi 17fd1e4d (23957)  audio d3eff689
++109 ELECTRO    ELECTRO          5F89 E70  V40  NORMAL   278 s  midi 32c2592a (40933)  audio 3eac28b2
++110 ELECTRO    ELECTRO          5F89 E70  V40  ENDLESS  180 s  midi c565b20c (25962)  audio 118c731c
++111 ELECTRO    ELECTRO          0BA7 E100 V90  SHORT    164 s  midi 5a9f44a5 (25499)  audio 258c3a19
++112 ELECTRO    ELECTRO          0BA7 E100 V90  NORMAL   283 s  midi a42b1ff4 (43784)  audio 36728ac9
++113 ELECTRO    ELECTRO          0BA7 E100 V90  ENDLESS  180 s  midi ea49413f (27316)  audio 19422f93
++114 ELECTRO    ELECTRO          C17A E25  V10  SHORT    168 s  midi c3ace6eb (23545)  audio 2a10245e
++115 ELECTRO    ELECTRO          C17A E25  V10  NORMAL   290 s  midi 0d1b9d54 (41001)  audio 7cfcaf9d
++116 ELECTRO    ELECTRO          C17A E25  V10  ENDLESS  180 s  midi 1465f29e (24712)  audio e2ec33d9
++117 ELECTRO    SYNTHWAVE        5F96 E70  V40  SHORT    218 s  midi 616bc24f (22472)  audio 18ba4fcb
++118 ELECTRO    SYNTHWAVE        5F96 E70  V40  NORMAL   356 s  midi 0bc8bc5c (36450)  audio 2eb5b564
++119 ELECTRO    SYNTHWAVE        5F96 E70  V40  ENDLESS  180 s  midi 6a098cf0 (18169)  audio bf4dc06a
++120 ELECTRO    SYNTHWAVE        0BB4 E100 V90  SHORT    194 s  midi 5ab623ee (23327)  audio 9690fcfc
++121 ELECTRO    SYNTHWAVE        0BB4 E100 V90  NORMAL   335 s  midi 84be4db8 (40232)  audio d28e50ee
++122 ELECTRO    SYNTHWAVE        0BB4 E100 V90  ENDLESS  180 s  midi 3325abda (20980)  audio a769bfd4
++123 ELECTRO    SYNTHWAVE        C187 E25  V10  SHORT    198 s  midi 85c41e0d (21703)  audio 6afe853d
++124 ELECTRO    SYNTHWAVE        C187 E25  V10  NORMAL   341 s  midi 5fe6cf19 (36754)  audio f85df7cc
++125 ELECTRO    SYNTHWAVE        C187 E25  V10  ENDLESS  180 s  midi 66a972cc (19019)  audio ef674d3b
++126 ELECTRO    ITALO DISCO      5FA3 E70  V40  SHORT    172 s  midi 81c1b84b (24673)  audio a84b6e34
++127 ELECTRO    ITALO DISCO      5FA3 E70  V40  NORMAL   297 s  midi c609917d (42421)  audio 3f7f8fe1
++128 ELECTRO    ITALO DISCO      5FA3 E70  V40  ENDLESS  180 s  midi 3608db40 (25497)  audio 5569e7c7
++129 ELECTRO    ITALO DISCO      0BC1 E100 V90  SHORT    184 s  midi c9d7e853 (24479)  audio ec79b0aa
++130 ELECTRO    ITALO DISCO      0BC1 E100 V90  NORMAL   318 s  midi f49e8c4e (42484)  audio 61cae18d
++131 ELECTRO    ITALO DISCO      0BC1 E100 V90  ENDLESS  180 s  midi ea8014de (24378)  audio 413f66c7
++132 ELECTRO    ITALO DISCO      C194 E25  V10  SHORT    180 s  midi 2960b9eb (23231)  audio fe361cdb
++133 ELECTRO    ITALO DISCO      C194 E25  V10  NORMAL   312 s  midi 25f0894f (39942)  audio 0f73cfcd
++134 ELECTRO    ITALO DISCO      C194 E25  V10  ENDLESS  180 s  midi b0bb57dd (22430)  audio 1ceac06d
++135 TRANCE     PROGRESSIVE      5FB0 E70  V40  SHORT    174 s  midi 1ab655f2 (23080)  audio be99be57
++136 TRANCE     PROGRESSIVE      5FB0 E70  V40  NORMAL   299 s  midi 55ff24ee (39977)  audio 09def777
++137 TRANCE     PROGRESSIVE      5FB0 E70  V40  ENDLESS  180 s  midi 4500576d (23268)  audio 8a9ce49c
++138 TRANCE     PROGRESSIVE      0BCE E100 V90  SHORT    168 s  midi d3855644 (23917)  audio 5c255bc3
++139 TRANCE     PROGRESSIVE      0BCE E100 V90  NORMAL   290 s  midi 40c90460 (41245)  audio 1e13fa49
++140 TRANCE     PROGRESSIVE      0BCE E100 V90  ENDLESS  180 s  midi f53667f2 (24895)  audio 11630b44
++141 TRANCE     PROGRESSIVE      C1A1 E25  V10  SHORT    169 s  midi 9e41aee9 (22217)  audio 6585a909
++142 TRANCE     PROGRESSIVE      C1A1 E25  V10  NORMAL   292 s  midi 49e289b6 (38515)  audio 31a51f25
++143 TRANCE     PROGRESSIVE      C1A1 E25  V10  ENDLESS  180 s  midi 18cd4b99 (23086)  audio 189b993f
++144 TRANCE     UPLIFTING        5FBD E70  V40  SHORT    165 s  midi 6667ff6d (27683)  audio 04d0514c
++145 TRANCE     UPLIFTING        5FBD E70  V40  NORMAL   274 s  midi da2366d2 (45825)  audio db86538c
++146 TRANCE     UPLIFTING        5FBD E70  V40  ENDLESS  180 s  midi 6d872a13 (29616)  audio d24f607d
++147 TRANCE     UPLIFTING        0BDB E100 V90  SHORT    170 s  midi 2ae80535 (28292)  audio 301857e5
++148 TRANCE     UPLIFTING        0BDB E100 V90  NORMAL   282 s  midi f7d991bf (47000)  audio 348a5447
++149 TRANCE     UPLIFTING        0BDB E100 V90  ENDLESS  180 s  midi a7dc4c97 (29510)  audio f737ac92
++150 TRANCE     UPLIFTING        C1AE E25  V10  SHORT    168 s  midi 99b0df50 (27606)  audio 6c9999f3
++151 TRANCE     UPLIFTING        C1AE E25  V10  NORMAL   280 s  midi c051df94 (45988)  audio acd73314
++152 TRANCE     UPLIFTING        C1AE E25  V10  ENDLESS  180 s  midi 70d71a44 (29048)  audio c2a33d02
++153 TRANCE     PSYTRANCE        5FCA E70  V40  SHORT    176 s  midi 2d852ee5 (28098)  audio aace3ffa
++154 TRANCE     PSYTRANCE        5FCA E70  V40  NORMAL   311 s  midi fe4f3ab5 (50854)  audio 48d0036c
++155 TRANCE     PSYTRANCE        5FCA E70  V40  ENDLESS  180 s  midi 599db9e0 (29016)  audio 35d1c1b1
++156 TRANCE     PSYTRANCE        0BE8 E100 V90  SHORT    177 s  midi a0703b8e (28964)  audio c730b54e
++157 TRANCE     PSYTRANCE        0BE8 E100 V90  NORMAL   314 s  midi f458cb87 (52030)  audio 4752ed3e
++158 TRANCE     PSYTRANCE        0BE8 E100 V90  ENDLESS  180 s  midi 87d2d8f5 (29898)  audio 43c6a0ae
++159 TRANCE     PSYTRANCE        C1BB E25  V10  SHORT    177 s  midi ba350ad4 (26575)  audio 7b975fc6
++160 TRANCE     PSYTRANCE        C1BB E25  V10  NORMAL   314 s  midi 5e529530 (47902)  audio 2dad82aa
++161 TRANCE     PSYTRANCE        C1BB E25  V10  ENDLESS  180 s  midi d65a6eac (27120)  audio bffbc2b6
++162 TRANCE     GOA              5FD7 E70  V40  SHORT    169 s  midi 5e8aea25 (27735)  audio e5113616
++163 TRANCE     GOA              5FD7 E70  V40  NORMAL   298 s  midi 3daf94bd (50447)  audio e3ee9612
++164 TRANCE     GOA              5FD7 E70  V40  ENDLESS  180 s  midi 8c12b79b (30272)  audio 7a53b7c2
++165 TRANCE     GOA              0BF5 E100 V90  SHORT    171 s  midi 6b19c033 (28541)  audio efe09af1
++166 TRANCE     GOA              0BF5 E100 V90  NORMAL   302 s  midi 2b47f194 (51612)  audio 5c02b553
++167 TRANCE     GOA              0BF5 E100 V90  ENDLESS  180 s  midi 60cceba1 (30916)  audio ee558b8e
++168 TRANCE     GOA              C1C8 E25  V10  SHORT    177 s  midi 4178bc69 (27243)  audio 6078bfc8
++169 TRANCE     GOA              C1C8 E25  V10  NORMAL   314 s  midi da6ce1ae (49578)  audio a16ca3f7
++170 TRANCE     GOA              C1C8 E25  V10  ENDLESS  180 s  midi cd549346 (28040)  audio 5222745d
++171 BREAKS     BREAKBEAT        5FE4 E70  V40  SHORT    162 s  midi 7463d9b9 (24453)  audio 99df4b33
++172 BREAKS     BREAKBEAT        5FE4 E70  V40  NORMAL   278 s  midi 6dacf430 (42133)  audio ac8b0a9d
++173 BREAKS     BREAKBEAT        5FE4 E70  V40  ENDLESS  180 s  midi 72c97759 (26520)  audio 23390eff
++174 BREAKS     BREAKBEAT        0C02 E100 V90  SHORT    160 s  midi 6e1dff44 (24996)  audio 8eee8fc8
++175 BREAKS     BREAKBEAT        0C02 E100 V90  NORMAL   276 s  midi ebb058b1 (42966)  audio 83a09227
++176 BREAKS     BREAKBEAT        0C02 E100 V90  ENDLESS  180 s  midi 8f06333c (27533)  audio 4376f4d7
++177 BREAKS     BREAKBEAT        C1D5 E25  V10  SHORT    156 s  midi ac30c11e (23177)  audio 9f7f1372
++178 BREAKS     BREAKBEAT        C1D5 E25  V10  NORMAL   370 s  midi a9c02db9 (55511)  audio e5c7aa81
++179 BREAKS     BREAKBEAT        C1D5 E25  V10  ENDLESS  180 s  midi ef4b3a3a (26096)  audio 18bf01a4
++180 BREAKS     2-STEP           5FF1 E70  V40  SHORT    162 s  midi a9374783 (23114)  audio ec72550c
++181 BREAKS     2-STEP           5FF1 E70  V40  NORMAL   354 s  midi efc9dc13 (50859)  audio c517d5e0
++182 BREAKS     2-STEP           5FF1 E70  V40  ENDLESS  180 s  midi 4b9c770c (25763)  audio ca7bc0c0
++183 BREAKS     2-STEP           0C0F E100 V90  SHORT    162 s  midi e4a960d8 (23400)  audio bffc0d20
++184 BREAKS     2-STEP           0C0F E100 V90  NORMAL   352 s  midi 0298cf3c (51582)  audio 784a8878
++185 BREAKS     2-STEP           0C0F E100 V90  ENDLESS  180 s  midi 500a7459 (26506)  audio 13a03d49
++186 BREAKS     2-STEP           C1E2 E25  V10  SHORT    159 s  midi c81d3b87 (21508)  audio a7597567
++187 BREAKS     2-STEP           C1E2 E25  V10  NORMAL   346 s  midi b7e0d5d3 (46739)  audio 08e187cf
++188 BREAKS     2-STEP           C1E2 E25  V10  ENDLESS  180 s  midi efc07592 (24116)  audio b841501d
++189 BREAKS     SPEED GARAGE     5FFE E70  V40  SHORT    156 s  midi 5b9d2aa0 (22734)  audio b154d900
++190 BREAKS     SPEED GARAGE     5FFE E70  V40  NORMAL   370 s  midi 58df407e (53607)  audio 38442fc8
++191 BREAKS     SPEED GARAGE     5FFE E70  V40  ENDLESS  180 s  midi 87516566 (25677)  audio 712757dc
++192 BREAKS     SPEED GARAGE     0C1C E100 V90  SHORT    156 s  midi 52e7461b (23355)  audio e13ba225
++193 BREAKS     SPEED GARAGE     0C1C E100 V90  NORMAL   370 s  midi 6d9d8541 (54774)  audio c796f319
++194 BREAKS     SPEED GARAGE     0C1C E100 V90  ENDLESS  180 s  midi c6605412 (26216)  audio ec987fb4
++195 BREAKS     SPEED GARAGE     C1EF E25  V10  SHORT    158 s  midi af8b8dce (22150)  audio 318c2a80
++196 BREAKS     SPEED GARAGE     C1EF E25  V10  NORMAL   272 s  midi c4a8a899 (37965)  audio 1ad9d024
++197 BREAKS     SPEED GARAGE     C1EF E25  V10  ENDLESS  180 s  midi e20e82d6 (24817)  audio 40bf2144
++198 DRUM & BASS LIQUID           600B E70  V40  SHORT    156 s  midi d42301c1 (26761)  audio 34a4974b
++199 DRUM & BASS LIQUID           600B E70  V40  NORMAL   358 s  midi 3bbe10dc (60939)  audio 6ea14155
++200 DRUM & BASS LIQUID           600B E70  V40  ENDLESS  180 s  midi 1c1f86cc (30697)  audio cb0912b0
++201 DRUM & BASS LIQUID           0C29 E100 V90  SHORT    154 s  midi ba1ec95f (27104)  audio de66c2c9
++202 DRUM & BASS LIQUID           0C29 E100 V90  NORMAL   352 s  midi b887ec63 (61636)  audio 5b5728ae
++203 DRUM & BASS LIQUID           0C29 E100 V90  ENDLESS  180 s  midi 38e4554c (31602)  audio aa34ec89
++204 DRUM & BASS LIQUID           C1FC E25  V10  SHORT    156 s  midi 2f435921 (25532)  audio 472d5caf
++205 DRUM & BASS LIQUID           C1FC E25  V10  NORMAL   356 s  midi e8b0bf94 (58120)  audio d080ae2f
++206 DRUM & BASS LIQUID           C1FC E25  V10  ENDLESS  180 s  midi 56de8e34 (29445)  audio 63982385
++207 DRUM & BASS NEUROFUNK        6018 E70  V40  SHORT    154 s  midi 2ac3b4ef (26888)  audio 2def803d
++208 DRUM & BASS NEUROFUNK        6018 E70  V40  NORMAL   352 s  midi c95d4ba0 (61432)  audio a38d4369
++209 DRUM & BASS NEUROFUNK        6018 E70  V40  ENDLESS  180 s  midi c0696e4c (31367)  audio 86004898
++210 DRUM & BASS NEUROFUNK        0C36 E100 V90  SHORT    153 s  midi 66a0678c (27588)  audio 8bcbe4de
++211 DRUM & BASS NEUROFUNK        0C36 E100 V90  NORMAL   349 s  midi 95db78d0 (63030)  audio 71cdf327
++212 DRUM & BASS NEUROFUNK        0C36 E100 V90  ENDLESS  180 s  midi 2db625d9 (32515)  audio b38040a6
++213 DRUM & BASS NEUROFUNK        C209 E25  V10  SHORT    153 s  midi dbe94bb8 (25806)  audio e65cc20a
++214 DRUM & BASS NEUROFUNK        C209 E25  V10  NORMAL   349 s  midi 55e8f98a (58904)  audio d4c0b659
++215 DRUM & BASS NEUROFUNK        C209 E25  V10  ENDLESS  180 s  midi 17911a30 (30306)  audio bf408dbb
++216 DRUM & BASS JUMP-UP          6025 E70  V40  SHORT    154 s  midi 9ba7ab2a (27028)  audio f877c10d
++217 DRUM & BASS JUMP-UP          6025 E70  V40  NORMAL   353 s  midi 99a358e1 (61626)  audio eace4aa1
++218 DRUM & BASS JUMP-UP          6025 E70  V40  ENDLESS  180 s  midi ba6f4345 (31422)  audio 0b66ebb1
++219 DRUM & BASS JUMP-UP          0C43 E100 V90  SHORT    154 s  midi 467a4385 (27454)  audio 347f06c1
++220 DRUM & BASS JUMP-UP          0C43 E100 V90  NORMAL   353 s  midi c06d71f5 (62526)  audio 80b13629
++221 DRUM & BASS JUMP-UP          0C43 E100 V90  ENDLESS  180 s  midi ebb3dc75 (31897)  audio 87bd2ee9
++222 DRUM & BASS JUMP-UP          C216 E25  V10  SHORT    154 s  midi 53f52eb5 (25786)  audio b7484221
++223 DRUM & BASS JUMP-UP          C216 E25  V10  NORMAL   352 s  midi 5d97e72f (58922)  audio 45feed69
++224 DRUM & BASS JUMP-UP          C216 E25  V10  ENDLESS  180 s  midi 2fbd8eb6 (30201)  audio 85cd0711
++225 DRUM & BASS JUNGLE           6032 E70  V40  SHORT    165 s  midi ca6c45ea (30019)  audio 0ce1e24a
++226 DRUM & BASS JUNGLE           6032 E70  V40  NORMAL   294 s  midi 3d273ffa (53332)  audio 5714015a
++227 DRUM & BASS JUNGLE           6032 E70  V40  ENDLESS  180 s  midi 360712b0 (32711)  audio c67f3d85
++228 DRUM & BASS JUNGLE           0C50 E100 V90  SHORT    163 s  midi 16a1f410 (30460)  audio 97008344
++229 DRUM & BASS JUNGLE           0C50 E100 V90  NORMAL   291 s  midi ed371e8e (54090)  audio ff2ee7ab
++230 DRUM & BASS JUNGLE           0C50 E100 V90  ENDLESS  180 s  midi 259dbaa6 (33597)  audio 39539fe7
++231 DRUM & BASS JUNGLE           C223 E25  V10  SHORT    167 s  midi 8e4b0c08 (27866)  audio e794725a
++232 DRUM & BASS JUNGLE           C223 E25  V10  NORMAL   298 s  midi 74ca45b2 (49687)  audio cb011608
++233 DRUM & BASS JUNGLE           C223 E25  V10  ENDLESS  180 s  midi be56a214 (30041)  audio 01512e3a
++234 DUBSTEP    DEEP DUBSTEP     603F E70  V40  SHORT    177 s  midi 81f14ae0 (23842)  audio 0a373b29
++235 DUBSTEP    DEEP DUBSTEP     603F E70  V40  NORMAL   286 s  midi cc66731d (38197)  audio 0180ecd4
++236 DUBSTEP    DEEP DUBSTEP     603F E70  V40  ENDLESS  180 s  midi 51ff7969 (24091)  audio 137488e1
++237 DUBSTEP    DEEP DUBSTEP     0C5D E100 V90  SHORT    180 s  midi 46c4ca22 (24238)  audio f96b9246
++238 DUBSTEP    DEEP DUBSTEP     0C5D E100 V90  NORMAL   290 s  midi be0be676 (38779)  audio ecb31218
++239 DUBSTEP    DEEP DUBSTEP     0C5D E100 V90  ENDLESS  180 s  midi 8d21aaf1 (24137)  audio a8c0f152
++240 DUBSTEP    DEEP DUBSTEP     C230 E25  V10  SHORT    178 s  midi 2eaf2ae4 (23245)  audio 2fdf99f2
++241 DUBSTEP    DEEP DUBSTEP     C230 E25  V10  NORMAL   288 s  midi cac0070d (37316)  audio 8ee9520b
++242 DUBSTEP    DEEP DUBSTEP     C230 E25  V10  ENDLESS  180 s  midi d5558cbc (23518)  audio 3d5c5630
++243 DUBSTEP    BROSTEP          604C E70  V40  SHORT    170 s  midi f0427f5b (23507)  audio 8440464d
++244 DUBSTEP    BROSTEP          604C E70  V40  NORMAL   340 s  midi d1d8995a (46554)  audio 86b4f001
++245 DUBSTEP    BROSTEP          604C E70  V40  ENDLESS  180 s  midi df987086 (24964)  audio 64420441
++246 DUBSTEP    BROSTEP          0C6A E100 V90  SHORT    168 s  midi 9cb5bfef (23818)  audio ed2b4bf9
++247 DUBSTEP    BROSTEP          0C6A E100 V90  NORMAL   335 s  midi df15470e (47087)  audio 9ccfc48d
++248 DUBSTEP    BROSTEP          0C6A E100 V90  ENDLESS  180 s  midi 12e3c5b1 (25487)  audio 5f8af3b1
++249 DUBSTEP    BROSTEP          C23D E25  V10  SHORT    170 s  midi fea4acb4 (22841)  audio cd565c25
++250 DUBSTEP    BROSTEP          C23D E25  V10  NORMAL   340 s  midi aa5061c1 (45278)  audio 349c5249
++251 DUBSTEP    BROSTEP          C23D E25  V10  ENDLESS  180 s  midi cf70d0ed (23886)  audio bcacd939
++252 HIP-HOP    BOOM BAP         6059 E70  V40  SHORT    156 s  midi a972dcd3 (14954)  audio 1e3cb07d
++253 HIP-HOP    BOOM BAP         6059 E70  V40  NORMAL   312 s  midi e7615d38 (30064)  audio a5e2f451
++254 HIP-HOP    BOOM BAP         6059 E70  V40  ENDLESS  180 s  midi c4919d3a (17358)  audio 51767745
++255 HIP-HOP    BOOM BAP         0C77 E100 V90  SHORT    156 s  midi 53de0807 (14999)  audio 67dd0fd5
++256 HIP-HOP    BOOM BAP         0C77 E100 V90  NORMAL   312 s  midi b757229e (30142)  audio 4e315ab5
++257 HIP-HOP    BOOM BAP         0C77 E100 V90  ENDLESS  180 s  midi b06a2bc4 (17389)  audio 9b688345
++258 HIP-HOP    BOOM BAP         C24A E25  V10  SHORT    144 s  midi b839e243 (14469)  audio 3d5c96b1
++259 HIP-HOP    BOOM BAP         C24A E25  V10  NORMAL   289 s  midi 341554f2 (28929)  audio 5a7620e5
++260 HIP-HOP    BOOM BAP         C24A E25  V10  ENDLESS  180 s  midi 322c97df (18019)  audio 22b1447d
++261 HIP-HOP    LO-FI            6066 E70  V40  SHORT    190 s  midi 02069c32 (13134)  audio 61f2c4cb
++262 HIP-HOP    LO-FI            6066 E70  V40  NORMAL   352 s  midi aeac0e67 (24376)  audio 0938d312
++263 HIP-HOP    LO-FI            6066 E70  V40  ENDLESS  180 s  midi 5032abdd (12586)  audio 963d0cda
++264 HIP-HOP    LO-FI            0C84 E100 V90  SHORT    164 s  midi d8546ed8 (13294)  audio e98e8d91
++265 HIP-HOP    LO-FI            0C84 E100 V90  NORMAL   328 s  midi 1682c745 (26564)  audio 671af328
++266 HIP-HOP    LO-FI            0C84 E100 V90  ENDLESS  180 s  midi 61a7a001 (14549)  audio c387aa16
++267 HIP-HOP    LO-FI            C257 E25  V10  SHORT    164 s  midi fd544794 (12646)  audio 0d6eda2b
++268 HIP-HOP    LO-FI            C257 E25  V10  NORMAL   328 s  midi d992a1a6 (25285)  audio 0975a2c6
++269 HIP-HOP    LO-FI            C257 E25  V10  ENDLESS  180 s  midi 46228ad1 (13851)  audio d1f81cb1
++270 HIP-HOP    TRAP             6073 E70  V40  SHORT    199 s  midi 2e070604 (34679)  audio 11cc277b
++271 HIP-HOP    TRAP             6073 E70  V40  NORMAL   318 s  midi 0c01c2e6 (55568)  audio 901cd5fe
++272 HIP-HOP    TRAP             6073 E70  V40  ENDLESS  180 s  midi 509ce737 (31738)  audio 8d25ea37
++273 HIP-HOP    TRAP             0C91 E100 V90  SHORT    159 s  midi 914a029b (25528)  audio 0f28b4d5
++274 HIP-HOP    TRAP             0C91 E100 V90  NORMAL   346 s  midi 3748a453 (55878)  audio 66f025c5
++275 HIP-HOP    TRAP             0C91 E100 V90  ENDLESS  180 s  midi 5706e0ef (29184)  audio 790654c9
++276 HIP-HOP    TRAP             C264 E25  V10  SHORT    160 s  midi 00c4edd2 (24168)  audio db5fb3e7
++277 HIP-HOP    TRAP             C264 E25  V10  NORMAL   350 s  midi 61a2b295 (52640)  audio 73bcee12
++278 HIP-HOP    TRAP             C264 E25  V10  ENDLESS  180 s  midi bd5b3762 (27163)  audio 32f4e38c
++279 AMBIENT    AMBIENT          6080 E70  V40  SHORT    179 s  midi ee76d26f (13994)  audio 7bca4842
++280 AMBIENT    AMBIENT          6080 E70  V40  NORMAL   358 s  midi b962dffe (27901)  audio cc2d226a
++281 AMBIENT    AMBIENT          6080 E70  V40  ENDLESS  180 s  midi 2dac1f17 (14074)  audio 7899c83b
++282 AMBIENT    AMBIENT          0C9E E100 V90  SHORT    188 s  midi 980de8c8 (13848)  audio 48137c7d
++283 AMBIENT    AMBIENT          0C9E E100 V90  NORMAL   328 s  midi f9f82131 (24281)  audio d7f98c8f
++284 AMBIENT    AMBIENT          0C9E E100 V90  ENDLESS  180 s  midi 836d9584 (13214)  audio c3162b9c
++285 AMBIENT    AMBIENT          C271 E25  V10  SHORT    214 s  midi 45175a20 (12322)  audio 9e23d803
++286 AMBIENT    AMBIENT          C271 E25  V10  NORMAL   366 s  midi 0e3dd350 (20704)  audio 290cd99c
++287 AMBIENT    AMBIENT          C271 E25  V10  ENDLESS  180 s  midi ca9abded (9928)  audio caf5c800
++288 AMBIENT    CHILL            608D E70  V40  SHORT    222 s  midi 911a113a (23441)  audio 435aff6c
++289 AMBIENT    CHILL            608D E70  V40  NORMAL   283 s  midi caebf2e9 (29840)  audio 272d7500
++290 AMBIENT    CHILL            608D E70  V40  ENDLESS  180 s  midi cec37235 (19024)  audio e6962c57
++291 AMBIENT    CHILL            0CAB E100 V90  SHORT    143 s  midi ad851a8d (15234)  audio bf42e25a
++292 AMBIENT    CHILL            0CAB E100 V90  NORMAL   286 s  midi 4a1be846 (30392)  audio c5871611
++293 AMBIENT    CHILL            0CAB E100 V90  ENDLESS  180 s  midi fb7ef591 (19152)  audio 07884bf3
++294 AMBIENT    CHILL            C27E E25  V10  SHORT    218 s  midi 24842630 (22704)  audio 3355e474
++295 AMBIENT    CHILL            C27E E25  V10  NORMAL   356 s  midi a64c9919 (37130)  audio 12a97ae7
++296 AMBIENT    CHILL            C27E E25  V10  ENDLESS  180 s  midi 029f73bd (18696)  audio 0c7e3b07
++297 AMBIENT    DUB              609A E70  V40  SHORT    192 s  midi cf1e2267 (14690)  audio 6e16a14c
++298 AMBIENT    DUB              609A E70  V40  NORMAL   336 s  midi 19e02aff (25566)  audio 33341201
++299 AMBIENT    DUB              609A E70  V40  ENDLESS  180 s  midi 2c6a5cc4 (13732)  audio a3e483eb
++300 AMBIENT    DUB              0CB8 E100 V90  SHORT    197 s  midi 3e84c087 (14899)  audio 0969dc00
++301 AMBIENT    DUB              0CB8 E100 V90  NORMAL   345 s  midi dd78e8de (25856)  audio eb2f29a7
++302 AMBIENT    DUB              0CB8 E100 V90  ENDLESS  180 s  midi 42da9830 (13642)  audio 507a9d4b
++303 AMBIENT    DUB              C28B E25  V10  SHORT    194 s  midi a6fccf31 (14657)  audio b9292420
++304 AMBIENT    DUB              C28B E25  V10  NORMAL   340 s  midi a9c1ecc7 (25559)  audio 471a12e1
++305 AMBIENT    DUB              C28B E25  V10  ENDLESS  180 s  midi 1bcaa532 (13590)  audio 43f7e741
++306 HARD       HARDSTYLE        60A7 E70  V40  SHORT    154 s  midi 5ba4d4bd (23183)  audio 21064c67
++307 HARD       HARDSTYLE        60A7 E70  V40  NORMAL   358 s  midi 57c7f976 (54330)  audio 99b72476
++308 HARD       HARDSTYLE        60A7 E70  V40  ENDLESS  180 s  midi b8bc6a71 (26835)  audio 0a98ba60
++309 HARD       HARDSTYLE        0CC5 E100 V90  SHORT    152 s  midi e4af8ba9 (23088)  audio d9e2b205
++310 HARD       HARDSTYLE        0CC5 E100 V90  NORMAL   354 s  midi c4c8122c (53776)  audio e0d22d38
++311 HARD       HARDSTYLE        0CC5 E100 V90  ENDLESS  180 s  midi 49d1d0c8 (26987)  audio 642db333
++312 HARD       HARDSTYLE        C298 E25  V10  SHORT    152 s  midi 8348c7b9 (22299)  audio 90531049
++313 HARD       HARDSTYLE        C298 E25  V10  NORMAL   356 s  midi d858e267 (52114)  audio a5838a9c
++314 HARD       HARDSTYLE        C298 E25  V10  ENDLESS  180 s  midi 07569040 (26049)  audio c61094f1
++315 HARD       GABBER           60B4 E70  V40  SHORT    171 s  midi 2ed2d184 (29019)  audio 04eb05e9
++316 HARD       GABBER           60B4 E70  V40  NORMAL   299 s  midi 1bea8ef9 (50939)  audio d9bbf555
++317 HARD       GABBER           60B4 E70  V40  ENDLESS  180 s  midi 68d9b3ae (30578)  audio 0428f39b
++318 HARD       GABBER           0CD2 E100 V90  SHORT    180 s  midi ce5a6da9 (28780)  audio e4c8324e
++319 HARD       GABBER           0CD2 E100 V90  NORMAL   314 s  midi d4c14581 (50529)  audio 9ff125f5
++320 HARD       GABBER           0CD2 E100 V90  ENDLESS  180 s  midi b3fb06f5 (28868)  audio a90dc650
++321 HARD       GABBER           C2A5 E25  V10  SHORT    164 s  midi 062bb8dd (28767)  audio f6d3e52f
++322 HARD       GABBER           C2A5 E25  V10  NORMAL   286 s  midi 10b41060 (50560)  audio 35e1f670
++323 HARD       GABBER           C2A5 E25  V10  ENDLESS  180 s  midi 7e8d1635 (31657)  audio e213683b
++324 HOUSE      DEEP HOUSE       5EED E70  V40  ENDLESS  600 s  midi 6d4cf649 (81870)  audio dc333dbf
++325 DRUM & BASS LIQUID           600B E70  V40  ENDLESS  600 s  midi a304fd23 (107374)  audio 45ffd56e
+-- 
+2.43.0
+

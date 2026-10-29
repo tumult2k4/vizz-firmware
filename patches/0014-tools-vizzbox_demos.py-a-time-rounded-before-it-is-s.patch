@@ -1,7 +1,7 @@
-From afc066a39c45dccf351b385d737e67aac4268c26 Mon Sep 17 00:00:00 2001
+From e66d6c92d5071d5979deb9350aa3c18cabb3b13b Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 23:25:41 +0000
-Subject: [PATCH 14/14] tools/vizzbox_demos.py: a time rounded before it is
+Subject: [PATCH 14/15] tools/vizzbox_demos.py: a time rounded before it is
  split into minutes and seconds
 
 A song of 299.6 s read 4:60 in demos/README.md; now 5:00 (and the excerpts' times the same way).
