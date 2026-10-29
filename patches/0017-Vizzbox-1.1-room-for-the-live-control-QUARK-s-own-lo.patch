@@ -1,0 +1,2179 @@
+From 95647b60e1d04fec16ec9fdf14a907be31fd175e Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 07:36:36 +0000
+Subject: [PATCH 17/19] Vizzbox 1.1: room for the live control: QUARK's own
+ look left out (6 684 bytes)
+
+BRIEF-VIZZBOX-1.1.md 7: the live control (its part A) does not fit in the 3 612 bytes above the 2 KB reserve. Skiff's
+own pages, layers and browser do the work (step 1); the own code gives nothing back (step 2: noinline on the
+producer's and the VIZZBOX's functions the compiler puts into ui_input.c and main.c makes the app 3 552 bytes larger,
+on the three called from several places 48); the FM-1 build holds no SMK-37, debug or demo code to drop (step 3). Of
+what a FM-1 notices least (step 4), the decorations of one look, the smallest of the three that is enough: QUARK's
+detector display (the cells' bracket corners, dotted rules, nuclei, particle tracks, collisions: ui_quark.c and the
+branches in the drawing code; NEON's 7 796 and CRYPT's 7 872 would be more). The QUARK palette stays, its colours
+drawn as SKIFF's BLOCKS; CRYPT and NEON keep theirs; LARGE (3 548 bytes, the legibility of the values, a function)
+and SHIFT's help stay. A build flag, FELUCCA_QUARK_UI=1, puts it back (gfx.c UX_QUARK for ux.quark in the drawing
+code). tests/ui_golden.txt: the 712 QUARK pictures, no other; tests/vizzbox_ui_golden.txt: its one QUARK GROOVEBOX
+screen; tests/ui_test.c: QUARK's playhead without its collision.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/gfx.c          |    7 +
+ firmware/src/ui_blocks.c    |   20 +-
+ firmware/src/ui_draw.c      |    8 +-
+ firmware/src/ui_fm6.c       |   18 +-
+ firmware/src/ui_graph.c     |   54 +-
+ firmware/src/ui_home.c      |   14 +-
+ firmware/src/ui_layer.c     |    2 +-
+ firmware/src/ui_menu.c      |   16 +-
+ firmware/src/ui_pgraph.c    |   14 +-
+ firmware/src/ui_quark.c     |    2 +-
+ tests/ui_golden.txt         | 1424 +++++++++++++++++------------------
+ tests/ui_test.c             |    3 +-
+ tests/vizzbox_ui_golden.txt |    2 +-
+ 13 files changed, 796 insertions(+), 788 deletions(-)
+
+diff --git a/firmware/src/gfx.c b/firmware/src/gfx.c
+index 830aaf0..e608ba4 100644
+--- a/firmware/src/gfx.c
++++ b/firmware/src/gfx.c
+@@ -130,6 +130,13 @@ static struct {
+     uint8_t quark;               /* (Skiff) THEME QUARK: Skiff's font, its own widgets (design/mock_quark.py) */
+     uint32_t gen;                /* bumped by palette_set (the text ramps follow) */
+ } ux;
++/* ((Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 7) QUARK's own look (its detector display: the cells' bracket corners, dotted
++ * rules, nuclei, particle tracks and collisions) left out to make room for the live control: the QUARK palette stays,
++ * its colours drawn as SKIFF's BLOCKS (ui_quark.c unused). FELUCCA_QUARK_UI=1 builds it as Skiff has it */
++#ifndef FELUCCA_QUARK_UI
++#define FELUCCA_QUARK_UI 0
++#endif
++#define UX_QUARK (FELUCCA_QUARK_UI && ux.quark)
+ /* The look (Skiff, DESIGN.md: BLOCKS; U2: the only one, FLAT and LINE retired): SURF tiles with square corners on the
+  * BG, no dividers; the knob just turned: its label row a band of the accent (ui_draw.c draw_column); track cushions in
+  * their tracks' colours; key names as words, no keycaps */
+diff --git a/firmware/src/ui_blocks.c b/firmware/src/ui_blocks.c
+index 89a746e..a200052 100644
+--- a/firmware/src/ui_blocks.c
++++ b/firmware/src/ui_blocks.c
+@@ -90,7 +90,7 @@ static void draw_head_blocks(void)
+         cr_drop(8, (H_HEAD - 9) / 2, rec == 2u);
+     else if (ux.neon && rec && !seq_counting())       /* (Skiff N3) NEON: a red light */
+         ne_rec(11, H_HEAD / 2 - 1, rec == 2u);
+-    else if (ux.quark && rec && !seq_counting())      /* (Skiff Q2) QUARK: a red nucleus */
++    else if (UX_QUARK && rec && !seq_counting())      /* (Skiff Q2) QUARK: a red nucleus */
+         qk_rec(11, H_HEAD / 2 - 1, rec == 2u);
+     else
+         cv_icon_mid(4, H_HEAD / 2, 16, id, ic, T_BG);
+@@ -99,7 +99,7 @@ static void draw_head_blocks(void)
+             cv_rect(x, H_HEAD - 1, 2, 1, T_LINE);
+     if (ux.neon)                                      /* (Skiff N3) NEON: a neon rule along it */
+         ne_rule(H_HEAD - 2, 0);
+-    if (ux.quark)                                     /* (Skiff Q2) QUARK: a dotted rule */
++    if (UX_QUARK)                                     /* (Skiff Q2) QUARK: a dotted rule */
+         qk_rule(H_HEAD - 2);
+     GFX_HOOK_ALIGN(0, 0, 0, H_HEAD, AL_V, "header text on its middle");
+     cv_text(HB_POS_X, HEAD_MY, &AF_M, pos, song.playing ? T_TEXT : T_MID);
+@@ -191,7 +191,7 @@ static int face_has(const aafont_t *f, const char *s)   /* every glyph of s in a
+ static void draw_column_blocks(uint32_t c, const char *label, const char *val, const char *unit, uint16_t vc,
+                                int32_t ratio, uint32_t icon, int hot, int mot, int32_t kid, uint32_t kind)
+ {
+-    uint16_t fill = hot ? (ux.quark ? T_THEME : T_ACCENT) : T_SURF;   /* ((Skiff Q2) QUARK: the hot cell cyan) */
++    uint16_t fill = hot ? (UX_QUARK ? T_THEME : T_ACCENT) : T_SURF;   /* ((Skiff Q2) QUARK: the hot cell cyan) */
+     uint32_t tk = icon - ICON_TRK < NTRK ? icon - ICON_TRK : song.sel;   /* whose card: a cushion's track, else the selected */
+     int32_t room = COL_W - BK_L - BK_R;
+     cv_begin(COL_W, COL_H, T_BG);
+@@ -201,7 +201,7 @@ static void draw_column_blocks(uint32_t c, const char *label, const char *val, c
+     } else if (ux.neon) {
+         ne_glass(0, 0, COL_W, COL_H, fill);
+         cv_rect(0, COL_H - 1, COL_W, 1, T_LINE);
+-    } else if (ux.quark) {                            /* (Skiff Q2) QUARK: the periodic table's cell, its corners */
++    } else if (UX_QUARK) {                            /* (Skiff Q2) QUARK: the periodic table's cell, its corners */
+         cv_rect(0, 0, COL_W, COL_H, fill);
+         if (!hot)
+             qk_corners(0, 0, COL_W, COL_H, T_DIM, 5);
+@@ -232,7 +232,7 @@ static void draw_column_blocks(uint32_t c, const char *label, const char *val, c
+             lc = T_THEME;
+         }
+         cv_text_fit(lx, ly, lf, label, lc, fill, lw);
+-        if (ux.quark && !mot && lx == BK_L) {        /* ((Skiff Q2) QUARK: the cell's number, the knob's, where the
++        if (UX_QUARK && !mot && lx == BK_L) {        /* ((Skiff Q2) QUARK: the cell's number, the knob's, where the
+                                                        * label leaves room) */
+             char ix[2] = {(char)('1' + c % 4u), 0};
+             if (text_w(lf, label) + text_w(&AF_S, ix) + 6 <= lw)
+@@ -272,7 +272,7 @@ static void draw_column_blocks(uint32_t c, const char *label, const char *val, c
+             cv_text_on(COL_W - BK_R - ub[2], BK_BASE - AF_S.asc, &AF_S, unit, hot ? T_INK : T_MID, fill);
+         }
+     }
+-    if (ratio >= 0 && ux.quark)                       /* (Skiff Q2) QUARK: energy levels */
++    if (ratio >= 0 && UX_QUARK)                       /* (Skiff Q2) QUARK: energy levels */
+         qk_dots(BK_L, COL_H - 5, COL_W - BK_L - BK_R, ratio, hot);
+     else if (ratio >= 0 && ux.neon)                   /* (Skiff N3) NEON: a dash bargraph */
+         ne_dash(BK_L, COL_H - 6, COL_W - BK_L - BK_R, ratio, hot);
+@@ -355,7 +355,7 @@ static void draw_confirm_blocks(void)
+     if (ux.crypt) {                                   /* (Skiff C3) CRYPT: a stone tablet in a double frame */
+         cr_stone(0, 0, BD_W, BD_H, T_SURF);
+         cr_frame2(0, 0, BD_W, BD_H, T_LINE);
+-    } else if (ux.quark) {                            /* (Skiff Q2) QUARK: an instrument's panel, gold corners; what
++    } else if (UX_QUARK) {                            /* (Skiff Q2) QUARK: an instrument's panel, gold corners; what
+                                                        * can't be undone under the radiation sign */
+         cv_frame(0, 0, BD_W, BD_H, T_LINE);
+         qk_corners(0, 0, BD_W, BD_H, T_ACCENT, 9);
+@@ -401,20 +401,20 @@ static void draw_confirm_blocks(void)
+         const aafont_t *wf = text_w(&AF_M, w) <= BD_BW - 8 ? &AF_M : &AF_S;
+         if (i)
+             cv_frame(x, BD_BY, BD_BW, BD_BH, T_REC);
+-        else if (ux.quark)                            /* ((Skiff Q2) QUARK: CANCEL cyan) */
++        else if (UX_QUARK)                            /* ((Skiff Q2) QUARK: CANCEL cyan) */
+             cv_rect(x, BD_BY, BD_BW, BD_BH, T_THEME);
+         else if (ux.neon) {                           /* ((Skiff N3) NEON: CANCEL lit cyan) */
+             uint16_t st[2] = {T_ACCENT, ux_mix(T_ACCENT, NE_VIOLET, 55)};
+             ne_vgrad(x, BD_BY, BD_BW, BD_BH, st, 2);
+         } else
+             cv_rect(x, BD_BY, BD_BW, BD_BH, T_TEXT);
+-        if (i && ux.quark)                            /* (.. QUARK: the action in red brackets) */
++        if (i && UX_QUARK)                            /* (.. QUARK: the action in red brackets) */
+             qk_corners(x - 2, BD_BY - 2, BD_BW + 4, BD_BH + 4, T_REC, 4);
+         if (i && ux.neon)                             /* (.. the action in red neon: its glow) */
+             cv_frame(x + 1, BD_BY + 1, BD_BW - 2, BD_BH - 2, ux_mix(T_REC, T_SURF, 65));
+         GFX_HOOK_ALIGN(x, BD_BY, x + BD_BW, BD_BY + BD_BH, AL_HV, "dialog button word");
+         cv_text_in(x, BD_BY + (wf == &AF_M ? CAP_IN(M, BD_BH) : CAP_IN(S, BD_BH)), BD_BW, wf, w, i ? T_REC : T_INK,
+-                   i ? T_SURF : ux.quark ? T_THEME : T_TEXT);
++                   i ? T_SURF : UX_QUARK ? T_THEME : T_TEXT);
+         GFX_HOOK_ALIGN(x, 0, x + BD_BW, 0, AL_H, "dialog key under its button");
+         cv_keycap(x + ink_in(&AF_S, KC[KEY[i]].label, BD_BW), BD_BY + BD_BH + 3, KEY[i], T_KEY, T_INK, T_SURF);   /* (its
+                                                        * ink centred: CRYPT's spacing trails its letters) */
+diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
+index d4e2186..b57bbd5 100644
+--- a/firmware/src/ui_draw.c
++++ b/firmware/src/ui_draw.c
+@@ -377,9 +377,9 @@ static void draw_column_tall(uint32_t c, const char *label, const char *val, con
+         GFX_HOOK_ALIGN(0, 0, COL_W, 0, AL_H, "large card unit centred");
+         cv_text_in(0, LG_UY, COL_W, &AF_S, unit, T_MID, T_SURF);
+     }
+-    if (ux.quark)                                     /* (Skiff Q2) QUARK: the cell's corners, its energy levels */
++    if (UX_QUARK)                                     /* (Skiff Q2) QUARK: the cell's corners, its energy levels */
+         qk_corners(0, 0, COL_W, LG_CARD_H, T_DIM, 6);
+-    if (ratio >= 0 && ux.quark)
++    if (ratio >= 0 && UX_QUARK)
+         qk_dots(5, LG_GY, COL_W - 10, ratio, 0);
+     else if (ratio >= 0 && ux.neon)                   /* (Skiff N3) NEON: a dash bargraph, as the cards' */
+         ne_dash(5, LG_GY - 1, COL_W - 10, ratio, 0);
+@@ -659,7 +659,7 @@ static void draw_foot(void)
+     cv_begin(240, foot_h(), T_BG);
+     if (ux.neon)                                       /* (Skiff N3) NEON: a neon rule over it */
+         ne_rule(0, 1);
+-    if (ux.quark)                                      /* (Skiff Q2) QUARK: a dotted rule */
++    if (UX_QUARK)                                      /* (Skiff Q2) QUARK: a dotted rule */
+         qk_rule(0);
+     if (ui.ml.on && !act_cols()) {                    /* ((1.3) MIDI LEARN: what is picked and its CC, OCT+ DONE at the
+                                                        * right, for the whole line (midi_learn.c ml_line) */
+@@ -1165,7 +1165,7 @@ static void draw_splash(void)
+         cr_spritez(SPL_SQ / 2 - 13, 6, SPR_SKULL, T_TEXT, T_RAISE, 3);
+         cr_torch(SPL_SQ - 46, 8, 1, 2);
+         cv_blit(SPL_X0, 98);
+-    } else if (ux.quark) {   /* (Skiff Q2) QUARK: an atom in a collision's tracks (design/mock_quark.py splash), on the
++    } else if (UX_QUARK) {   /* (Skiff Q2) QUARK: an atom in a collision's tracks (design/mock_quark.py splash), on the
+          * card as the other scenes are, whole ((1.0) no band of BG: it read as a squished box of another colour; 72 rows
+          * between the bands, not 40: the turned orbits were cut) */
+         uint32_t k;
+diff --git a/firmware/src/ui_fm6.c b/firmware/src/ui_fm6.c
+index 155aa44..0c0b601 100644
+--- a/firmware/src/ui_fm6.c
++++ b/firmware/src/ui_fm6.c
+@@ -463,7 +463,7 @@ static void fm_ramp(uint16_t *r)
+         st[0] = T_DIM, st[1] = CR_BLOOD, st[2] = CR_EMBER, st[3] = CR_GOLD, st[4] = CR_FLAME, n = 5;
+     } else if (ux.neon) {
+         st[0] = T_ACCENT, st[1] = NE_VIOLET, st[2] = T_THEME, st[3] = NE_ORANGE, st[4] = NE_YELLOW, n = 5;
+-    } else if (ux.quark) {
++    } else if (UX_QUARK) {
+         st[0] = ux_mix(T_SURF, T_THEME, 40), st[1] = T_THEME, st[2] = T_TEXT, st[3] = T_ACCENT, n = 4;
+     } else {
+         st[0] = ux_mix(T_SURF, RGB(40, 92, 232), 80), st[1] = T_REC;
+@@ -542,7 +542,7 @@ static void fm_ring(int32_t x, int32_t y, int filled)
+         ne_spark(x, y, filled ? T_ACCENT : T_THEME, filled ? 2 : 1);
+         return;
+     }
+-    if (ux.quark) {
++    if (UX_QUARK) {
+         qk_disc(x, y, 3, T_SURF);
+         qk_nucleus(x, y, filled ? T_ACCENT : T_THEME, filled ? 9 : 7);
+         return;
+@@ -601,7 +601,7 @@ static void fm_tabs(const fm_sim_t *s, const uint16_t *sh, int ratios)
+                 cr_frame2(x - 2, 2, 38, 21, CR_GOLD);
+             else if (on)
+                 ne_laser(x, 4, 34, 17, T_SURF);
+-        } else if (ux.quark) {
++        } else if (UX_QUARK) {
+             qk_corners(x, 4, 34, 17, on ? T_ACCENT : T_DIM, 5);
+         } else {
+             cv_frame(x, 4, 34, 17, on ? T_TEXT : T_DIM);
+@@ -684,10 +684,10 @@ static void fm_lines(const fm_sim_t *s, const uint16_t *sh, uint32_t w)
+             cv_rect(FM_X0 + bx - 1, FM_GY, 3, FM_GH, ux_mix(T_ACCENT, T_SURF, 70));
+             cv_rect(FM_X0 + bx, FM_GY, 1, FM_GH, T_ACCENT);
+         }
+-    } else if (ux.crypt || ux.quark) {                  /* (CRYPT's shade, QUARK's energy under the sound) */
++    } else if (ux.crypt || UX_QUARK) {                  /* (CRYPT's shade, QUARK's energy under the sound) */
+         for (x = 0; x < FM_XW; x++)
+             fm_under(FM_X0 + x, fm_lvy(fm_loud(s, x)), FM_GY + FM_GH);
+-        if (ux.quark && best)                           /* (QUARK: a collision where it bites most) */
++        if (UX_QUARK && best)                           /* (QUARK: a collision where it bites most) */
+             qk_burst(FM_X0 + bx, fm_lvy(fm_at_x(&s->op[bk], bx)), 5, 0x9E3779B9u, 18, T_SURF);
+     }
+     for (x = FM_GY; x < FM_GY + FM_GH; x += 2)          /* the key up: dotted */
+@@ -707,7 +707,7 @@ static void fm_lines(const fm_sim_t *s, const uint16_t *sh, uint32_t w)
+                     l.v[j] += s->modlvl;
+                 if (ux.neon)                            /* (NEON: a tube's glow; QUARK: a bubble chamber's dots) */
+                     fm_line(&l, 0, wd + 2, ux_mix(c, T_SURF, 62), 0, 0);
+-                fm_line(&l, 0, ux.quark ? -wd : wd, c, 0, 0);
++                fm_line(&l, 0, UX_QUARK ? -wd : wd, c, 0, 0);
+                 continue;
+             }
+             {
+@@ -733,7 +733,7 @@ static void fm_lines(const fm_sim_t *s, const uint16_t *sh, uint32_t w)
+         int32_t r, lo = 0, hi = s->n;                   /* (the block at that column: the axis rises) */
+         if (ux.crypt) {                                 /* ((FM6 LAB T) CRYPT: a flame; NEON, QUARK: theirs behind) */
+             cr_sprite(FM_X0 + bx - 2, FM_GY + FM_GH - 3, SPR_FM_FLAME, CR_EMBER, CR_FLAME);
+-        } else if (!ux.neon && !ux.quark)
++        } else if (!ux.neon && !UX_QUARK)
+             for (r = 0; r < 4; r++)
+                 cv_rect(FM_X0 + bx - r, FM_GY + FM_GH + 1 + r, 2 * r + 1, 1, T_TEXT);
+         while (lo < hi) {
+@@ -780,7 +780,7 @@ static void fm_keys(uint16_t c)
+         }
+     }
+     bx = FM_X0 + clamp((int32_t)op[FP_BP] * (FM_XW - 1) / 87, 0, FM_XW - 1);   /* BREAK: MIDI BP + 21 */
+-    if (ux.crypt || ux.neon || ux.quark)               /* ((FM6 LAB T) the theme's fill under the curve) */
++    if (ux.crypt || ux.neon || UX_QUARK)               /* ((FM6 LAB T) the theme's fill under the curve) */
+         for (x = 0; x < FM_XW; x++)
+             fm_under(FM_X0 + x, fm_keys_y(op, 21u + (uint32_t)x * 87u / (FM_XW - 1), zy, rng), kb);
+     if (ux.neon) {                                      /* (NEON: BREAK a laser) */
+@@ -799,7 +799,7 @@ static void fm_keys(uint16_t c)
+     if (ux.crypt)                                       /* (CRYPT: a dagger planted where the curve breaks) */
+         cr_dagger(bx - 4, fm_keys_y(op, op[FP_BP] + 21u, zy, rng) - 14, CR_GOLD);
+     x = FM_X0 + (60 - 21) * (FM_XW - 1) / 87;
+-    if (ux.crypt || ux.neon || ux.quark)                /* C4: the theme's handle (a skull, a sparkle, a nucleus) */
++    if (ux.crypt || ux.neon || UX_QUARK)                /* C4: the theme's handle (a skull, a sparkle, a nucleus) */
+         fm_ring(x, fm_keys_y(op, 60, zy, rng), 0);
+     else
+         cv_rect(x - 2, fm_keys_y(op, 60, zy, rng) - 2, 5, 5, T_TEXT);
+diff --git a/firmware/src/ui_graph.c b/firmware/src/ui_graph.c
+index 51003df..8c048fe 100644
+--- a/firmware/src/ui_graph.c
++++ b/firmware/src/ui_graph.c
+@@ -24,7 +24,7 @@ static void pg_under(int32_t x, int32_t y, int32_t top, int32_t foot, uint16_t f
+ {
+     if (ux.neon)
+         ne_band_col(x, y, top, foot);
+-    else if (ux.quark)
++    else if (UX_QUARK)
+         qk_mc(x, y, foot);
+     else
+         cv_rect(x, y, 1, foot - y, fill);
+@@ -133,7 +133,7 @@ static void graph_adsr(const track_t *t, uint16_t c)
+         return;
+     }
+ #define EGY(lvl) (bot - (lvl) * (bot - top) / 1000)
+-    if (ux.neon || ux.quark) {                       /* (Skiff N4) NEON: the sun's bands under the curve; (Q4) QUARK: a
++    if (ux.neon || UX_QUARK) {                       /* (Skiff N4) NEON: the sun's bands under the curve; (Q4) QUARK: a
+                                                       * Monte Carlo fill */
+         int32_t xa, xd, xr;
+         env_fill4(t->p[pg->id[0]], t->p[pg->id[1]], t->p[pg->id[2]], t->p[pg->id[3]], eg_lv, 214, &xa, &xd, &xr);
+@@ -176,14 +176,14 @@ static void graph_adsr(const track_t *t, uint16_t c)
+         for (i = 0; i < 3; i++) {                    /* (the peak lit by ATK; the decay's end by DEC, SUS; the release's
+                                                       * start by SUS, REL) */
+             int hot = hc == i || (i && hc == i + 1);
+-            if (ux.quark)                            /* ((Skiff Q4) QUARK: nuclei, the knob just turned's gold) */
++            if (UX_QUARK)                            /* ((Skiff Q4) QUARK: nuclei, the knob just turned's gold) */
+                 qk_nucleus(hx[i], hy[i], hot ? T_ACCENT : T_THEME, hot ? 9 : 7);
+             else if (ux.neon)                        /* ((Skiff N4) NEON: sparkles, the knob just turned's big) */
+                 ne_spark(hx[i], hy[i], hot ? T_THEME : T_ACCENT, hot ? 2 : 1);
+             else
+                 cv_rect(hx[i] - 2, hy[i] - 2, 5, 5, hot ? T_ACCENT : c);
+         }
+-        if (ux.quark) {                              /* ((Skiff Q4) QUARK: DECAY's and RELEASE's half-lives over the
++        if (UX_QUARK) {                              /* ((Skiff Q4) QUARK: DECAY's and RELEASE's half-lives over the
+                                                       * sustain (under it near the top) */
+             char hb[16];
+             int32_t ly = EGY(sus) - 14 < 2 ? EGY(sus) + 6 : EGY(sus) - 14, lx = x1 + d + 10, rx;
+@@ -211,7 +211,7 @@ static void graph_lfo(const track_t *t, uint16_t c)
+         return;
+     }
+     int32_t now = lfo_view_now(t, PANEL_W - 1);
+-    if (ux.quark) {                                  /* (Skiff Q4) QUARK: the orbit and its projection: the electron's
++    if (UX_QUARK) {                                  /* (Skiff Q4) QUARK: the orbit and its projection: the electron's
+                                                       * height drawn out as the wave (its 2 s, lfo_view_at), the electron
+                                                       * where the LFO is now, a dashed line to it on the wave */
+         int32_t ox = 46, r = 34 * graph_ht / 100, x0 = 92, w = PANEL_X0 + PANEL_W - x0, nx = lfo_view_now(t, w - 1);
+@@ -295,7 +295,7 @@ static void graph_steps(const track_t *t, uint16_t c)
+                 cr_ch(x + 3, base, &AF_S, '-', T_MID);
+             else
+                 cr_ch(x + 4, base, &AF_S, '.', T_DIM);
+-        } else if (ux.quark) {                       /* (Skiff Q4) QUARK: a bunch, a tie its trail, nothing a dot */
++        } else if (UX_QUARK) {                       /* (Skiff Q4) QUARK: a bunch, a tie its trail, nothing a dot */
+             if (step_on(st))
+                 qk_disc(x + 4, y + bh / 2, bh > 10 ? 4 : 3, (st->flags & SF_ACCENT) ? T_ACCENT : c);
+             else if (step_tie(st))
+@@ -458,7 +458,7 @@ static void pr_bars(const step_t *st, int32_t x, int32_t w, uint16_t c, int acc_
+             pr_split(x, PR_Y0, w, 1, c, hits);
+         else if (y >= ybot)
+             pr_split(x, ybot - 1, w, 1, c, hits);
+-        else if (ux.quark && hits == 1u) {           /* ((Skiff Q4) QUARK: a bubble track from its vertex, thinning) */
++        else if (UX_QUARK && hits == 1u) {           /* ((Skiff Q4) QUARK: a bubble track from its vertex, thinning) */
+             int32_t k2;
+             uint16_t cc = acc && c != T_ACCENT ? T_TEXT : c;
+             qk_disc(x + 1, y + 2, 1, cc);
+@@ -572,7 +572,7 @@ static void graph_roll(const track_t *t, uint16_t c)
+         w = (b - a + 1) * PR_CW + 1;
+         if (a <= b && ux.neon)                        /* ((Skiff N5) NEON: a laser) */
+             ne_laser(PR_X0 + a * PR_CW, PR_Y0 - 2, w, ybot - PR_Y0 + 4, T_SURF);
+-        else if (a <= b && ux.quark)                  /* ((Skiff Q4) QUARK: gold corners) */
++        else if (a <= b && UX_QUARK)                  /* ((Skiff Q4) QUARK: gold corners) */
+             qk_corners(PR_X0 + a * PR_CW, PR_Y0 - 2, w, ybot - PR_Y0 + 4, T_ACCENT, 4);
+         else if (a <= b)                              /* ((Skiff S1) CRYPT: a gold frame) */
+             cv_frame(PR_X0 + a * PR_CW, PR_Y0 - 2, w, ybot - PR_Y0 + 4, ux.crypt ? CR_GOLD : T_TEXT);
+@@ -676,7 +676,7 @@ static void graph_grid(const track_t *t, uint16_t c)
+                 pr_split(hx, y + 2, 10, 10, (step_accents(st) & b) ? T_ACCENT : c, step_ratchet(st));
+             else if ((step_lanes(st) & b) && ux.crypt)   /* (Skiff) CRYPT: a hit a # */
+                 cr_ch(hx + 2, y + 11, &AF_S, '#', (step_accents(st) & b) ? T_ACCENT : c);
+-            else if ((step_lanes(st) & b) && ux.quark) {   /* (Skiff Q4) QUARK: a hit a bunch of particles */
++            else if ((step_lanes(st) & b) && UX_QUARK) {   /* (Skiff Q4) QUARK: a hit a bunch of particles */
+                 qk_disc(hx + 5, y + 7, 4, (step_accents(st) & b) ? T_ACCENT : c);
+                 cv_rect(hx + 3, y + 5, 1, 1, ux_mix((step_accents(st) & b) ? T_ACCENT : c, T_TEXT, 60));
+             } else if ((step_lanes(st) & b) && ux.neon)  /* (Skiff N5) NEON: a hit a lit tube */
+@@ -773,7 +773,7 @@ static void graph_fx(const track_t *t, uint16_t c)
+             cr_meter(x - 1, 88, h, !h);
+             continue;
+         }
+-        if (ux.quark) {                              /* (Skiff Q4) QUARK: a calorimeter tower (the MIXER's) */
++        if (UX_QUARK) {                              /* (Skiff Q4) QUARK: a calorimeter tower (the MIXER's) */
+             qk_tower(x - 3, 88, 10, 80, h, c, T_ACCENT);
+             continue;
+         }
+@@ -795,7 +795,7 @@ static void lane_fader(int32_t x, int32_t y1, int32_t len, int32_t h, int sel, u
+     cv_rrect(x + 12, y1 - len, 4, len, 2, T_RAISE, T_SURF);
+     if (ux.crypt)                                    /* (Skiff) CRYPT: the level a torch (the MIXER's) */
+         cr_meter(x + 11, y1, h, !h);
+-    else if (ux.quark)                               /* (Skiff Q4) QUARK: a calorimeter tower, the picked lane's capped */
++    else if (UX_QUARK)                               /* (Skiff Q4) QUARK: a calorimeter tower, the picked lane's capped */
+         qk_tower(x + 9, y1, 10, len, h, c, sel ? T_ACCENT : 0);
+     else if (ux.neon)                                /* (Skiff N4) NEON: a VU column, the picked lane's cap the accent */
+         ne_vu(x + 9, y1, 10, len, h, 0, ux_mix(T_SURF, T_TEXT, 8), sel ? T_ACCENT : T_TEXT);
+@@ -861,7 +861,7 @@ static void graph_lmix(const track_t *t, uint16_t c)
+         } else if (ux.neon) {
+             cv_rect(x + 4, 72, 20, 1, ux_mix(T_SURF, T_TEXT, 25));
+             ne_spark(px, 72, col, 1);
+-        } else if (ux.quark) {
++        } else if (UX_QUARK) {
+             for (k = 0; k < 20; k += 4)
+                 cv_rect(x + 4 + k, 72, 2, 2, ux_mix(T_SURF, T_TEXT, 12));
+             qk_nucleus(px, 72, col, 5);
+@@ -890,7 +890,7 @@ static void graph_slicer(const track_t *t, uint16_t c)
+             int32_t hit = (pat >> i) & 1u, n = hit || mode == SL_STUT ? 8 : (open + 4) / 9, r;
+             for (r = 0; r < n; r++)
+                 cr_ch(x + 2, 79 - r * 9, &AF_S, hit ? '#' : mode == SL_STUT ? '=' : ':', hit || mode == SL_STUT ? col : T_DIM);
+-        } else if (ux.quark && mode != SL_STUT) {    /* (Skiff Q4) QUARK: towers: an 'x' step full, a GATE step as high as
++        } else if (UX_QUARK && mode != SL_STUT) {    /* (Skiff Q4) QUARK: towers: an 'x' step full, a GATE step as high as
+                                                       * it stays open, dim */
+             qk_tower(x, 80, 9, 72, (pat >> i) & 1u ? 72 : open, (pat >> i) & 1u ? col : T_DIM, 0);
+         } else if ((pat >> i) & 1u) {
+@@ -953,7 +953,7 @@ static void graph_duck(const track_t *t, uint16_t c)
+         if (ux.crypt) {
+             if (x % 6u == 2u && x / 6u < 37u)
+                 L[x / 6u] = (uint8_t)((dip * 6u + 31u) / 62u);
+-        } else if (ux.quark) {                       /* ((Skiff Q4) QUARK: a Monte Carlo fill under its level) */
++        } else if (UX_QUARK) {                       /* ((Skiff Q4) QUARK: a Monte Carlo fill under its level) */
+             qk_mc(8 + (int32_t)x, 10 + (int32_t)dip, 72);
+             cv_rect(8 + (int32_t)x, 10 + (int32_t)dip, 1, 2, c);
+         } else if (ux.neon) {                        /* ((Skiff N4) NEON: the sun's bands under its level, lit on top) */
+@@ -1182,7 +1182,7 @@ static void graph_wheel(const track_t *t, uint16_t c)
+         if (t->p[P_E4] && k == 8u) level = 0; /* DSP's percussion cancels the 1-foot bar. */
+         int hot = ui.hot_t && cur_page()->id[0] == P_E0 &&
+                   (ui.hot_col == 0u || ui.hot_col == (k < 2u ? 1u : k < 4u ? 2u : 3u));
+-        if (ux.quark)                                /* (Skiff Q4) QUARK: a drawbar a calorimeter tower */
++        if (UX_QUARK)                                /* (Skiff Q4) QUARK: a drawbar a calorimeter tower */
+             qk_tower(x + 4, 75, 10, 72, level * 9, hot ? T_ACCENT : c, 0);
+         else if (ux.neon)                            /* (Skiff N4) NEON: a drawbar a VU column as far out as it is */
+             ne_vu(x + 4, 75, 10, 72, level * 9, hot ? T_ACCENT : 0, ux_mix(T_SURF, T_TEXT, 8), 0);
+@@ -1322,7 +1322,7 @@ static void graph_fm6(const track_t *t, uint16_t c)
+             cv_frame(x[k] - 12, y[k] - 2, 25, FM_BH + 4, CR_GOLD);
+         else if (ux.neon)
+             ne_laser(x[k] - 12, y[k] - 2, 25, FM_BH + 4, T_SURF);
+-        else if (ux.quark)
++        else if (UX_QUARK)
+             qk_corners(x[k] - 13, y[k] - 3, 27, FM_BH + 6, T_ACCENT, 4);
+     }
+     for (k = 0; k < 6u; k++) {                       /* into k: its sources down to its jog row, across, down */
+@@ -1991,7 +1991,7 @@ static void graph_events(void)
+                                           226 - text_w(&AF_S, b) - 8 - 80);
+                 GFX_HOOK_ALIGN(0, y, 0, y + 16, AL_V, "list row text centred up/down");
+                 cv_text_r(226, y + CAP_IN(S, 16), &AF_S, b, sel ? T_INK : ux.neon ? T_ACCENT : T_TEXT, bg);
+-                if ((ux.crypt || ux.neon || ux.quark) && !sel)   /* ((Skiff S1) a dotted leader to the value) */
++                if ((ux.crypt || ux.neon || UX_QUARK) && !sel)   /* ((Skiff S1) a dotted leader to the value) */
+                     cr_leader(nx + 4, 226 - text_w(&AF_S, b) - 4, y + 11);
+             }
+         }
+@@ -2141,8 +2141,8 @@ static void track_strip(uint32_t c, uint32_t pos, uint32_t sel, uint32_t st, uin
+ static void mix_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint32_t hot, uint32_t lvl, int32_t pan,
+                       const char *b, int large)
+ {
+-    int ib = sel && !ux.quark;                       /* (the selected strip a band, INK on it; (Skiff Q3) QUARK: a tint) */
+-    uint16_t col = T_TRK(c), g = sel ? (ux.quark ? ux_mix(col, T_BG, 82) : col) : T_SURF, line = ib ? ux_mix(col, T_INK, 55) : T_RAISE;
++    int ib = sel && !UX_QUARK;                       /* (the selected strip a band, INK on it; (Skiff Q3) QUARK: a tint) */
++    uint16_t col = T_TRK(c), g = sel ? (UX_QUARK ? ux_mix(col, T_BG, 82) : col) : T_SURF, line = ib ? ux_mix(col, T_INK, 55) : T_RAISE;
+     uint16_t vc = ib ? T_INK : hot == 1u ? T_ACCENT : mute ? T_DIM : T_THEME, nc = ib ? T_INK : mute ? T_DIM : col;
+     int32_t h = (int32_t)graph_h(), m = ts.meter[c], i;
+     char d[2] = {(char)('1' + c), 0}, nm[8], v[8];
+@@ -2154,7 +2154,7 @@ static void mix_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint
+         ne_vgrad(0, 0, MS_W, h, st, 2);
+     } else if (ux.neon)
+         ne_glass(0, 0, MS_W, h, g);
+-    else if (ux.quark) {                             /* (Skiff Q3) QUARK: the selected one in its colour's corners */
++    else if (UX_QUARK) {                             /* (Skiff Q3) QUARK: the selected one in its colour's corners */
+         cv_rect(0, 0, MS_W, h, g);
+         if (sel)
+             qk_corners(0, 0, MS_W, h, col, 6);
+@@ -2188,11 +2188,11 @@ static void mix_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint
+     }
+     {   /* LEVEL: the fader from its foot, its cap; the meter beside it */
+         int32_t fh = (int32_t)lvl * (MS_FY1 - MS_FY0) / 127, mh = m * (MS_FY1 - MS_FY0) / (TS_MH - 2);
+-        if (ux.quark && mute) {                       /* (Skiff Q3) QUARK: muted, dark matter: there, nothing shows */
++        if (UX_QUARK && mute) {                       /* (Skiff Q3) QUARK: muted, dark matter: there, nothing shows */
+             qk_dotframe(10, MS_FY0, 16, MS_FY1 - MS_FY0, T_DIM);
+             GFX_HOOK_ALIGN(0, 0, MS_W, 0, AL_H, "mixer strip value centred across");
+             cv_text_in(0, MS_FY0 + 20, MS_W, &AF_S, "DARK", T_DIM, g);
+-        } else if (ux.quark) {                        /* (Skiff Q3) QUARK: a calorimeter tower, its cells the energy
++        } else if (UX_QUARK) {                        /* (Skiff Q3) QUARK: a calorimeter tower, its cells the energy
+                                                        * deposited (the level), a gold cap; the meter beside it */
+             int32_t n = 12, lit = (fh * n + 25) / (MS_FY1 - MS_FY0), s;
+             for (s = 0; s < n; s++)
+@@ -2212,7 +2212,7 @@ static void mix_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint
+             ne_vu(19, MS_FY1, 9, MS_FY1 - MS_FY0, mh, ib ? T_INK : 0, sel ? line : ux_mix(T_SURF, T_TEXT, 10), 0);
+         } else
+         cv_rect(13, MS_FY0, 6, MS_FY1 - MS_FY0, line);
+-        if (ux.neon || ux.quark)
++        if (ux.neon || UX_QUARK)
+             ;
+         else if (ux.crypt && !sel) {                  /* (Skiff) CRYPT: a torch as tall as the level (muted: out) */
+             cr_meter(13, MS_FY1, fh, mute);
+@@ -2221,7 +2221,7 @@ static void mix_strip(uint32_t c, uint32_t sel, uint32_t st, uint32_t mute, uint
+             cv_rect(13, MS_FY1 - fh, 6, fh, vc);
+         cv_rect(10, MS_FY1 - fh - 1, 12, 2, ib ? T_INK : T_TEXT);
+         }
+-        if (!ux.neon && !ux.quark) {
++        if (!ux.neon && !UX_QUARK) {
+         cv_rect(23, MS_FY0, 2, MS_FY1 - MS_FY0, line);
+         if (mh)
+             cv_rect(23, MS_FY1 - mh, 2, mh, ib ? T_INK : T_MID);
+@@ -2429,7 +2429,7 @@ static void graph_scope(uint16_t c)
+     static int16_t snap[SCOPE_N];
+     uint32_t w = scope_w, i, trig = 0;
+     int32_t cy = (int32_t)cv_h / 2, py = cy, x, peak = 1500, a = cv_h >= H_GRAPH ? 46 : cy - 6;   /* (LARGE: the strip) */
+-    if (ux.quark && cv_h >= H_GRAPH) {
++    if (UX_QUARK && cv_h >= H_GRAPH) {
+         qk_detector(120, cy);
+         return;
+     }
+@@ -2494,7 +2494,7 @@ static void draw_graph(void)
+ {
+     const page_t *pg = cur_page();
+     const track_t *t = TSEL;
+-    uint16_t c = ux.quark ? T_THEME : T_TRK(song.sel);   /* Skiff: BLOCKS draws in the track's colour ((Skiff Q5) QUARK:
++    uint16_t c = UX_QUARK ? T_THEME : T_TRK(song.sel);   /* Skiff: BLOCKS draws in the track's colour ((Skiff Q5) QUARK:
+                                                       * cyan, an instrument's readouts, as the mockup) */
+     uint32_t sig;
+     int32_t pad = graph_pad();                       /* (Skiff) BLOCKS: the panel 16 px taller (ui.c foot_less): ADSR and
+@@ -2515,7 +2515,7 @@ static void draw_graph(void)
+         cr_frame2(3, 0, 234, (int32_t)graph_h(), T_LINE);
+     } else
+         cv_rrect(3, 0, 234, graph_h(), 5, T_SURF, T_BG);   /* the panel (MENU > LARGE: the strip) */
+-    if (ux.quark)                                    /* ((Skiff Q2) QUARK: an instrument's bracket corners) */
++    if (UX_QUARK)                                    /* ((Skiff Q2) QUARK: an instrument's bracket corners) */
+         qk_corners(3, 0, 234, (int32_t)graph_h(), T_DIM, 7);
+     cv_bg = T_SURF;                                  /* (text drawn with cv_text lands on it) */
+     cv_oy = GOY + pad;                               /* graphs on a 100 px scale */
+diff --git a/firmware/src/ui_home.c b/firmware/src/ui_home.c
+index fbd0599..d1c99ba 100644
+--- a/firmware/src/ui_home.c
++++ b/firmware/src/ui_home.c
+@@ -64,9 +64,9 @@ static void graph_tracks(void)
+         uint32_t first = hl_bar(t, &n), play = t->seq_idx % 16u;
+         int sel = k == song.sel, muted = t->p[P_MUTE] != 0, big = sel || !six;
+         int32_t h = big ? HL_H : HL_C_H, ch = big ? HL_CELL_H : HL_C_CELL_H, b[4];
+-        int ib = sel && !ux.quark;                    /* (the selected lane a band, INK on it; (Skiff Q3) QUARK: a beam,
++        int ib = sel && !UX_QUARK;                    /* (the selected lane a band, INK on it; (Skiff Q3) QUARK: a beam,
+                                                        * its colour faint, the colours as on the others) */
+-        uint16_t col = muted ? T_DIM : T_TRK(k), lane = sel ? (ux.quark ? ux_mix(col, T_BG, 80) : col) : ux.quark ? T_BG : T_SURF;
++        uint16_t col = muted ? T_DIM : T_TRK(k), lane = sel ? (UX_QUARK ? ux_mix(col, T_BG, 80) : col) : UX_QUARK ? T_BG : T_SURF;
+         uint16_t ink = ib ? T_INK : T_TEXT, on = ib ? T_INK : col, off = ib ? ux_mix(col, T_INK, 55) : T_LINE;
+         char name[20], d[2] = {(char)('1' + k), 0};
+         if (ux.crypt && !sel)                         /* (Skiff C3) CRYPT: the lanes stone */
+@@ -77,10 +77,10 @@ static void graph_tracks(void)
+             ne_hgrad(3, y, 234, h, st, 2);
+         } else
+             cv_rect(3, y, 234, h, lane);
+-        if (ux.quark && sel) {                        /* (Skiff Q3) QUARK: the beam's walls lit; the others two rails */
++        if (UX_QUARK && sel) {                        /* (Skiff Q3) QUARK: the beam's walls lit; the others two rails */
+             cv_rect(3, y, 234, 1, col);
+             cv_rect(3, y + h - 1, 234, 1, col);
+-        } else if (ux.quark) {
++        } else if (UX_QUARK) {
+             cv_rect(HL_STEP_X - 2, y + h / 2 - 3, 236 - HL_STEP_X + 2, 1, T_LINE);
+             cv_rect(HL_STEP_X - 2, y + h / 2 + 3, 236 - HL_STEP_X + 2, 1, T_LINE);
+         }
+@@ -107,7 +107,7 @@ static void graph_tracks(void)
+         for (i = 0; i < n; i++) {                     /* (past the track's length: nothing) */
+             const step_t *st = &s[first + i];
+             int32_t x = hl_cell_x(i), cy = y + (h - ch) / 2;
+-            if (ux.quark) {                           /* (Skiff Q3) QUARK: a note a bunch of particles in the pipe (played
++            if (UX_QUARK) {                           /* (Skiff Q3) QUARK: a note a bunch of particles in the pipe (played
+                                                        * this bar: spent, a ring), a tie its trail, nothing a dot */
+                 int32_t bx = x + HL_CELL_W / 2, by = y + h / 2;
+                 int past = song.playing && t->seq_idx / 16u * 16u == first && i < play;
+@@ -146,7 +146,7 @@ static void graph_tracks(void)
+             if (song.playing && i == play && t->seq_idx / 16u * 16u == first) {   /* the step playing: a line before it */
+                 if (ux.neon)                          /* ((Skiff N3) NEON: a laser, its glow) */
+                     cv_rect(x - 3, y + 2, 3, h - 4, ux_mix(T_ACCENT, lane, 60));
+-                if (ux.quark) {                       /* ((Skiff Q3) QUARK: the beam line, dotted gold; on the selected
++                if (UX_QUARK) {                       /* ((Skiff Q3) QUARK: the beam line, dotted gold; on the selected
+                                                        * lane a collision) */
+                     int32_t yy;
+                     for (yy = y; yy < y + h; yy += 2)
+@@ -167,7 +167,7 @@ static void graph_tracks(void)
+     }
+     if (ux.crypt && tx >= 0)                          /* (Skiff C3) CRYPT: a torch on it, flickering a step to the next */
+         cr_torch(tx, ty, ui.frame / 6u, 2);
+-    if (ux.quark && qx >= 0)                          /* (Skiff Q3) QUARK: its tracks a new way each step */
++    if (UX_QUARK && qx >= 0)                          /* (Skiff Q3) QUARK: its tracks a new way each step */
+         qk_burst(qx, qy, 8, TSEL->seq_idx * 2654435761u + 7u, 24, T_BG);
+     if (ux.neon && tx >= 0) {                         /* (Skiff N3) NEON: the car, its nose at the playhead (on the steps
+                                                        * just played), its light trails back to the lane's first step */
+diff --git a/firmware/src/ui_layer.c b/firmware/src/ui_layer.c
+index 0a9ab76..6ba7989 100644
+--- a/firmware/src/ui_layer.c
++++ b/firmware/src/ui_layer.c
+@@ -1089,7 +1089,7 @@ static void layer_perf(void)
+             cv_rect(3, y, 234, PR_H, col);
+         else if (band)
+             cv_rrect(3, y, 234, PR_H, 3, T_RAISE, g0);
+-        if (ux.quark && muted)                        /* ((Skiff Q3) QUARK: a muted row dark matter, dotted) */
++        if (UX_QUARK && muted)                        /* ((Skiff Q3) QUARK: a muted row dark matter, dotted) */
+             qk_dotframe(16, y, 221, PR_H, cb ? T_INK : T_DIM);
+         if (ux.neon && muted)                         /* ((Skiff N8) the band's too: dark snow on it) */
+             ne_snow(17, y, 220, PR_H, k * 7u + 11u, cb ? col : T_BG, cb ? T_INK : T_MID);
+diff --git a/firmware/src/ui_menu.c b/firmware/src/ui_menu.c
+index 1475855..d78d8e2 100644
+--- a/firmware/src/ui_menu.c
++++ b/firmware/src/ui_menu.c
+@@ -298,14 +298,14 @@ static void menu_tabs(void)                            /* (in screen rows: cv_oy
+         if (on && ux.neon) {                           /* ((Skiff N3) NEON: lit pink into violet) */
+             uint16_t st[2] = {T_THEME, NE_VIOLET};
+             ne_hgrad(x[k], MT_Y, w[k], MT_H, st, 2);
+-        } else if (ux.quark) {                         /* ((Skiff Q2) QUARK: lit cyan; the others in corners) */
++        } else if (UX_QUARK) {                         /* ((Skiff Q2) QUARK: lit cyan; the others in corners) */
+             cv_rect(x[k], MT_Y, w[k], MT_H, on ? T_THEME : T_BG);
+             if (!on)
+                 qk_corners(x[k], MT_Y, w[k], MT_H, T_DIM, 3);
+         } else
+         cv_rrect(x[k], MT_Y, w[k], MT_H, ux.crypt ? 0 : -8, bg, T_BG);   /* ((Skiff) CRYPT: square) */
+         GFX_HOOK_ALIGN(x[k], MT_Y, x[k] + MT_IW, MT_Y + MT_H, AL_HV, "menu tab icon centred in its cushion");
+-        if (ux.quark)
++        if (UX_QUARK)
+             bg = on ? T_THEME : T_BG;
+         cv_icon_in(x[k], MT_Y, MT_IW, MT_H, 16, MTAB_ICON[k], on ? T_INK : T_MID, bg);
+         if (a[k] == MT_ONE) {                          /* (settled: its name) */
+@@ -332,17 +332,17 @@ static void menu_row(uint32_t k, uint32_t row)
+     int32_t y = mr_y(k), h = mr_h(), large = menu_large(), x0;
+     int32_t ny = y + (large ? CAP_IN(M, h) : CAP_IN(S, h)), vy = y + CAP_IN(M, h);
+     int sel = row == ui.menu_sel;
+-    uint16_t bg = sel ? (ux.quark ? ux_mix(T_BG, T_THEME, 18) : T_THEME) : T_SURF;   /* ((Skiff Q2) QUARK: the row
++    uint16_t bg = sel ? (UX_QUARK ? ux_mix(T_BG, T_THEME, 18) : T_THEME) : T_SURF;   /* ((Skiff Q2) QUARK: the row
+                                                        * a cyan tint in corners, its value gold) */
+-    uint16_t fg = sel && !ux.quark ? T_INK : T_TEXT, val = sel ? (ux.quark ? T_ACCENT : T_INK) : ux.neon ? T_ACCENT : T_THEME;
+-    uint16_t sk = sel && !ux.quark ? T_INK : T_MID;    /* (the chevron, a unit) */
+-    int lead = ux.crypt || ux.neon ? !sel : ux.quark;  /* (the dotted leaders: QUARK's every row) */
++    uint16_t fg = sel && !UX_QUARK ? T_INK : T_TEXT, val = sel ? (UX_QUARK ? T_ACCENT : T_INK) : ux.neon ? T_ACCENT : T_THEME;
++    uint16_t sk = sel && !UX_QUARK ? T_INK : T_MID;    /* (the chevron, a unit) */
++    int lead = ux.crypt || ux.neon ? !sel : UX_QUARK;  /* (the dotted leaders: QUARK's every row) */
+     const char *v = row < MI_VALUES ? menu_vname(row, menu_get(row)) : "";   /* ((1.3) LEARN CLEAR: its count) */
+     int32_t nx, ly = y + h / 2 + 3;                    /* (Skiff) CRYPT: the leader's row, by the capitals' foot */
+     if (sel && ux.neon) {                              /* (Skiff N3) NEON: a sunset bar */
+         uint16_t st[3] = {T_THEME, NE_VIOLET, ux_mix(NE_VIOLET, T_ACCENT, 50)};
+         ne_hgrad(MR_X, y, MR_W, h, st, 3);
+-    } else if (sel && ux.quark) {
++    } else if (sel && UX_QUARK) {
+         cv_rect(MR_X, y, MR_W, h, bg);
+         qk_corners(MR_X, y, MR_W, h, T_THEME, 5);
+     } else if (sel)
+@@ -387,7 +387,7 @@ static void menu_row(uint32_t k, uint32_t row)
+     GFX_HOOK_ALIGN(0, y, 0, y + h, AL_V, "menu row value centred up/down");
+     if (row != MI_COLOR) {
+         uint16_t vc = !sel && str_eq(v, "OFF") ? T_DIM : val;
+-        if (ux.quark) {                                /* ((Skiff Q2) QUARK: a readout in brackets) */
++        if (UX_QUARK) {                                /* ((Skiff Q2) QUARK: a readout in brackets) */
+             x0 = cv_text_r(MR_VR, vy, &AF_M, "]", vc, bg);
+             x0 = cv_text_r(x0, vy, &AF_M, v, vc, bg);
+             x0 = cv_text_r(x0, vy, &AF_M, "[", vc, bg);
+diff --git a/firmware/src/ui_pgraph.c b/firmware/src/ui_pgraph.c
+index 87553fa..09cd367 100644
+--- a/firmware/src/ui_pgraph.c
++++ b/firmware/src/ui_pgraph.c
+@@ -51,7 +51,7 @@ static void graph_delay(uint16_t c)
+                 cr_torch(x, 120 - n * 9 - 13, 0, 1);
+             else
+                 cr_skull(x - 2, 120 - n * 9 - 11, col, T_SURF, 0);
+-        } else if (ux.quark) {                       /* (Skiff Q4) QUARK: the echoes a decay chain: a stem, its nucleus
++        } else if (UX_QUARK) {                       /* (Skiff Q4) QUARK: the echoes a decay chain: a stem, its nucleus
+                                                       * on it, smaller each; the decay an arrow from the last */
+             int32_t hq = h * 8 / 10, nx = x + w / 2, ny = 120 - hq - 8;   /* (8/10 tall: the nucleus clear of DRY) */
+             cv_rect(nx - 1, 120 - hq, 2, hq, i ? ux_mix(T_THEME, T_SURF, 12 * i) : T_TEXT);
+@@ -111,7 +111,7 @@ static void graph_reverb(uint16_t c)
+     for (i = 0; i < 5; i++) {                        /* ((Skiff phase 9) NEON: lit tubes; QUARK: calorimeter towers) */
+         if (ux.neon)
+             ne_tube(12 + i * 6, 126 - ER[i], 3, ER[i], T_TEXT, T_SURF);
+-        else if (ux.quark)
++        else if (UX_QUARK)
+             qk_tower(12 + i * 6 - 1, 126, 4, 84, ER[i], T_TEXT, 0);
+         else
+             cv_rect(12 + i * 6, 126 - ER[i], 3, ER[i], T_TEXT);
+@@ -121,7 +121,7 @@ static void graph_reverb(uint16_t c)
+         if (ux.neon) {                               /* ((Skiff phase 9) NEON: the sun's bands under it, DAMP's top violet) */
+             cv_rect(x, 126 - h, 1, top, ux_mix(NE_VIOLET, T_SURF, 45 + t * 30 / 100));
+             ne_band_col(x, 126 - h + top - 3, 126 - 84, 126);
+-        } else if (ux.quark) {                       /* ((Skiff phase 9) QUARK: a Monte Carlo fill, DAMP's top sparse) */
++        } else if (UX_QUARK) {                       /* ((Skiff phase 9) QUARK: a Monte Carlo fill, DAMP's top sparse) */
+             for (y = 126 - h; y < 126 - h + top; y++)
+                 if ((x + y) % 3 == 0 && y % 2 == 0)
+                     cv_rect(x, y, 1, 1, T_DIM);
+@@ -212,7 +212,7 @@ static void graph_chorus(uint16_t c)
+                                                       * ghost, QUARK dotted) */
+         for (x = 0, py = 74; x <= 216; x += 2) {
+             int32_t y = 74 + sine_i((uint32_t)x * inc - 0x30000000u) * b / 32768;
+-            if (ux.quark) {
++            if (UX_QUARK) {
+                 if (x % 6 == 0)
+                     cv_rect(12 + x, y, 1, 1, T_MID);
+             } else if (x) {
+@@ -234,7 +234,7 @@ static void graph_chorus(uint16_t c)
+         for (x = 0; x < 36; x++)
+             cv_rect(228 - x, 74 + sine_i((uint32_t)(216 - x) * inc) * a / 32768, 1, 2, ux_mix(T_TEXT, c, x * 100 / 36));
+         ne_spark(228, ey + 1, T_ACCENT, 2);
+-    } else if (ux.quark) {
++    } else if (UX_QUARK) {
+         qk_disc(228, ey, 3, T_ACCENT);
+     }
+     pg_text(12, 16, "DRY AND ITS DRIFTING COPY", T_MID);
+@@ -320,7 +320,7 @@ static void pg_curve_graph(int32_t (*at)(const pg_curve_t *, int32_t), const pg_
+             py = y;
+         }
+         py = 88 - w[87] * 32 / 32768;                /* (its end, as LFO's now) */
+-        if (ux.quark) {                              /* (QUARK: a nucleus on the curve's highest point, the electron at
++        if (UX_QUARK) {                              /* (QUARK: a nucleus on the curve's highest point, the electron at
+                                                       * the wave's end) */
+             qk_nucleus(12 + pk, ys[pk], T_THEME, 7);
+             qk_disc(227, py, 3, T_ACCENT);
+@@ -419,7 +419,7 @@ static void graph_global(uint16_t c)
+             cv_rect(x, 125, 7, 3, T_DIM);
+             x += push;
+         }
+-        if (ux.quark)                                /* ((Skiff Q4) QUARK: calorimeter towers, the downbeats white) */
++        if (UX_QUARK)                                /* ((Skiff Q4) QUARK: calorimeter towers, the downbeats white) */
+             qk_tower(x, 120, 7, 76, h, i % 4 == 0 ? T_TEXT : c, 0);
+         else if (ux.neon)                            /* ((Skiff N4) NEON: VU columns, the downbeats white) */
+             ne_vu(x, 120, 7, 76, h, i % 4 == 0 ? T_TEXT : 0, T_SURF, 0);
+diff --git a/firmware/src/ui_quark.c b/firmware/src/ui_quark.c
+index 699b4c4..7604e03 100644
+--- a/firmware/src/ui_quark.c
++++ b/firmware/src/ui_quark.c
+@@ -2,7 +2,7 @@
+ /* (Skiff Q2) THEME QUARK's widgets (design/mock_quark.py, A COLLIDER, the user's pick): a detector's event display. The
+  * cards the periodic table's cells (bracket corners, an energy-level gauge), dotted rules, nuclei and their orbitals,
+  * particle tracks curling in the field, collisions, the radiation sign on what can't be undone; the tracks the colour
+- * charges. Our own drawings, on the canvas (cv_*) when ux.quark; Skiff's Barlow faces. Included by ui_graph.c. */
++ * charges. Our own drawings, on the canvas (cv_*) when UX_QUARK; Skiff's Barlow faces. Included by ui_graph.c. */
+ 
+ #define QK_COS(ph) sine_i((uint32_t)(ph) + 0x40000000u)   /* (dsp.c sine_i: a turn is 2^32, +-32767) */
+ #define QK_SIN(ph) sine_i((uint32_t)(ph))
+diff --git a/tests/ui_golden.txt b/tests/ui_golden.txt
+index a78b615..efbc035 100644
+--- a/tests/ui_golden.txt
++++ b/tests/ui_golden.txt
+@@ -729,243 +729,243 @@ cf27dd97063f1638 CUSTOM_QUARK_about
+ 52695c82401f6fc3 CUSTOM_QUARK_about_credits
+ 6a779e93b65e746d CUSTOM_QUARK_about_end
+ 4b371c263a3862c3 CUSTOM_QUARK_about_rec
+-efe5e51233d71449 CUSTOM_QUARK_arp
+-e10fb303a730524f CUSTOM_QUARK_arp_2
+-9e10f12181c45d69 CUSTOM_QUARK_arp_on
+-04a9d04c5296c0c3 CUSTOM_QUARK_auto_list
+-04b86e8f80127b6e CUSTOM_QUARK_auto_list_add
+-406a2949422dada1 CUSTOM_QUARK_auto_list_delete
+-398d7ded650eafea CUSTOM_QUARK_auto_list_drum
+-d3c9ee535176d9f0 CUSTOM_QUARK_batt_0
+-4532ffbc560f03fc CUSTOM_QUARK_batt_1
+-c76fdf35e01ed7e4 CUSTOM_QUARK_batt_2
+-94cfba1ab9933694 CUSTOM_QUARK_batt_3
+-1597fc6968582737 CUSTOM_QUARK_batt_usb
++dcd45277c15630cb CUSTOM_QUARK_arp
++c0ed127f6a749547 CUSTOM_QUARK_arp_2
++dc67b31cacd0356d CUSTOM_QUARK_arp_on
++d72d6dd43cd6c85d CUSTOM_QUARK_auto_list
++27d16af61020cc34 CUSTOM_QUARK_auto_list_add
++d86ad6fa6dec470a CUSTOM_QUARK_auto_list_delete
++997cb1cb7a49b2e2 CUSTOM_QUARK_auto_list_drum
++3acfbf4bdee6fefa CUSTOM_QUARK_batt_0
++cd6538a396729ca6 CUSTOM_QUARK_batt_1
++eaf1425048eeaa6e CUSTOM_QUARK_batt_2
++7ea936755bc14f1e CUSTOM_QUARK_batt_3
++49be055636779f59 CUSTOM_QUARK_batt_usb
+ ff57be56ce1902f4 CUSTOM_QUARK_calibration
+-1b270d4d67ce8810 CUSTOM_QUARK_chance
+-4f345da2e5e0f77f CUSTOM_QUARK_chance_flam
+-2ba9ec78e23fa72e CUSTOM_QUARK_chord
+-6a9aa7ae84ef5f2e CUSTOM_QUARK_chord_kit
+-41ce59e68d6dcf05 CUSTOM_QUARK_chord_off
+-5b6e04c76bd9f5ed CUSTOM_QUARK_chord_wide
+-07eb897b308930a1 CUSTOM_QUARK_chorus
+-3993e370b144281a CUSTOM_QUARK_chorus_feedback
+-ec8bde5082f1fe3c CUSTOM_QUARK_chorus_flanger
+-15f0345db0efdfb3 CUSTOM_QUARK_chorus_phaser
+-32bc40d240d13913 CUSTOM_QUARK_confirm_empty
+-6ae0a522deecb57f CUSTOM_QUARK_confirm_entry
+-2a8dea48720e8042 CUSTOM_QUARK_confirm_entry_last
+-62c6a5d034c8990e CUSTOM_QUARK_confirm_erase
+-1b29372af3ab4c1e CUSTOM_QUARK_confirm_init
+-e19404966b3e62d4 CUSTOM_QUARK_confirm_init_dx
+-353d6c97ee4436fc CUSTOM_QUARK_confirm_load
+-2bae333ed45d4d49 CUSTOM_QUARK_confirm_motion
+-f8c352b9bc6ea330 CUSTOM_QUARK_confirm_pool
+-44582e3943179b5c CUSTOM_QUARK_confirm_project
+-8d2abcbd9137535b CUSTOM_QUARK_confirm_seq
+-3068999137f59974 CUSTOM_QUARK_confirm_user
+-a2c0d9f0189ec704 CUSTOM_QUARK_countin
+-538c1f05d2e93f12 CUSTOM_QUARK_countin_2bars
+-7209ee7322e37e4a CUSTOM_QUARK_dly
+-c2ca170c39b686b3 CUSTOM_QUARK_drive_crush
+-73195c4afb81da79 CUSTOM_QUARK_drive_fold
+-5b33949910076d43 CUSTOM_QUARK_drive_fuzz
+-f269ddce830928ad CUSTOM_QUARK_drive_hard
+-137a943fc4f0b730 CUSTOM_QUARK_drive_soft
+-c8d302a622a039a4 CUSTOM_QUARK_drum
+-8e01cc52f3075e0e CUSTOM_QUARK_drum_cym
+-8fca449e28e030be CUSTOM_QUARK_drum_hand
+-608616f45fcacbe4 CUSTOM_QUARK_drum_kit_usr
+-2e37b4a1e46847a4 CUSTOM_QUARK_drum_lock_held
+-e37cdda9f201daa4 CUSTOM_QUARK_drum_locks
+-95c697781e267df3 CUSTOM_QUARK_dx_sound
+-2fe464b580bfda04 CUSTOM_QUARK_dx_sound_2
+-9245240ca039e4c0 CUSTOM_QUARK_dx_sound_3
+-5ab37da71ef468b0 CUSTOM_QUARK_edit_analog
+-ea16aac68ba8df6c CUSTOM_QUARK_edit_flt
+-4a8ca53cbfeac91f CUSTOM_QUARK_edit_fm6
+-35c71dcc887bc5b2 CUSTOM_QUARK_edit_grain
+-dee7d5fa244dff33 CUSTOM_QUARK_edit_phys
+-0859995afa654c53 CUSTOM_QUARK_edit_sample
+-9faaa363cf9c0745 CUSTOM_QUARK_edit_wheel
+-96b87c77a6e9a344 CUSTOM_QUARK_env
+-64c933a9f6434381 CUSTOM_QUARK_env_2
+-e967ae2d923114d1 CUSTOM_QUARK_feel_range
+-d3e803257a9bd84f CUSTOM_QUARK_fm6_alg_01
+-5ba7a4481efc776c CUSTOM_QUARK_fm6_alg_05
+-f0a3b9428681e3ca CUSTOM_QUARK_fm6_alg_22
+-27581927c4512f17 CUSTOM_QUARK_fm6_alg_32
+-b3f13191befad649 CUSTOM_QUARK_fm_all_algo
+-83531024cfffc5d9 CUSTOM_QUARK_fm_all_lfo
+-15d253d16a8c58a4 CUSTOM_QUARK_fm_all_pitch
+-4b748b590552a25e CUSTOM_QUARK_fm_init
+-f14878b38a6944f2 CUSTOM_QUARK_fm_op_env
+-7448ff707dbf6c59 CUSTOM_QUARK_fm_op_keys
+-2f3577a9c45b0b31 CUSTOM_QUARK_fm_op_tone
+-e66a3a12b5f0a34e CUSTOM_QUARK_fx
+-7b97b68b2e760fea CUSTOM_QUARK_fx_duck
+-53dc677a54d87ada CUSTOM_QUARK_fx_duck_off
+-9b0db72011974c8c CUSTOM_QUARK_global
+-f3f3737c73234f84 CUSTOM_QUARK_global_swing
+-3448517eaecc0768 CUSTOM_QUARK_head_beat_2
+-1597fc6968582737 CUSTOM_QUARK_head_bpm_lock
+-f770c63787e70e9d CUSTOM_QUARK_head_bpm_locked
+-ee887ce241ffd94d CUSTOM_QUARK_head_bpm_turn
+-3448517eaecc0768 CUSTOM_QUARK_head_downbeat
+-3032e1fc540da4d1 CUSTOM_QUARK_head_glo_turn
+-3448517eaecc0768 CUSTOM_QUARK_head_play_rec
+-2d26acad57f7732c CUSTOM_QUARK_head_project
+-cd4ecde010b3565f CUSTOM_QUARK_head_rec_other
+-e5dcfb96035b5ad4 CUSTOM_QUARK_home
+-9737c697218ad3c0 CUSTOM_QUARK_home_idle
+-54fc82c443398c0a CUSTOM_QUARK_home_scope
+-aa6209de17ec06d3 CUSTOM_QUARK_insert_crush
+-bd0ef9828f9784aa CUSTOM_QUARK_insert_flanger
+-729b1cc0ea922e60 CUSTOM_QUARK_insert_fuzz
+-fbb6f59f0db1064f CUSTOM_QUARK_lane_mix
+-6644f78471c9f9d9 CUSTOM_QUARK_lane_mix_dx
+-81b43e06cb3e9f92 CUSTOM_QUARK_lanes
+-5b7a379e73df76e9 CUSTOM_QUARK_lanes_tune
+-6a16fbbb5cdf0f32 CUSTOM_QUARK_lanes_usr
+-f412a8ba9e7b276b CUSTOM_QUARK_layer_edit_active
+-69f2ad85178c2a7b CUSTOM_QUARK_layer_edit_peek
+-4db1835e49ae8955 CUSTOM_QUARK_layer_edit_user
+-87dcfd3e4afbef72 CUSTOM_QUARK_layer_glo_active
+-344dd6108709c2ca CUSTOM_QUARK_layer_glo_ext
+-58359f780c7e55ba CUSTOM_QUARK_layer_glo_peek
+-ee28c1b4d63cf53d CUSTOM_QUARK_layer_hint
+-df8ed44b9fdce902 CUSTOM_QUARK_layer_lock
+-1b6d5736dd21ca7d CUSTOM_QUARK_layer_lock_fx
+-337a3c10a3fbd6dc CUSTOM_QUARK_layer_perform
+-6c99242f5fcd19fb CUSTOM_QUARK_layer_perform_scenes
+-2b6655a86b8cc5f3 CUSTOM_QUARK_layer_rec
+-f0eb469e135b48e9 CUSTOM_QUARK_layer_rec_set
+-9ef960f2863f314a CUSTOM_QUARK_layer_scl_active
+-5e49aaeeb64cd0eb CUSTOM_QUARK_layer_scl_peek
+-afa41e25ac365a10 CUSTOM_QUARK_layer_seq_tools
+-12b3daa47147dbc6 CUSTOM_QUARK_layer_seq_tools_drum
+-ebe46dff1b29a578 CUSTOM_QUARK_learn
+-bb1f314671407f79 CUSTOM_QUARK_learn_cc
+-6c21094494302601 CUSTOM_QUARK_lfo
+-df7746a2df2d0e0e CUSTOM_QUARK_lfo_2
+-6946749073a2257b CUSTOM_QUARK_lfo_run
+-6083997febc8e4a7 CUSTOM_QUARK_menu
+-c01600409b4eb157 CUSTOM_QUARK_menu_audio
+-5c529065d454c472 CUSTOM_QUARK_menu_end
+-f0be54fe6d8328f3 CUSTOM_QUARK_menu_hold
+-9344ea4a95bad72b CUSTOM_QUARK_menu_leds
+-07c382cc2ceba18b CUSTOM_QUARK_menu_midi
+-4fa8bfa37ef45aee CUSTOM_QUARK_menu_midi_scroll
+-d0f9c39fc62ce2ea CUSTOM_QUARK_menu_slide
+-646019b4679a9810 CUSTOM_QUARK_menu_speaker
+-6f7d2ad1ee8ebc20 CUSTOM_QUARK_menu_system
+-21ccc43017c03f44 CUSTOM_QUARK_message
+-575fa09504b4d963 CUSTOM_QUARK_message_key
+-453ce9dd048d6b6b CUSTOM_QUARK_message_nofile
+-f15054c962caac43 CUSTOM_QUARK_mixer
+-9a630d904a11372d CUSTOM_QUARK_mixer_pan
+-b414e997a0eb7bee CUSTOM_QUARK_mock_dialog
+-32371e568e562b25 CUSTOM_QUARK_mock_drum
+-5ec7e338ab8750de CUSTOM_QUARK_mock_home
+-560bfcd18c34cb27 CUSTOM_QUARK_mock_menu
+-a2d048046c8c0b59 CUSTOM_QUARK_mock_mixer
+-be228e12c90a4619 CUSTOM_QUARK_mock_presets
+-0afb803d1905534f CUSTOM_QUARK_mock_seq
+-91ac8da56f350fe0 CUSTOM_QUARK_mod
+-c791940da9bcf306 CUSTOM_QUARK_mod_env
+-fa0d9ec0510a12c8 CUSTOM_QUARK_mod_grid
+-d12861327a42deb6 CUSTOM_QUARK_momentary
+-e22da184ecba24ff CUSTOM_QUARK_motion
+-9d568c5ab0e82e36 CUSTOM_QUARK_motion_card
+-977a299955522dc1 CUSTOM_QUARK_motion_locks
+-672340b35a871a7e CUSTOM_QUARK_motion_off
+-5138ade11712ce86 CUSTOM_QUARK_motion_rec
+-ba3a9cf28e8cfa58 CUSTOM_QUARK_name_123
+-9b9ec63b149411a1 CUSTOM_QUARK_name_empty
+-37dc542b944565cf CUSTOM_QUARK_name_full
+-a6e8a252984d15d0 CUSTOM_QUARK_name_playing
+-98dc1e36fcf55890 CUSTOM_QUARK_name_typing
+-6d8c11b47ed09cf8 CUSTOM_QUARK_name_user
+-37fc1e4d98293be7 CUSTOM_QUARK_notes_chain
+-29eaabaea19f40db CUSTOM_QUARK_notes_overlap
+-bfefdaebbb607e5e CUSTOM_QUARK_notes_pick
+-4e344ad8e62a79e8 CUSTOM_QUARK_notes_range
+-c113331824fb3add CUSTOM_QUARK_pattern
+-e6bcd66c63bc0ee9 CUSTOM_QUARK_perform_harm
+-dbacc152b60cc395 CUSTOM_QUARK_perform_held
+-2ef02ca67724e9e9 CUSTOM_QUARK_perform_peek
+-669c97d97103ffc6 CUSTOM_QUARK_perform_wait
+-cccb8c4d42ee447b CUSTOM_QUARK_play_dir
+-20ebe566435d2343 CUSTOM_QUARK_play_gate
+-6891a91e5b1028e8 CUSTOM_QUARK_pool
+-4dddb28cfef48ecc CUSTOM_QUARK_pool_empty
+-82bf7da891d95054 CUSTOM_QUARK_pool_unused
+-cc41afe74437917c CUSTOM_QUARK_presets
+-8e3345c3f44999dd CUSTOM_QUARK_presets_bass
+-118e1a6fc66acddf CUSTOM_QUARK_presets_nofav
+-f5db1a0b6bad333a CUSTOM_QUARK_project
+-1de6f86b78289dcc CUSTOM_QUARK_project_named
+-a4b876f8139adc68 CUSTOM_QUARK_reverb_hall
+-e4d32262eb8722f1 CUSTOM_QUARK_reverb_spring
+-97232dc420368a79 CUSTOM_QUARK_roll_acid
+-4d5b88035c27d9a3 CUSTOM_QUARK_roll_chords
+-94fe1d9186951762 CUSTOM_QUARK_roll_empty
+-ca8d042b39d275a5 CUSTOM_QUARK_roll_high
+-46432311164056e9 CUSTOM_QUARK_roll_len32_p2
+-8b20bde073ed3d63 CUSTOM_QUARK_roll_lock_held
+-38572760b5c1d119 CUSTOM_QUARK_roll_locks
+-46638bfd7063f30d CUSTOM_QUARK_roll_low
+-9126f57c3b9c4325 CUSTOM_QUARK_roll_playing
+-049189d697a0c1af CUSTOM_QUARK_roll_ties
+-4515bdb8d4142fb8 CUSTOM_QUARK_roll_wide
+-6755a721b5695d58 CUSTOM_QUARK_samples
+-d0f620ed0aaf0984 CUSTOM_QUARK_scl
+-67d1f14057e7dcbf CUSTOM_QUARK_shift_env
+-2465657835291336 CUSTOM_QUARK_shift_home
+-d5ffecd73b3d5d04 CUSTOM_QUARK_shift_step
+-b19d819a4fce0c09 CUSTOM_QUARK_six_edit
+-f7f3d9b67d25c853 CUSTOM_QUARK_six_edit_said
+-1b6d5736dd21ca7d CUSTOM_QUARK_six_fx
+-1d6475a0ba230709 CUSTOM_QUARK_six_glo
+-1ad5b0375917da94 CUSTOM_QUARK_six_home
+-97627913fc3d8570 CUSTOM_QUARK_six_mixer
+-e92dcf9086e31647 CUSTOM_QUARK_six_perform
+-265e911d6a0948df CUSTOM_QUARK_six_song
+-bf3cff171df8636f CUSTOM_QUARK_slicer
+-74142c998faac2eb CUSTOM_QUARK_slices_break
+-680291a26cfe5475 CUSTOM_QUARK_slices_nofile
+-175e33ead04e6a1d CUSTOM_QUARK_slices_usr
+-1ec0a3bd5d057a92 CUSTOM_QUARK_song
+-8fd09e45e66783dc CUSTOM_QUARK_song_chain
+-f6cda08b08f246fe CUSTOM_QUARK_song_chain3
+-5e6a6d5cba716a8f CUSTOM_QUARK_song_chain_copy
+-f4040b72b041f779 CUSTOM_QUARK_song_chains
+-2b02e51712da68f3 CUSTOM_QUARK_song_clear
+-6ecb374b3217f0e8 CUSTOM_QUARK_song_copy
+-d47c9c1f8cef3669 CUSTOM_QUARK_song_copyplus
+-db488cc8ce9ceef9 CUSTOM_QUARK_song_new
+-1853d7b235874c4a CUSTOM_QUARK_song_once
+-6a49d361f47a3dc5 CUSTOM_QUARK_song_playing
+-88e8ed37d0437960 CUSTOM_QUARK_song_rest
+-bd432096a6a20621 CUSTOM_QUARK_song_rest_pick
+-26243b9b43eb852c CUSTOM_QUARK_song_sound
+-d2920a5a7eb34efa CUSTOM_QUARK_song_sounds
+-9659fc816580ad32 CUSTOM_QUARK_splash
+-d6775a2aa5adbff3 CUSTOM_QUARK_step
+-9e71c2f5d855a5d3 CUSTOM_QUARK_step_mark
+-faee4a12413b21f8 CUSTOM_QUARK_step_tiles
+-57c14c2a8895b01b CUSTOM_QUARK_step_tiles_bar2
+-617b0ea80e18773f CUSTOM_QUARK_step_tiles_drum
+-6f64587aa05d0313 CUSTOM_QUARK_take_box
+-37ddc434ae487657 CUSTOM_QUARK_take_partial
+-fa9470cba86e4aeb CUSTOM_QUARK_uboot
+-43b3e99fccb624cf CUSTOM_QUARK_undo_box
+-30412cd5befcb93d CUSTOM_QUARK_user
+-cc651918769c3748 CUSTOM_QUARK_user_foot
+-90a5733fcb2eecab CUSTOM_QUARK_voice
+-5a801550b92937f4 CUSTOM_QUARK_voice_2
+-068dd573bdd07ff2 CUSTOM_QUARK_voice_2_uni
+-63b197c71fe4c8b1 CUSTOM_QUARK_voice_glide
++db1882fd5596019a CUSTOM_QUARK_chance
++c4364db6d0e551fe CUSTOM_QUARK_chance_flam
++0f8f456871f7fccd CUSTOM_QUARK_chord
++3d6575ba1851cfde CUSTOM_QUARK_chord_kit
++ab978cd31639abd2 CUSTOM_QUARK_chord_off
++0bdc1925bc52cab4 CUSTOM_QUARK_chord_wide
++1e9e66d1cba4c5a7 CUSTOM_QUARK_chorus
++bf0698f44c3170bf CUSTOM_QUARK_chorus_feedback
++a9f816ebad361e6f CUSTOM_QUARK_chorus_flanger
++ccf6ff9a01bd0ed7 CUSTOM_QUARK_chorus_phaser
++c6e64eba0d00ca47 CUSTOM_QUARK_confirm_empty
++60cc0dfad63ba222 CUSTOM_QUARK_confirm_entry
++bef5062d8e40297b CUSTOM_QUARK_confirm_entry_last
++441e798d0f6fcbde CUSTOM_QUARK_confirm_erase
++a1a454d472e0d412 CUSTOM_QUARK_confirm_init
++b23c1e33bffecea6 CUSTOM_QUARK_confirm_init_dx
++84c1db9040f36fe0 CUSTOM_QUARK_confirm_load
++1e07afb291543029 CUSTOM_QUARK_confirm_motion
++3976600765e1d448 CUSTOM_QUARK_confirm_pool
++1f58c1227fd215a0 CUSTOM_QUARK_confirm_project
++7d2d6c4c6bc1a59f CUSTOM_QUARK_confirm_seq
++27b35594127dbcd8 CUSTOM_QUARK_confirm_user
++1e206e7306e2bc94 CUSTOM_QUARK_countin
++35c9e0a662321f02 CUSTOM_QUARK_countin_2bars
++1a4d5148112237af CUSTOM_QUARK_dly
++d6077463120b65e7 CUSTOM_QUARK_drive_crush
++8be756ceb1a3e351 CUSTOM_QUARK_drive_fold
++c25101b6d980a724 CUSTOM_QUARK_drive_fuzz
++e6e331c63fb764ea CUSTOM_QUARK_drive_hard
++c45e98f5217da78c CUSTOM_QUARK_drive_soft
++dd4a31a68d3c5b82 CUSTOM_QUARK_drum
++fb99dbfa287cf61e CUSTOM_QUARK_drum_cym
++1a85b967f4f21674 CUSTOM_QUARK_drum_hand
++2fee9a93dfca9dc3 CUSTOM_QUARK_drum_kit_usr
++105c3175063222da CUSTOM_QUARK_drum_lock_held
++840cccf59f333182 CUSTOM_QUARK_drum_locks
++2d9af4256e5849b5 CUSTOM_QUARK_dx_sound
++cb5d5bf0cedc84a1 CUSTOM_QUARK_dx_sound_2
++dd17aeef132f8227 CUSTOM_QUARK_dx_sound_3
++4db4d5bd1e6ca33c CUSTOM_QUARK_edit_analog
++19dcca776114f317 CUSTOM_QUARK_edit_flt
++ddf99ff573da95f8 CUSTOM_QUARK_edit_fm6
++2b6a5b9598c081c3 CUSTOM_QUARK_edit_grain
++7b976f5bfddbe628 CUSTOM_QUARK_edit_phys
++bd5c1cd80a570fcf CUSTOM_QUARK_edit_sample
++e8753f92c1a2a865 CUSTOM_QUARK_edit_wheel
++f4cc8e6cbe3a0493 CUSTOM_QUARK_env
++f1250a3a85bf01bc CUSTOM_QUARK_env_2
++6f82a7b9e5e09cbe CUSTOM_QUARK_feel_range
++e3dbaa391a352ae0 CUSTOM_QUARK_fm6_alg_01
++62c7fc0f9340c591 CUSTOM_QUARK_fm6_alg_05
++a3c36731d5ee21bf CUSTOM_QUARK_fm6_alg_22
++74b1878e3653d300 CUSTOM_QUARK_fm6_alg_32
++e85053e62b78bdec CUSTOM_QUARK_fm_all_algo
++5ea3bebb9814ef9f CUSTOM_QUARK_fm_all_lfo
++f89362015ee4b665 CUSTOM_QUARK_fm_all_pitch
++514fd40385c89a85 CUSTOM_QUARK_fm_init
++de57e5c5568374ca CUSTOM_QUARK_fm_op_env
++fa4f9ae9f33dacd0 CUSTOM_QUARK_fm_op_keys
++e5b9a7838a14ef65 CUSTOM_QUARK_fm_op_tone
++6ab2a372cff9a615 CUSTOM_QUARK_fx
++57f264f0f6e0643d CUSTOM_QUARK_fx_duck
++38b6350a75f00901 CUSTOM_QUARK_fx_duck_off
++d4f8dc247268770f CUSTOM_QUARK_global
++cf340805185aecb7 CUSTOM_QUARK_global_swing
++8bb3e2b8747e36d9 CUSTOM_QUARK_head_beat_2
++49be055636779f59 CUSTOM_QUARK_head_bpm_lock
++3de29cc16082edf7 CUSTOM_QUARK_head_bpm_locked
++0b1800232aa72d67 CUSTOM_QUARK_head_bpm_turn
++8bb3e2b8747e36d9 CUSTOM_QUARK_head_downbeat
++72866b14bc842a03 CUSTOM_QUARK_head_glo_turn
++8bb3e2b8747e36d9 CUSTOM_QUARK_head_play_rec
++64703ddd77fb91f5 CUSTOM_QUARK_head_project
++21eaf61e21803ef5 CUSTOM_QUARK_head_rec_other
++fcc5dc6f04615b71 CUSTOM_QUARK_home
++d3547ff04370b7b6 CUSTOM_QUARK_home_idle
++1e59942747099269 CUSTOM_QUARK_home_scope
++5ddfd27087a7be99 CUSTOM_QUARK_insert_crush
++cdfdd3670d4cdc52 CUSTOM_QUARK_insert_flanger
++44ccdf1484b4c79c CUSTOM_QUARK_insert_fuzz
++a2b4ea1081ed8a7d CUSTOM_QUARK_lane_mix
++a546d6fcfe3dbf75 CUSTOM_QUARK_lane_mix_dx
++65679b1c3f3df2da CUSTOM_QUARK_lanes
++19dd3345227c6558 CUSTOM_QUARK_lanes_tune
++a3cf2eced963901c CUSTOM_QUARK_lanes_usr
++bbf139adc39aac94 CUSTOM_QUARK_layer_edit_active
++1e0dc07509138ba3 CUSTOM_QUARK_layer_edit_peek
++25dabf4c051bf6f8 CUSTOM_QUARK_layer_edit_user
++c93480725a3312f5 CUSTOM_QUARK_layer_glo_active
++eb7e641883a31fb0 CUSTOM_QUARK_layer_glo_ext
++76799f882fe9d3bc CUSTOM_QUARK_layer_glo_peek
++765a3ebbfb05fdd4 CUSTOM_QUARK_layer_hint
++511eaa48f38ac09a CUSTOM_QUARK_layer_lock
++cb5b1fca0aa7d59c CUSTOM_QUARK_layer_lock_fx
++7617ded87998cb8a CUSTOM_QUARK_layer_perform
++5e5d7dd308b3d72e CUSTOM_QUARK_layer_perform_scenes
++082a1eede4e41329 CUSTOM_QUARK_layer_rec
++e62105548c4fd401 CUSTOM_QUARK_layer_rec_set
++6fb16ec67f36a4df CUSTOM_QUARK_layer_scl_active
++3c5bb5e154452915 CUSTOM_QUARK_layer_scl_peek
++20cab738f4d2e9db CUSTOM_QUARK_layer_seq_tools
++8b4f0fd879d530b8 CUSTOM_QUARK_layer_seq_tools_drum
++6cb33690d13c55f6 CUSTOM_QUARK_learn
++e91e2d2ee294d983 CUSTOM_QUARK_learn_cc
++36a7c10bc0418445 CUSTOM_QUARK_lfo
++ad69a376598c172c CUSTOM_QUARK_lfo_2
++9ef17d682898289f CUSTOM_QUARK_lfo_run
++cd06d5f16e707089 CUSTOM_QUARK_menu
++961a7afccb84dadf CUSTOM_QUARK_menu_audio
++6af403a75f7df920 CUSTOM_QUARK_menu_end
++778c9052c3386c8b CUSTOM_QUARK_menu_hold
++cac62a6dae4f60e8 CUSTOM_QUARK_menu_leds
++d402e408941137e9 CUSTOM_QUARK_menu_midi
++bf3b01c37c143f44 CUSTOM_QUARK_menu_midi_scroll
++6af24cabf3236e46 CUSTOM_QUARK_menu_slide
++93fa55876d9455ab CUSTOM_QUARK_menu_speaker
++79177e1e5556b29c CUSTOM_QUARK_menu_system
++ee55534df27f868e CUSTOM_QUARK_message
++a7362f2c5060ee95 CUSTOM_QUARK_message_key
++3ee9778cd16bb2ac CUSTOM_QUARK_message_nofile
++e8110fafb0b87828 CUSTOM_QUARK_mixer
++a8e54284d81a1f10 CUSTOM_QUARK_mixer_pan
++9b8a44cdcb1718d1 CUSTOM_QUARK_mock_dialog
++ca0dcd4ce299100f CUSTOM_QUARK_mock_drum
++8dbf786b976046ca CUSTOM_QUARK_mock_home
++03e7df79563ca209 CUSTOM_QUARK_mock_menu
++37b8a15aeb4f6103 CUSTOM_QUARK_mock_mixer
++0f4a77c8ea502637 CUSTOM_QUARK_mock_presets
++ccda2940798a1aa8 CUSTOM_QUARK_mock_seq
++8ce10d153f805393 CUSTOM_QUARK_mod
++1152cf7bb6c1da14 CUSTOM_QUARK_mod_env
++c26476c5374a3c7c CUSTOM_QUARK_mod_grid
++59e7862c75c5f5aa CUSTOM_QUARK_momentary
++2b4fe89ab9b2b134 CUSTOM_QUARK_motion
++a569b42fbf76a394 CUSTOM_QUARK_motion_card
++4db86beda5747cc6 CUSTOM_QUARK_motion_locks
++8f77671543eb9f3d CUSTOM_QUARK_motion_off
++fbad23399b4c7d93 CUSTOM_QUARK_motion_rec
++5fef76f5eb409708 CUSTOM_QUARK_name_123
++3b00a718e8841391 CUSTOM_QUARK_name_empty
++a294e799e0eab21f CUSTOM_QUARK_name_full
++21173406505784a0 CUSTOM_QUARK_name_playing
++814c39cfeff10c20 CUSTOM_QUARK_name_typing
++f71da3de0003c1a8 CUSTOM_QUARK_name_user
++004b07955391ea79 CUSTOM_QUARK_notes_chain
++90d1ec9e0cf7f83b CUSTOM_QUARK_notes_overlap
++d45f21c69aacceab CUSTOM_QUARK_notes_pick
++c479552dbac4875a CUSTOM_QUARK_notes_range
++b45629add9531ee3 CUSTOM_QUARK_pattern
++3edd47fa14e24f45 CUSTOM_QUARK_perform_harm
++2a5370f5ba16d69d CUSTOM_QUARK_perform_held
++efc69718425b1af0 CUSTOM_QUARK_perform_peek
++729d5e15ec0e9664 CUSTOM_QUARK_perform_wait
++4c5c2bc41a311fa1 CUSTOM_QUARK_play_dir
++e8fe09d105e110d0 CUSTOM_QUARK_play_gate
++f5d8942fccd14b2d CUSTOM_QUARK_pool
++f62e7fe3215f0043 CUSTOM_QUARK_pool_empty
++d65a0757d69b619a CUSTOM_QUARK_pool_unused
++a1c7965e50ca1c82 CUSTOM_QUARK_presets
++0b429a0bc1414a8b CUSTOM_QUARK_presets_bass
++c58ae6d42e5f0e49 CUSTOM_QUARK_presets_nofav
++f8970c144f1d12de CUSTOM_QUARK_project
++fee32a85008926c4 CUSTOM_QUARK_project_named
++e4b66dd78f778d30 CUSTOM_QUARK_reverb_hall
++b4948bf5626498f9 CUSTOM_QUARK_reverb_spring
++0938a6d0d0f5282b CUSTOM_QUARK_roll_acid
++3d3d4789566233c4 CUSTOM_QUARK_roll_chords
++a36a5330ae139573 CUSTOM_QUARK_roll_empty
++3a513306dd379018 CUSTOM_QUARK_roll_high
++4847305733debafa CUSTOM_QUARK_roll_len32_p2
++0955733faf438eab CUSTOM_QUARK_roll_lock_held
++5c608c2f071cc0eb CUSTOM_QUARK_roll_locks
++6ebd64d796dc9750 CUSTOM_QUARK_roll_low
++902b4a98cb0e1a8f CUSTOM_QUARK_roll_playing
++d7e60187496fe6cc CUSTOM_QUARK_roll_ties
++bc4bfd68b0ff47f2 CUSTOM_QUARK_roll_wide
++04f1987f2e025767 CUSTOM_QUARK_samples
++7b39027cdc90df8a CUSTOM_QUARK_scl
++e175fe052d1d97e3 CUSTOM_QUARK_shift_env
++817a0a38ee68784c CUSTOM_QUARK_shift_home
++36043a2a89a7e654 CUSTOM_QUARK_shift_step
++0cb656b2b03fcf09 CUSTOM_QUARK_six_edit
++87c02b7f8fa7c0b7 CUSTOM_QUARK_six_edit_said
++7360b918fd6f0c1b CUSTOM_QUARK_six_fx
++0a5f1586bc623399 CUSTOM_QUARK_six_glo
++be244790967511b1 CUSTOM_QUARK_six_home
++c991d144f65d1951 CUSTOM_QUARK_six_mixer
++7d274367cfcd4a9a CUSTOM_QUARK_six_perform
++825b77550a5a5bc2 CUSTOM_QUARK_six_song
++244f545233b21196 CUSTOM_QUARK_slicer
++76df759b2f7e1bcd CUSTOM_QUARK_slices_break
++d31860c8f595491f CUSTOM_QUARK_slices_nofile
++90fc0ea781152cc0 CUSTOM_QUARK_slices_usr
++486b9359050f70f4 CUSTOM_QUARK_song
++e49755914ba21cdf CUSTOM_QUARK_song_chain
++f1aae0ec3b158739 CUSTOM_QUARK_song_chain3
++1fcbf4b5c447991b CUSTOM_QUARK_song_chain_copy
++b5402ebb5c3a9cea CUSTOM_QUARK_song_chains
++116eaf493667795c CUSTOM_QUARK_song_clear
++77c8e42d13559a8e CUSTOM_QUARK_song_copy
++96855b39b5176ebd CUSTOM_QUARK_song_copyplus
++08911c51aab55dca CUSTOM_QUARK_song_new
++2e11e091ec7e8ea2 CUSTOM_QUARK_song_once
++946d3b5a2c99cf3f CUSTOM_QUARK_song_playing
++4c1fd895a8696ce7 CUSTOM_QUARK_song_rest
++b7ed969e42ab8a4c CUSTOM_QUARK_song_rest_pick
++2d947dc4a79bd0e7 CUSTOM_QUARK_song_sound
++5a1ab8994af1c9f4 CUSTOM_QUARK_song_sounds
++1be8ffb087c7fb16 CUSTOM_QUARK_splash
++c0dcc0f897d1c2cc CUSTOM_QUARK_step
++16b61816279b43ac CUSTOM_QUARK_step_mark
++531aff2799de09c3 CUSTOM_QUARK_step_tiles
++f1856769d01dcdd6 CUSTOM_QUARK_step_tiles_bar2
++aeefa6bdaf630f5a CUSTOM_QUARK_step_tiles_drum
++9ba95fa8621e1ffa CUSTOM_QUARK_take_box
++b1712c36022db10a CUSTOM_QUARK_take_partial
++765a29dbde56b61b CUSTOM_QUARK_uboot
++d5b13ce57b9ecd56 CUSTOM_QUARK_undo_box
++86eb8a426f76d1f6 CUSTOM_QUARK_user
++6eebb6b1297962f3 CUSTOM_QUARK_user_foot
++384529aa1a2b957f CUSTOM_QUARK_voice
++43649eb56a3c94f3 CUSTOM_QUARK_voice_2
++b58462d0f4241bb9 CUSTOM_QUARK_voice_2_uni
++800d38984ddbf29b CUSTOM_QUARK_voice_glide
+ cf27dd97063f1638 CUSTOM_SKIFF_about
+ 52695c82401f6fc3 CUSTOM_SKIFF_about_credits
+ 6a779e93b65e746d CUSTOM_SKIFF_about_end
+@@ -1934,243 +1934,243 @@ d255565ab2ad528a LARGE_NEON_voice_glide
+ 6e02e44fcd38b6d4 LARGE_QUARK_about_credits
+ 908f3cc91b66f27d LARGE_QUARK_about_end
+ 364d0a031c1adcfb LARGE_QUARK_about_rec
+-a7699759b913f311 LARGE_QUARK_arp
+-81108550b004456c LARGE_QUARK_arp_2
+-5367479d9732769f LARGE_QUARK_arp_on
+-1adf6b15a2b28f4a LARGE_QUARK_auto_list
+-16e2368d98665aaf LARGE_QUARK_auto_list_add
+-6711b291bdbe9d75 LARGE_QUARK_auto_list_delete
+-ed5bd5436cee4531 LARGE_QUARK_auto_list_drum
+-1e91b0c1f96b3106 LARGE_QUARK_batt_0
+-35f6f442b2e9a4b2 LARGE_QUARK_batt_1
+-ea416b1e5939441e LARGE_QUARK_batt_2
+-0e7450916d58f206 LARGE_QUARK_batt_3
+-997f6b42b8e77c94 LARGE_QUARK_batt_usb
++b41c5dd1cc204c7a LARGE_QUARK_arp
++ad7b6cab36f98546 LARGE_QUARK_arp_2
++932e1d0709cbc588 LARGE_QUARK_arp_on
++c03033e2cbcaba25 LARGE_QUARK_auto_list
++dbd2845594053491 LARGE_QUARK_auto_list_add
++59eb707c353fce76 LARGE_QUARK_auto_list_delete
++deb187a176fc0485 LARGE_QUARK_auto_list_drum
++bc0877edcf4537c8 LARGE_QUARK_batt_0
++a7f4ebb503c63b24 LARGE_QUARK_batt_1
++a20485e5dcab0940 LARGE_QUARK_batt_2
++abeb17bd4332f8c8 LARGE_QUARK_batt_3
++6e2d2afd5e634b46 LARGE_QUARK_batt_usb
+ eb3f5132acb8cebf LARGE_QUARK_calibration
+-a300c23a5f777e3d LARGE_QUARK_chance
+-4bdae7d4e745fe6b LARGE_QUARK_chance_flam
+-45eeae385aaaa4e9 LARGE_QUARK_chord
+-3f8ec340b8246d58 LARGE_QUARK_chord_kit
+-37ceb8c2adcff762 LARGE_QUARK_chord_off
+-284c64f99b6b5cb9 LARGE_QUARK_chord_wide
+-2462dac0c5b62110 LARGE_QUARK_chorus
+-9a8ecde45e4b8bc0 LARGE_QUARK_chorus_feedback
+-e2215eca98a37940 LARGE_QUARK_chorus_flanger
+-a8851c12b272430e LARGE_QUARK_chorus_phaser
+-95ecb884df6998b3 LARGE_QUARK_confirm_empty
+-672a087d59514167 LARGE_QUARK_confirm_entry
+-aff1d5746e8c3112 LARGE_QUARK_confirm_entry_last
+-cc1c337aff3b9935 LARGE_QUARK_confirm_erase
+-64787be2e56a4d08 LARGE_QUARK_confirm_init
+-c4abee6bfdaa349d LARGE_QUARK_confirm_init_dx
+-b5fb0f363bf2dc15 LARGE_QUARK_confirm_load
+-656e998d58dfaf04 LARGE_QUARK_confirm_motion
+-adf81e1ae21f0c43 LARGE_QUARK_confirm_pool
+-b372b749abeaf9e1 LARGE_QUARK_confirm_project
+-0bfdbde5491918f1 LARGE_QUARK_confirm_seq
+-a3d223d72e311bc6 LARGE_QUARK_confirm_user
+-49e1d0be218f854c LARGE_QUARK_countin
+-cc411d5eaddfe7e8 LARGE_QUARK_countin_2bars
+-cc8ce010cdc29497 LARGE_QUARK_dly
+-9a0524ba4a1bfb85 LARGE_QUARK_drive_crush
+-a00278ea8cf6ec2e LARGE_QUARK_drive_fold
+-29fcae948a09aa31 LARGE_QUARK_drive_fuzz
+-4f045ff2ca4f1ad6 LARGE_QUARK_drive_hard
+-0953f58c1d202fe1 LARGE_QUARK_drive_soft
+-732f0210f01a08f3 LARGE_QUARK_drum
+-38e80bf004669e52 LARGE_QUARK_drum_cym
+-3d0c98992f65c0d9 LARGE_QUARK_drum_hand
+-3b81fe5791b255ee LARGE_QUARK_drum_kit_usr
+-8e78bc986d675bf9 LARGE_QUARK_drum_lock_held
+-cdf04b385b059833 LARGE_QUARK_drum_locks
+-f00b48c9c5cc7c97 LARGE_QUARK_dx_sound
+-e1aab46ec16f7226 LARGE_QUARK_dx_sound_2
+-0bda78c2778f74fb LARGE_QUARK_dx_sound_3
+-f8ae7c215be8b33c LARGE_QUARK_edit_analog
+-21908a6d2a644c36 LARGE_QUARK_edit_flt
+-37d820a41bbf6cf1 LARGE_QUARK_edit_fm6
+-e0e882a0b7daf5aa LARGE_QUARK_edit_grain
+-f2a7218266ac8e88 LARGE_QUARK_edit_phys
+-e5d928dc2f42165c LARGE_QUARK_edit_sample
+-9d6049e52cd0e48b LARGE_QUARK_edit_wheel
+-587bb0b6f7c8489e LARGE_QUARK_env
+-c5b0718f565d67c4 LARGE_QUARK_env_2
+-1eba3a83c297c794 LARGE_QUARK_feel_range
+-8e05ed30069b5104 LARGE_QUARK_fm6_alg_01
+-34773eb5fdafa0f3 LARGE_QUARK_fm6_alg_05
+-77fb04e87ea03200 LARGE_QUARK_fm6_alg_22
+-1be2199b1ea10f0c LARGE_QUARK_fm6_alg_32
+-dcaea3ea42d618af LARGE_QUARK_fm_all_algo
+-e2ffd219928a8489 LARGE_QUARK_fm_all_lfo
+-d9f3ab5d8029fafe LARGE_QUARK_fm_all_pitch
+-3df1419762b952a0 LARGE_QUARK_fm_init
+-cc53661c24e27581 LARGE_QUARK_fm_op_env
+-4dff22bbf13405dd LARGE_QUARK_fm_op_keys
+-093ca5c8193c19c9 LARGE_QUARK_fm_op_tone
+-61a81ceb1184acf2 LARGE_QUARK_fx
+-cc9aede9cc14bb37 LARGE_QUARK_fx_duck
+-e3b6216829fa4ead LARGE_QUARK_fx_duck_off
+-d9d10dc24890df2c LARGE_QUARK_global
+-845b1513850eaab8 LARGE_QUARK_global_swing
+-d116a156ad214d67 LARGE_QUARK_head_beat_2
+-997f6b42b8e77c94 LARGE_QUARK_head_bpm_lock
+-1f687e63a04b1c51 LARGE_QUARK_head_bpm_locked
+-f83e43f3021f2da2 LARGE_QUARK_head_bpm_turn
+-d116a156ad214d67 LARGE_QUARK_head_downbeat
+-b636fa94d74350d2 LARGE_QUARK_head_glo_turn
+-d116a156ad214d67 LARGE_QUARK_head_play_rec
+-82f86ae6c6bd5b55 LARGE_QUARK_head_project
+-3cd36cc3e1787744 LARGE_QUARK_head_rec_other
+-eae81a5baef72276 LARGE_QUARK_home
+-20f576ba3d29d32d LARGE_QUARK_home_idle
+-2ea8a7ac39188f84 LARGE_QUARK_home_scope
+-b1129d832c54e7a0 LARGE_QUARK_insert_crush
+-988bdb840c028dfa LARGE_QUARK_insert_flanger
+-9c9a70f67255d9ab LARGE_QUARK_insert_fuzz
+-47f09962f20a89e3 LARGE_QUARK_lane_mix
+-9ba1bbe332c64f38 LARGE_QUARK_lane_mix_dx
+-5d1fbd0ec53d9672 LARGE_QUARK_lanes
+-fb69018dbd1bf30d LARGE_QUARK_lanes_tune
+-fe18a41ed5172645 LARGE_QUARK_lanes_usr
+-06e70aba84cf9af5 LARGE_QUARK_layer_edit_active
+-8b582e3c58e48dcf LARGE_QUARK_layer_edit_peek
+-a37986b7c6e30c9e LARGE_QUARK_layer_edit_user
+-b55fee0a1d93cc50 LARGE_QUARK_layer_glo_active
+-9f8cc3de61f4d3e7 LARGE_QUARK_layer_glo_ext
+-d8ccb4aaa13ba6b6 LARGE_QUARK_layer_glo_peek
+-af1bfece6f38f876 LARGE_QUARK_layer_hint
+-93105ed68aad31d5 LARGE_QUARK_layer_lock
+-122a64d17ccaf211 LARGE_QUARK_layer_lock_fx
+-163a7cca7098a4b1 LARGE_QUARK_layer_perform
+-9a21639c060472da LARGE_QUARK_layer_perform_scenes
+-0a1b17e4c95e297f LARGE_QUARK_layer_rec
+-be273242483c2dd7 LARGE_QUARK_layer_rec_set
+-ad92f973236cb7e3 LARGE_QUARK_layer_scl_active
+-42f669cab6f3d9d1 LARGE_QUARK_layer_scl_peek
+-ea04649d72792068 LARGE_QUARK_layer_seq_tools
+-861275cbe0f514e6 LARGE_QUARK_layer_seq_tools_drum
+-11da3fedb4c35f4c LARGE_QUARK_learn
+-6f24e83c6a129489 LARGE_QUARK_learn_cc
+-6070b731d7a82f8d LARGE_QUARK_lfo
+-de813790f630626f LARGE_QUARK_lfo_2
+-ab9f39da03a2a1e9 LARGE_QUARK_lfo_run
+-91ed1f57056fed86 LARGE_QUARK_menu
+-c086c40a30de7ada LARGE_QUARK_menu_audio
+-ac2f4fdadbba3255 LARGE_QUARK_menu_end
+-cc7451b64b344651 LARGE_QUARK_menu_hold
+-6082216f6e69bf08 LARGE_QUARK_menu_leds
+-f150f0c00893f9e1 LARGE_QUARK_menu_midi
+-4e580ba84186431a LARGE_QUARK_menu_midi_scroll
+-decdd5cfc5e7d076 LARGE_QUARK_menu_slide
+-95c6ac3cd43cccdc LARGE_QUARK_menu_speaker
+-b381163863b2e7b0 LARGE_QUARK_menu_system
+-7af607bc53e30ecd LARGE_QUARK_message
+-2d4737bd3abf5258 LARGE_QUARK_message_key
+-abe5e666b0e0081a LARGE_QUARK_message_nofile
+-c82572b81cc7f1bf LARGE_QUARK_mixer
+-777f64dd02e7431a LARGE_QUARK_mixer_pan
+-da32bff341f55c70 LARGE_QUARK_mock_dialog
+-801f1d634aee1b3a LARGE_QUARK_mock_drum
+-3350bad445630bd1 LARGE_QUARK_mock_home
+-fbc605e931d1385e LARGE_QUARK_mock_menu
+-9c8b6682cb82a019 LARGE_QUARK_mock_mixer
+-adb0509708ac0d88 LARGE_QUARK_mock_presets
+-d45328a911e5b483 LARGE_QUARK_mock_seq
+-6f6b66172eb8b95c LARGE_QUARK_mod
+-88251dc8b61a75a8 LARGE_QUARK_mod_env
+-c54132985f29aa59 LARGE_QUARK_mod_grid
+-ba97e67e987bdd90 LARGE_QUARK_momentary
+-7332fd07584aee01 LARGE_QUARK_motion
+-5cc356ad525be1a5 LARGE_QUARK_motion_card
+-f5b0b2407213e291 LARGE_QUARK_motion_locks
+-69784a362f4c0584 LARGE_QUARK_motion_off
+-bb78cc667f6453d5 LARGE_QUARK_motion_rec
+-92a705b63ece9968 LARGE_QUARK_name_123
+-f5c38d147e5176e1 LARGE_QUARK_name_empty
+-b708e437d2127a75 LARGE_QUARK_name_full
+-48e9398e282b2f69 LARGE_QUARK_name_playing
+-d1999852907a28ca LARGE_QUARK_name_typing
+-729bb4c4afff1fa4 LARGE_QUARK_name_user
+-a730f4d3ae567a4a LARGE_QUARK_notes_chain
+-69ca4a7648572e16 LARGE_QUARK_notes_overlap
+-e952ee84c20cedee LARGE_QUARK_notes_pick
+-0a660586f00115a7 LARGE_QUARK_notes_range
+-d5173c7af0d28ab8 LARGE_QUARK_pattern
+-5274e5f81e1661f5 LARGE_QUARK_perform_harm
+-321a2abe7a8537d4 LARGE_QUARK_perform_held
+-369b78a20a3d9f6e LARGE_QUARK_perform_peek
+-1897ce517cfef134 LARGE_QUARK_perform_wait
+-9384dac1198c494c LARGE_QUARK_play_dir
+-6b9adcdc20d024ab LARGE_QUARK_play_gate
+-55f6542dfd8868ef LARGE_QUARK_pool
+-b753a7e4d06c9d0b LARGE_QUARK_pool_empty
+-9a86333023f531e0 LARGE_QUARK_pool_unused
+-ee5a1b665ad17afd LARGE_QUARK_presets
+-c8439aed33b95c40 LARGE_QUARK_presets_bass
+-bdd09055158b13ee LARGE_QUARK_presets_nofav
+-4c8edbfad9cfa962 LARGE_QUARK_project
+-26f4624c47872280 LARGE_QUARK_project_named
+-61fecb9b2d72c24f LARGE_QUARK_reverb_hall
+-219e8cda47e122e3 LARGE_QUARK_reverb_spring
+-46efb7e68e06fdfd LARGE_QUARK_roll_acid
+-4d8799db2d3f42b3 LARGE_QUARK_roll_chords
+-a21fba968e8a859a LARGE_QUARK_roll_empty
+-920745ee517320e5 LARGE_QUARK_roll_high
+-d8d1a1129edcb276 LARGE_QUARK_roll_len32_p2
+-8e200e1e968e1a97 LARGE_QUARK_roll_lock_held
+-b7adb21242ecd24d LARGE_QUARK_roll_locks
+-4672741e86c77ca5 LARGE_QUARK_roll_low
+-e6b9bcfb538eee48 LARGE_QUARK_roll_playing
+-5d04ab282edc0ed8 LARGE_QUARK_roll_ties
+-357b9f2fc9013eae LARGE_QUARK_roll_wide
+-1397c85a8f0a3e56 LARGE_QUARK_samples
+-f5279180cfbe785b LARGE_QUARK_scl
+-500c312f0d22352d LARGE_QUARK_shift_env
+-48250122e48726fa LARGE_QUARK_shift_home
+-b5adc19046f35257 LARGE_QUARK_shift_step
+-6617dc1a6b298524 LARGE_QUARK_six_edit
+-8d5e90669c3fc603 LARGE_QUARK_six_edit_said
+-122a64d17ccaf211 LARGE_QUARK_six_fx
+-9e51041db7979a68 LARGE_QUARK_six_glo
+-f05ba15e0c8c020b LARGE_QUARK_six_home
+-64473fafc749f25a LARGE_QUARK_six_mixer
+-a795a430b810f135 LARGE_QUARK_six_perform
+-7595ff991ad38ff7 LARGE_QUARK_six_song
+-1193d8b95793c683 LARGE_QUARK_slicer
+-1d1ac5f203f16b5f LARGE_QUARK_slices_break
+-f4338972523b15b6 LARGE_QUARK_slices_nofile
+-4d8d0e139429caea LARGE_QUARK_slices_usr
+-d3117f42a5da5050 LARGE_QUARK_song
+-97bf1f09271e2ec7 LARGE_QUARK_song_chain
+-425340f7fb880866 LARGE_QUARK_song_chain3
+-b5fa68d7ca292710 LARGE_QUARK_song_chain_copy
+-1d413005cdcc5116 LARGE_QUARK_song_chains
+-92b8a788a117a29d LARGE_QUARK_song_clear
+-594ef66b4a32d7cd LARGE_QUARK_song_copy
+-c75ee375004fae34 LARGE_QUARK_song_copyplus
+-1697866a398272fa LARGE_QUARK_song_new
+-e8ad86c086025b78 LARGE_QUARK_song_once
+-ccc48475d30f7f11 LARGE_QUARK_song_playing
+-a7c442c0632f685a LARGE_QUARK_song_rest
+-69b55362ce1fafe5 LARGE_QUARK_song_rest_pick
+-a8ceba3646380666 LARGE_QUARK_song_sound
+-9c9b9f162dc9e49d LARGE_QUARK_song_sounds
+-07e2cee512e023b8 LARGE_QUARK_splash
+-43da5727dddf3fca LARGE_QUARK_step
+-f5d91e3dff1792f8 LARGE_QUARK_step_mark
+-50e282501c0e0736 LARGE_QUARK_step_tiles
+-dca996092fbd3472 LARGE_QUARK_step_tiles_bar2
+-df9d996b8d3f4877 LARGE_QUARK_step_tiles_drum
+-997f6b42b8e77c94 LARGE_QUARK_take_box
+-997f6b42b8e77c94 LARGE_QUARK_take_partial
+-46ee8bbddf9448ce LARGE_QUARK_uboot
+-997f6b42b8e77c94 LARGE_QUARK_undo_box
+-6495cf0856f107f3 LARGE_QUARK_user
+-1ea89c97daa8d21b LARGE_QUARK_user_foot
+-5d1d40059458a684 LARGE_QUARK_voice
+-f97c6504e19631a7 LARGE_QUARK_voice_2
+-f97c6504e19631a7 LARGE_QUARK_voice_2_uni
+-e62595409207f4b4 LARGE_QUARK_voice_glide
++316dcf61db987962 LARGE_QUARK_chance
++9c658b81920fe70e LARGE_QUARK_chance_flam
++34896e3741f8b1ac LARGE_QUARK_chord
++2b9c52f798a073f0 LARGE_QUARK_chord_kit
++590728401835bb50 LARGE_QUARK_chord_off
++e09617734c6a1a28 LARGE_QUARK_chord_wide
++0d1237014995a77e LARGE_QUARK_chorus
++a83d69457d94e820 LARGE_QUARK_chorus_feedback
++72b243b5b8f1e3e3 LARGE_QUARK_chorus_flanger
++3c1a62ab0b85931d LARGE_QUARK_chorus_phaser
++4948120db833acea LARGE_QUARK_confirm_empty
++a38b4067a502a6c5 LARGE_QUARK_confirm_entry
++7957eefc88d7aaec LARGE_QUARK_confirm_entry_last
++e11d0f3c96b16393 LARGE_QUARK_confirm_erase
++59b9276a87bb1a7e LARGE_QUARK_confirm_init
++a0412a0d9140d95b LARGE_QUARK_confirm_init_dx
++f64030fdf8ade03b LARGE_QUARK_confirm_load
++bbdcd934faec1c6a LARGE_QUARK_confirm_motion
++bbd5512274962e66 LARGE_QUARK_confirm_pool
++e14e19f01c756e47 LARGE_QUARK_confirm_project
++c2cccf707bd06ecf LARGE_QUARK_confirm_seq
++196758de555115f8 LARGE_QUARK_confirm_user
++ef5b4e23c8387b0c LARGE_QUARK_countin
++807cec756d45fbe8 LARGE_QUARK_countin_2bars
++68ad663ca102f34b LARGE_QUARK_dly
++9dcd5253a4db62c3 LARGE_QUARK_drive_crush
++e68042edc5792620 LARGE_QUARK_drive_fold
++e3a6abe24aa9542b LARGE_QUARK_drive_fuzz
++09a7abcf0d09197c LARGE_QUARK_drive_hard
++581c85dbd4af3bbf LARGE_QUARK_drive_soft
++82a60f461d1b6e86 LARGE_QUARK_drum
++bb97e78f8afadac4 LARGE_QUARK_drum_cym
++02d4f426e523cb34 LARGE_QUARK_drum_hand
++87cc5566105a1f11 LARGE_QUARK_drum_kit_usr
++74a7e363e923223f LARGE_QUARK_drum_lock_held
++a02545f89f485046 LARGE_QUARK_drum_locks
++6627929af5c33b19 LARGE_QUARK_dx_sound
++1865ea88512ed5a8 LARGE_QUARK_dx_sound_2
++e0a27c2fd0d38cc0 LARGE_QUARK_dx_sound_3
++bf56320b23f76ed0 LARGE_QUARK_edit_analog
++a158cfe36f66abb4 LARGE_QUARK_edit_flt
++64a298c69a0dde89 LARGE_QUARK_edit_fm6
++9c0da26cb7076082 LARGE_QUARK_edit_grain
++d42ce30e095191db LARGE_QUARK_edit_phys
++7dada41da458182b LARGE_QUARK_edit_sample
++5c1a1a9657ccc24b LARGE_QUARK_edit_wheel
++d7c5f87612d3228e LARGE_QUARK_env
++d313e631b2d6c71d LARGE_QUARK_env_2
++f9cc5a8453f8e8ef LARGE_QUARK_feel_range
++8a80f9ee67d035d4 LARGE_QUARK_fm6_alg_01
++fb86535a1e61f261 LARGE_QUARK_fm6_alg_05
++574053395d8d03f7 LARGE_QUARK_fm6_alg_22
++581fc306f59e5464 LARGE_QUARK_fm6_alg_32
++f0f2ce84d8ae03af LARGE_QUARK_fm_all_algo
++c702678f34f5efe5 LARGE_QUARK_fm_all_lfo
++926fe78f4da12918 LARGE_QUARK_fm_all_pitch
++cac46b5559b417a3 LARGE_QUARK_fm_init
++c1931407518365ed LARGE_QUARK_fm_op_env
++82bd17bc013cb350 LARGE_QUARK_fm_op_keys
++232d3f14a210be7c LARGE_QUARK_fm_op_tone
++6c04076131d644dd LARGE_QUARK_fx
++caf27752ac07ce27 LARGE_QUARK_fx_duck
++c85b3541eb01b911 LARGE_QUARK_fx_duck_off
++524f95adc8cbd162 LARGE_QUARK_global
++d52ae2ec541c06c1 LARGE_QUARK_global_swing
++76c1630f40aaa1ea LARGE_QUARK_head_beat_2
++6e2d2afd5e634b46 LARGE_QUARK_head_bpm_lock
++b010ba151a0f5a8b LARGE_QUARK_head_bpm_locked
++ee2ffdae9bd064d4 LARGE_QUARK_head_bpm_turn
++76c1630f40aaa1ea LARGE_QUARK_head_downbeat
++efb14c6a3c3cbb18 LARGE_QUARK_head_glo_turn
++76c1630f40aaa1ea LARGE_QUARK_head_play_rec
++c81cfb856d045a4b LARGE_QUARK_head_project
++6bfc73ca2c86fba6 LARGE_QUARK_head_rec_other
++5cc33d83ac6e3a8b LARGE_QUARK_home
++cb7c683e77fbe597 LARGE_QUARK_home_idle
++33f61016b2db27cb LARGE_QUARK_home_scope
++cae4a69071df9fe6 LARGE_QUARK_insert_crush
++0b7888120a0b13b3 LARGE_QUARK_insert_flanger
++a6a44624444273e0 LARGE_QUARK_insert_fuzz
++0b969f2de7dd71ea LARGE_QUARK_lane_mix
++aa41a015a7b19bb5 LARGE_QUARK_lane_mix_dx
++ef39082e1aeb448d LARGE_QUARK_lanes
++9740efb5207a812d LARGE_QUARK_lanes_tune
++31371c71ab0ce3d2 LARGE_QUARK_lanes_usr
++ae7f2244171ca8f8 LARGE_QUARK_layer_edit_active
++3353bec30cb720a6 LARGE_QUARK_layer_edit_peek
++286f58a2a1f4b81d LARGE_QUARK_layer_edit_user
++1b830e825979d7de LARGE_QUARK_layer_glo_active
++7946feb3c9ec5fef LARGE_QUARK_layer_glo_ext
++16db918a66e6ee9c LARGE_QUARK_layer_glo_peek
++db2a46a2b9bc42d2 LARGE_QUARK_layer_hint
++76e9036ee65129c8 LARGE_QUARK_layer_lock
++84313b7f5cdb28b5 LARGE_QUARK_layer_lock_fx
++5bd57a567e7c9ed2 LARGE_QUARK_layer_perform
++b70ba0b92de5647f LARGE_QUARK_layer_perform_scenes
++4392f7ab28b49d2a LARGE_QUARK_layer_rec
++e808c26198521c4b LARGE_QUARK_layer_rec_set
++743354143d4c22e1 LARGE_QUARK_layer_scl_active
++247344f11b53a5f4 LARGE_QUARK_layer_scl_peek
++92af52eb76caedf4 LARGE_QUARK_layer_seq_tools
++9c288e90af23bdac LARGE_QUARK_layer_seq_tools_drum
++38da73cdccb640d2 LARGE_QUARK_learn
++0dc635f7caa3bbdf LARGE_QUARK_learn_cc
++fc06b002a3877f8b LARGE_QUARK_lfo
++aba48bd73cbc2ac9 LARGE_QUARK_lfo_2
++6a57f8aca8de2761 LARGE_QUARK_lfo_run
++993461bca5f5658d LARGE_QUARK_menu
++fa0206cfad1cab6d LARGE_QUARK_menu_audio
++53b032784b8b50d3 LARGE_QUARK_menu_end
++ccbda5036c4e47f8 LARGE_QUARK_menu_hold
++ea1c3ac96dc5576c LARGE_QUARK_menu_leds
++b8c355c9ce580ebf LARGE_QUARK_menu_midi
++9ab88c33c5e9116a LARGE_QUARK_menu_midi_scroll
++76f628fb296a7079 LARGE_QUARK_menu_slide
++4f3e68da865c130f LARGE_QUARK_menu_speaker
++df4b14e66acc0e58 LARGE_QUARK_menu_system
++b36b59bcdc9749f7 LARGE_QUARK_message
++6578184adaa0b56a LARGE_QUARK_message_key
++aeeb2392e28a7b1b LARGE_QUARK_message_nofile
++f7fea0575002a2dd LARGE_QUARK_mixer
++bd237913a2a396c2 LARGE_QUARK_mixer_pan
++1841ff08b051625c LARGE_QUARK_mock_dialog
++9bd4559f5f4ea2f3 LARGE_QUARK_mock_drum
++d10ad091e2ad096c LARGE_QUARK_mock_home
++dccf4f69e668d2b5 LARGE_QUARK_mock_menu
++4bd5072d948f6e51 LARGE_QUARK_mock_mixer
++e0da29073ca61610 LARGE_QUARK_mock_presets
++9888dd9104ca1fef LARGE_QUARK_mock_seq
++1901e248ce407d64 LARGE_QUARK_mod
++abccce4e302c38f6 LARGE_QUARK_mod_env
++46171ffde72eef73 LARGE_QUARK_mod_grid
++d72a0d3caa44c884 LARGE_QUARK_momentary
++0eac1f7fc5cb7f53 LARGE_QUARK_motion
++08bcfc5d90cb8923 LARGE_QUARK_motion_card
++5445572fd1ace40b LARGE_QUARK_motion_locks
++0b48043336554792 LARGE_QUARK_motion_off
++d0bacfdc8c6bd7bc LARGE_QUARK_motion_rec
++a8639b64b2248068 LARGE_QUARK_name_123
++0b8022c2f1a75de1 LARGE_QUARK_name_empty
++cf91d50540457eb5 LARGE_QUARK_name_full
++6a99e48fbe9d2a69 LARGE_QUARK_name_playing
++492cbeb0f3371d8a LARGE_QUARK_name_typing
++fec62d5bac621264 LARGE_QUARK_name_user
++cc25aad8775cab6e LARGE_QUARK_notes_chain
++403371a2ca2fe060 LARGE_QUARK_notes_overlap
++a61ef0f664d9e2bb LARGE_QUARK_notes_pick
++144812cc1bf06b07 LARGE_QUARK_notes_range
++811511e5dd5c7d3f LARGE_QUARK_pattern
++6ac54da11f466c5d LARGE_QUARK_perform_harm
++ed0c2f612ca7405a LARGE_QUARK_perform_held
++e27ceb5d5e0fa192 LARGE_QUARK_perform_peek
++1c7bfd7e198a1ce8 LARGE_QUARK_perform_wait
++dc29d7bcb93fe00f LARGE_QUARK_play_dir
++bd3007b41aa278f8 LARGE_QUARK_play_gate
++9a06646235918ee3 LARGE_QUARK_pool
++b1a8cb4fe8ec2fb9 LARGE_QUARK_pool_empty
++d65daabe25349bf9 LARGE_QUARK_pool_unused
++648bf4a443b7388d LARGE_QUARK_presets
++a67fbd8930137750 LARGE_QUARK_presets_bass
++eae3eaba4162011e LARGE_QUARK_presets_nofav
++1cff8325f58894c3 LARGE_QUARK_project
++251a6882c883186d LARGE_QUARK_project_named
++18e443dece1fb3e5 LARGE_QUARK_reverb_hall
++61e2d49c83ba17c9 LARGE_QUARK_reverb_spring
++709fae6f01f0d775 LARGE_QUARK_roll_acid
++7a5eca117e62e7b4 LARGE_QUARK_roll_chords
++828bf7d49ba527c5 LARGE_QUARK_roll_empty
++8a68f7c9c62a3b79 LARGE_QUARK_roll_high
++4e500c2fca610d1e LARGE_QUARK_roll_len32_p2
++88b00e0ed6fd565a LARGE_QUARK_roll_lock_held
++4511028f71bbcd05 LARGE_QUARK_roll_locks
++5d582d5decbea739 LARGE_QUARK_roll_low
++6eb5bf9019481b7c LARGE_QUARK_roll_playing
++23946075a9ee5dbb LARGE_QUARK_roll_ties
++c447bd1de7157768 LARGE_QUARK_roll_wide
++dc260a6482533a1d LARGE_QUARK_samples
++badb952e72931212 LARGE_QUARK_scl
++55e923a35a88a9a5 LARGE_QUARK_shift_env
++facc468e1cf76a52 LARGE_QUARK_shift_home
++bbd91369b9271694 LARGE_QUARK_shift_step
++5cd9e52a586ab37b LARGE_QUARK_six_edit
++b28a89179d807c38 LARGE_QUARK_six_edit_said
++ad36841e08c263bc LARGE_QUARK_six_fx
++aa85ae8b0abcfb9a LARGE_QUARK_six_glo
++591347b3200342f1 LARGE_QUARK_six_home
++21451eb413be57f8 LARGE_QUARK_six_mixer
++3afbaf87b5973988 LARGE_QUARK_six_perform
++57a6307dd2d0af07 LARGE_QUARK_six_song
++76459b568b48eb98 LARGE_QUARK_slicer
++780098607d4ba607 LARGE_QUARK_slices_break
++5994b88bb0fe039e LARGE_QUARK_slices_nofile
++6d97fbd8656dcadd LARGE_QUARK_slices_usr
++53109d19fe62b7c9 LARGE_QUARK_song
++04abd1ac0505d9ee LARGE_QUARK_song_chain
++8918081dc70998a7 LARGE_QUARK_song_chain3
++651f3d23cfc04647 LARGE_QUARK_song_chain_copy
++086ec1434258513f LARGE_QUARK_song_chains
++fc1c0eda654f63dd LARGE_QUARK_song_clear
++fac1fdc69dc31337 LARGE_QUARK_song_copy
++9d03aa9b6f3b8be7 LARGE_QUARK_song_copyplus
++f7a45bab96884464 LARGE_QUARK_song_new
++d8e207c2df5d5a4a LARGE_QUARK_song_once
++fd59f09ce8b1db50 LARGE_QUARK_song_playing
++3f4f05bd7f2e743f LARGE_QUARK_song_rest
++598b2025c171e470 LARGE_QUARK_song_rest_pick
++f9f71ffe70e6ddfa LARGE_QUARK_song_sound
++9fa140b32e516c78 LARGE_QUARK_song_sounds
++72b01ea5846ef156 LARGE_QUARK_splash
++cef8e41e87e80512 LARGE_QUARK_step
++7d6badc4d2ff5fe8 LARGE_QUARK_step_mark
++5087a9c5518f82b6 LARGE_QUARK_step_tiles
++1a9a0cc52c58be24 LARGE_QUARK_step_tiles_bar2
++65345b92161e1840 LARGE_QUARK_step_tiles_drum
++6e2d2afd5e634b46 LARGE_QUARK_take_box
++6e2d2afd5e634b46 LARGE_QUARK_take_partial
++3a52ec05a6f4e18e LARGE_QUARK_uboot
++6e2d2afd5e634b46 LARGE_QUARK_undo_box
++c60ba7f9ff584b65 LARGE_QUARK_user
++585db219212581e1 LARGE_QUARK_user_foot
++14ab60f2facebccd LARGE_QUARK_voice
++cb2a1f57454860bc LARGE_QUARK_voice_2
++cb2a1f57454860bc LARGE_QUARK_voice_2_uni
++51601312b4ce4b28 LARGE_QUARK_voice_glide
+ 87b364b47f143685 LARGE_SKIFF_about
+ a0a63cccb102fd7d LARGE_SKIFF_about_credits
+ 600c4ef4d084815a LARGE_SKIFF_about_end
+@@ -2900,251 +2900,251 @@ dd2c60d0a0f712a6 PAPER_voice_glide
+ 8af24eb4d1be6645 PHLINE_CRYPT_six_home
+ 273790b4f26b923a PHLINE_NEON_home
+ fee43c6ce8c54275 PHLINE_NEON_six_home
+-4e7899be754154c0 PHLINE_QUARK_home
+-cb7963f36bafe78c PHLINE_QUARK_six_home
++6f0de12e8e768565 PHLINE_QUARK_home
++55c5d3fb1caee0c5 PHLINE_QUARK_six_home
+ 89730bc4ccfd788f QUARK_about
+ 6e02e44fcd38b6d4 QUARK_about_credits
+ 908f3cc91b66f27d QUARK_about_end
+ 364d0a031c1adcfb QUARK_about_rec
+-f0f31931553bdc98 QUARK_arp
+-68c62c149b7a0502 QUARK_arp_2
+-adfaa1a7032e76da QUARK_arp_on
+-27e48082cc47dd28 QUARK_auto_list
+-c660434bb5b7afc7 QUARK_auto_list_add
+-ab3feabbb24abdc0 QUARK_auto_list_delete
+-91e3fda30480a8b9 QUARK_auto_list_drum
+-c982fbcf22b832ea QUARK_batt_0
+-b0b8f22fec570f86 QUARK_batt_1
+-0315c636104da1d2 QUARK_batt_2
+-b9659b9e96a5f3ea QUARK_batt_3
+-c09979de5e3e2170 QUARK_batt_usb
+-3fe412572250fc93 QUARK_bpm_roll
++eb0f5a4cae2d8b30 QUARK_arp
++b8cb4cd1e16d15a6 QUARK_arp_2
++58378d0409007d52 QUARK_arp_on
++eaace3b01ac0acbb QUARK_auto_list
++ba31e56d43e930ab QUARK_auto_list_add
++4b35f0c2b08e3a97 QUARK_auto_list_delete
++9537add32fd4a927 QUARK_auto_list_drum
++e11be795342bbf26 QUARK_batt_0
++7f4a13a26a3a1422 QUARK_batt_1
++efd9926f2472252e QUARK_batt_2
++d0fe8764a8198026 QUARK_batt_3
++b113572603d70fa8 QUARK_batt_usb
++6da47253cd2fbc93 QUARK_bpm_roll
+ eb3f5132acb8cebf QUARK_calibration
+-878d6f1d3904fd13 QUARK_card_roll
+-c04f34d26e4d1659 QUARK_chance
+-a76545c1f30cef67 QUARK_chance_flam
+-d5bbcb33532adf3d QUARK_chord
+-e54606c6a545a0bc QUARK_chord_kit
+-91c5dca13abf8909 QUARK_chord_off
+-b85f7b884af5335e QUARK_chord_wide
+-2f704fd2673ae707 QUARK_chorus
+-82cb8626c6df71c8 QUARK_chorus_feedback
+-bad38781558936ba QUARK_chorus_flanger
+-a806b15b923e8ef3 QUARK_chorus_phaser
+-65affb116916977a QUARK_confirm_empty
+-39027941718bfaa2 QUARK_confirm_entry
+-536788bbe01f20af QUARK_confirm_entry_last
+-1eba73d5694346d3 QUARK_confirm_erase
+-00ce42c2ad1c1a9e QUARK_confirm_init
+-78bda0b4338f75e8 QUARK_confirm_init_dx
+-5dec0778a2e7473b QUARK_confirm_load
+-f2a186eaa4bad786 QUARK_confirm_motion
+-bc21cf5082130dba QUARK_confirm_pool
+-1a5bf14809f5758f QUARK_confirm_project
+-5d380f6946a555bb QUARK_confirm_seq
+-f36d6e4c6adbe76c QUARK_confirm_user
+-49e1d0be218f854c QUARK_countin
+-cc411d5eaddfe7e8 QUARK_countin_2bars
+-faa3f46f44ac87dc QUARK_dly
+-6ee1b9fd3343f853 QUARK_drive_crush
+-b506b6fa66af453c QUARK_drive_fold
+-151f0b30be6f4bc4 QUARK_drive_fuzz
+-259587c17a2821d6 QUARK_drive_hard
+-674c72733bcd4558 QUARK_drive_soft
+-19508f19dc19875c QUARK_drum
+-b6c6e1e5dc2c846d QUARK_drum_cym
+-d9330b9e04aa042e QUARK_drum_hand
+-662537b524da9db5 QUARK_drum_kit_usr
+-7ceb7a95063cc3e0 QUARK_drum_lock_held
+-a9a39471ab25141c QUARK_drum_locks
+-1b8afc7a08c6e86b QUARK_dx_sound
+-dc15ed879310b736 QUARK_dx_sound_2
+-bc383fe6d9a123f6 QUARK_dx_sound_3
+-65c46001c73f3ac0 QUARK_edit_analog
+-ca4ccf39698c47ad QUARK_edit_flt
+-ada35f89bc399d1f QUARK_edit_fm6
+-465c9a4217d804b1 QUARK_edit_grain
+-65b452c5d3299f2f QUARK_edit_phys
+-59af0bc7996f122a QUARK_edit_sample
+-ac101b1ef4ba53d3 QUARK_edit_wheel
+-5e69a68b107a09ef QUARK_env
+-44b8ac8f5b2fbb0c QUARK_env_2
+-56c54c0bf45dbd26 QUARK_feel_range
+-c15c02bb46367b4b QUARK_fm6_alg_01
+-12abc4487ec9d73c QUARK_fm6_alg_05
+-40124c91ca81ab2d QUARK_fm6_alg_22
+-ee2c579eb4d70429 QUARK_fm6_alg_32
+-c1e4eca4cca51e87 QUARK_fm_all_algo
+-caaa087bdf402910 QUARK_fm_all_lfo
+-a5a12f8b6b384f89 QUARK_fm_all_pitch
+-bb7e1cad4c8222a0 QUARK_fm_init
+-2470a4a47b5d5e49 QUARK_fm_op_env
+-c7fc3d3a22528669 QUARK_fm_op_keys
+-3df0baa891d68a13 QUARK_fm_op_tone
+-14fdf834a6ca9972 QUARK_fx
+-6687462a867ff630 QUARK_fx_duck
+-4b593da58a603616 QUARK_fx_duck_off
+-bccae5b3012fd7df QUARK_global
+-05d7ec9be9e18149 QUARK_global_swing
+-0c93c29b6518fff3 QUARK_head_beat_2
+-c09979de5e3e2170 QUARK_head_bpm_lock
+-5e4614a250fd8445 QUARK_head_bpm_locked
+-d903a3716bebb796 QUARK_head_bpm_turn
+-0c93c29b6518fff3 QUARK_head_downbeat
+-dc5bedbef466a53e QUARK_head_glo_turn
+-0c93c29b6518fff3 QUARK_head_play_rec
+-e40f5c8837ef8868 QUARK_head_project
+-5a9f5dd5196fed80 QUARK_head_rec_other
+-861cdff14fc00bfa QUARK_home
+-c191cd4cb13643d5 QUARK_home_idle
+-f95a43862cf34ced QUARK_home_scope
+-01496d011addc190 QUARK_insert_crush
+-20796e415f29ae76 QUARK_insert_flanger
+-d2edf8528a8b245e QUARK_insert_fuzz
+-a461372221b44273 QUARK_lane_mix
+-1bcbc561d6714c08 QUARK_lane_mix_dx
+-91fd49244c2e50ba QUARK_lanes
+-2c7594aa858e039d QUARK_lanes_tune
+-0842b2b38c3a5fd2 QUARK_lanes_usr
+-00c99dbeb80aaf21 QUARK_layer_edit_active
+-a778d3d57a6c751a QUARK_layer_edit_peek
+-1061b1f9d29385fb QUARK_layer_edit_user
+-2f76e17474074dc3 QUARK_layer_glo_active
+-d76c98fa64729853 QUARK_layer_glo_ext
+-698f95329b78b5e2 QUARK_layer_glo_peek
+-a792784311264c7d QUARK_layer_hint
+-61a40c1ccbd3c3ec QUARK_layer_lock
+-850b64f980ca82e4 QUARK_layer_lock_fx
+-061b1068869fed7f QUARK_layer_perform
+-69d481efe2cc1524 QUARK_layer_perform_scenes
+-b7ecee5724506f1f QUARK_layer_rec
+-1e2efad897137ec3 QUARK_layer_rec_set
+-72a3caeeea249371 QUARK_layer_scl_active
+-9873e42897a3635c QUARK_layer_scl_peek
+-18fb5dda37d982c2 QUARK_layer_seq_tools
+-424754698aceae04 QUARK_layer_seq_tools_drum
+-ca6bf1d0e7fe9ae4 QUARK_learn
+-b98eab39fd887891 QUARK_learn_cc
+-4b586a81b05955b3 QUARK_lfo
+-b10ee0ffd2a09c4f QUARK_lfo_2
+-a9f1b00d3018657c QUARK_lfo_run
+-47a6170af2c85039 QUARK_menu
+-ca5f7709b66d4e0b QUARK_menu_audio
+-ac2f4fdadbba3255 QUARK_menu_end
+-b392c706be0682f6 QUARK_menu_hold
+-386c7e047ab00c1c QUARK_menu_leds
+-397d2f468e3a7e5c QUARK_menu_midi
+-7c8ea1b03970d6f0 QUARK_menu_midi_scroll
+-38635964dbaefd5a QUARK_menu_slide
+-8a8b2b47f5764e03 QUARK_menu_speaker
+-e06ad69b548dbe5a QUARK_menu_system
+-7dc34ec64c5af8d1 QUARK_message
+-48f4fa2656257a74 QUARK_message_key
+-6c870890118357db QUARK_message_nofile
+-213ad45e662249f0 QUARK_mixer
+-c05881e8e6d271f4 QUARK_mixer_pan
+-bba3932ed9e9bd02 QUARK_mock_dialog
+-16f339e03d6d0906 QUARK_mock_drum
+-165a27c748d2c096 QUARK_mock_home
+-8a1f31013401c211 QUARK_mock_menu
+-2729614b344dc81c QUARK_mock_mixer
+-8c88e95941bf2660 QUARK_mock_presets
+-923ebde45729b3f9 QUARK_mock_seq
+-5f9a3185d568c0d4 QUARK_mod
+-6c22ccf0fb944a9f QUARK_mod_env
+-61da37427fd23afc QUARK_mod_grid
+-b7bd64ae1d579cc3 QUARK_momentary
+-04f0e85d14ef4148 QUARK_motion
+-8e34d1f1b99dfd4f QUARK_motion_card
+-2ca81cdee999c5eb QUARK_motion_locks
+-9572b075aeee620d QUARK_motion_off
+-d53ec0ce57ebc641 QUARK_motion_rec
+-92a705b63ece9968 QUARK_name_123
+-f5c38d147e5176e1 QUARK_name_empty
+-b708e437d2127a75 QUARK_name_full
+-48e9398e282b2f69 QUARK_name_playing
+-d1999852907a28ca QUARK_name_typing
+-729bb4c4afff1fa4 QUARK_name_user
+-630290f1557f58e2 QUARK_notes_chain
+-77f4efa2d68f121a QUARK_notes_overlap
+-7efa686f9ca9a04b QUARK_notes_pick
+-8e47b89c25dba809 QUARK_notes_range
+-ca43ccc2ea9e7c15 QUARK_pattern
+-ac82fed3c0cfbd3c QUARK_perform_harm
+-229cc6ed76a2265a QUARK_perform_held
+-ba782e94eec8f5af QUARK_perform_peek
+-c337c6ecbaa51cf9 QUARK_perform_wait
+-eaac718cd07ef186 QUARK_play_dir
+-6eebcf666f03cd12 QUARK_play_gate
+-17fa68b7de237503 QUARK_pool
+-ddbd7f3a9933538f QUARK_pool_empty
+-a5e3b8d59a505c14 QUARK_pool_unused
+-1d18f6a41d5e7e55 QUARK_presets
+-12208ca79279eb28 QUARK_presets_bass
+-d21ae55864213516 QUARK_presets_nofav
+-a819fe71f26358cb QUARK_project
+-56f6e8f0931a17e9 QUARK_project_named
+-8a28485494bbc776 QUARK_reverb_hall
+-6108874e59a11d2c QUARK_reverb_spring
+-04d94a244d5198b9 QUARK_roll_acid
+-886ed360295b7fef QUARK_roll_chords
+-de1ad4247a616d32 QUARK_roll_empty
+-7730f2917884667d QUARK_roll_high
+-fdd76de8570db88a QUARK_roll_len32_p2
+-a8ecf1c6ce9480c4 QUARK_roll_lock_held
+-391fd9f944eb9209 QUARK_roll_locks
+-2e0cff7f6c5beb3d QUARK_roll_low
+-65c0e42214fd89a4 QUARK_roll_playing
+-e978c3ddf01adfcc QUARK_roll_ties
+-3c3e351f415e5a22 QUARK_roll_wide
+-e262ae3579d94034 QUARK_samples
+-e8c698e4a134ebb7 QUARK_scl
+-1c5d2c749a04a5b4 QUARK_shift_env
+-979f56ddbd144c07 QUARK_shift_home
+-e39704dec79c764f QUARK_shift_step
+-7ee9d8bdde3c6db8 QUARK_six_edit
+-fcc11747dcfbdc27 QUARK_six_edit_said
+-850b64f980ca82e4 QUARK_six_fx
+-e0e6b9b8193ec058 QUARK_six_glo
+-353b83911a63f625 QUARK_six_home
+-5313b1a9e0ca1296 QUARK_six_mixer
+-61e032510e96be6f QUARK_six_perform
+-19c3d02923a17e37 QUARK_six_song
+-58ebf9002c7935c7 QUARK_slicer
+-be3baecf630ac03f QUARK_slices_break
+-73098c82ce97d916 QUARK_slices_nofile
+-0c226798918e57c6 QUARK_slices_usr
+-0213f3e03e71de1d QUARK_song
+-1b90ad1603cf5e95 QUARK_song_chain
+-9f81a59a4eba4694 QUARK_song_chain3
+-cad096af8aa9ef50 QUARK_song_chain_copy
+-2e6ee48ea7958490 QUARK_song_chains
+-2bb30a2e8047af5d QUARK_song_clear
+-7e583a68ec0a728d QUARK_song_copy
+-13dcf82fb0cc6a74 QUARK_song_copyplus
+-a4f20b26ddc6df3a QUARK_song_new
+-d759d3055990bc26 QUARK_song_once
+-e3cf3a9e107fd4bc QUARK_song_playing
+-0af1006a8f2c87da QUARK_song_rest
+-86a7cf988e0bd725 QUARK_song_rest_pick
+-ecf95f643f1617a6 QUARK_song_sound
+-93761f7ec3bd7004 QUARK_song_sounds
+-07e2cee512e023b8 QUARK_splash
+-b8860221a86e098e QUARK_step
+-18d52a1157ae7dca QUARK_step_mark
+-9f85569f187231ec QUARK_step_tiles
+-f3669850d1aef65c QUARK_step_tiles_bar2
+-47feed06fc6e9ecf QUARK_step_tiles_drum
+-febca0b858adbcd2 QUARK_take_box
+-83d51825308e1d11 QUARK_take_partial
+-46ee8bbddf9448ce QUARK_uboot
+-c82b79c110e33c54 QUARK_undo_box
+-65d06a7d3ab73974 QUARK_user
+-de646e047d724077 QUARK_user_foot
+-d5987ab09a28a806 QUARK_voice
+-893b270ea5327b18 QUARK_voice_2
+-b44c8316939b74d2 QUARK_voice_2_uni
+-95a643bb842f71e3 QUARK_voice_glide
++f6c554b35301f3a3 QUARK_card_roll
++d17449e73c06fab4 QUARK_chance
++8a0c7cca7ac07770 QUARK_chance_flam
++23a5783f022cf3a4 QUARK_chord
++2c24ae488e9f8157 QUARK_chord_kit
++f2841ace3298e2c6 QUARK_chord_off
++295aca79bd60e71b QUARK_chord_wide
++af8604f923f6a358 QUARK_chorus
++57c724768bed1bb7 QUARK_chorus_feedback
++2cb9b67618fd6f0b QUARK_chorus_flanger
++724bd7cc96701d92 QUARK_chorus_phaser
++373b524f5d93ccac QUARK_confirm_empty
++061fcb6c61cfaca8 QUARK_confirm_entry
++e7b1f44815d2de41 QUARK_confirm_entry_last
++ae8a33fd1aa486b7 QUARK_confirm_erase
++79b21ee1d0564976 QUARK_confirm_init
++853b272177a294d7 QUARK_confirm_init_dx
++5cb947887ab2870f QUARK_confirm_load
++88beb43558a36256 QUARK_confirm_motion
++97743c19e15550b0 QUARK_confirm_pool
++0f15469cb78dde6f QUARK_confirm_project
++cda5332ca667a763 QUARK_confirm_seq
++77bb025fc9d8dc10 QUARK_confirm_user
++ef5b4e23c8387b0c QUARK_countin
++807cec756d45fbe8 QUARK_countin_2bars
++2c9728994707d8de QUARK_dly
++83fea9ddf7ffee47 QUARK_drive_crush
++e78b7482d52ec7b3 QUARK_drive_fold
++d7d305ee0631f128 QUARK_drive_fuzz
++b953d3427e362a84 QUARK_drive_hard
++3b6602c84e8a915a QUARK_drive_soft
++2fb608b1f5786dc9 QUARK_drum
++5db1d3618ba82313 QUARK_drum_cym
++97b7469f71f84b63 QUARK_drum_hand
++bbfd3713a05c37a5 QUARK_drum_kit_usr
++f67c1e51fd47da13 QUARK_drum_lock_held
++3165d8535020c009 QUARK_drum_locks
++157866e1e125a9d9 QUARK_dx_sound
++e3e1fbb93d2dc5c4 QUARK_dx_sound_2
++60b69d333ae291a5 QUARK_dx_sound_3
++7b71afae8fbc8eba QUARK_edit_analog
++9e9ccf5f5671cdc2 QUARK_edit_flt
++faa790067038e581 QUARK_edit_fm6
++002ef180dcf29748 QUARK_edit_grain
++b0be60e8561ae70e QUARK_edit_phys
++decf5d0c135a19f4 QUARK_edit_sample
++de372314f76d8cdc QUARK_edit_wheel
++86e7b5d66e3812fc QUARK_env
++253e6e22208c3760 QUARK_env_2
++e95f1fc91d55c871 QUARK_feel_range
++6a00347ade52b57b QUARK_fm6_alg_01
++6f54cac958ab983e QUARK_fm6_alg_05
++32fa84b78cfb42cd QUARK_fm6_alg_22
++cbd453eea61c2585 QUARK_fm6_alg_32
++5365dddbfd88f7f6 QUARK_fm_all_algo
++fac4d2e738ed8c85 QUARK_fm_all_lfo
++0b0c4351da3bb19e QUARK_fm_all_pitch
++086d1111c9a49928 QUARK_fm_init
++10dc7eb269772dbd QUARK_fm_op_env
++0282e679a20c41ec QUARK_fm_op_keys
++701fdfee213837c4 QUARK_fm_op_tone
++92d5c4cf02ff3e54 QUARK_fx
++09c03c4182995d6b QUARK_fx_duck
++ae9a480f6ec55dd5 QUARK_fx_duck_off
++05e27b8c353faefc QUARK_global
++8333854bb4545a21 QUARK_global_swing
++1eb28cf17c5c4d1c QUARK_head_beat_2
++b113572603d70fa8 QUARK_head_bpm_lock
++c25b5dbffc17a565 QUARK_head_bpm_locked
++539c66381d3f32f2 QUARK_head_bpm_turn
++1eb28cf17c5c4d1c QUARK_head_downbeat
++3c181ac72afafbc8 QUARK_head_glo_turn
++1eb28cf17c5c4d1c QUARK_head_play_rec
++d61a5ee8e6a5c209 QUARK_head_project
++98264788971e03c8 QUARK_head_rec_other
++6f0de12e8e768565 QUARK_home
++24d4ae2f35627e61 QUARK_home_idle
++4fd0ec33191fcb37 QUARK_home_scope
++6e5788b94c8bcbef QUARK_insert_crush
++ea1abab43836c03c QUARK_insert_flanger
++f0d358cc94f8a666 QUARK_insert_fuzz
++ac42bea66fe3a146 QUARK_lane_mix
++7479308d9d94eca9 QUARK_lane_mix_dx
++8646576079202570 QUARK_lanes
++6688d6b66d298eb3 QUARK_lanes_tune
++10ca8ed10181fb3a QUARK_lanes_usr
++a8d93ad0d593db64 QUARK_layer_edit_active
++d50a5079711c637b QUARK_layer_edit_peek
++d204d9251361c34c QUARK_layer_edit_user
++ab84193e648275dc QUARK_layer_glo_active
++1080f4e99c16e8b7 QUARK_layer_glo_ext
++c3a80d9dd8d7b8ec QUARK_layer_glo_peek
++9364b4316a5e7a17 QUARK_layer_hint
++39de27d0010ef9d9 QUARK_layer_lock
++a77d7cd3303b0a92 QUARK_layer_lock_fx
++c16a3f6f79386d23 QUARK_layer_perform
++deb526ef9e91b51a QUARK_layer_perform_scenes
++43145e36fde0ace6 QUARK_layer_rec
++6b32bd8fceddb607 QUARK_layer_rec_set
++5a56752599d768c8 QUARK_layer_scl_active
++658a39d71677edf8 QUARK_layer_scl_peek
++401f4435a9f3f44c QUARK_layer_seq_tools
++43af4a2ab4f29c04 QUARK_layer_seq_tools_drum
++4a3bc1f0f2d19c9c QUARK_learn
++ea7c96872f71fa19 QUARK_learn_cc
++fc1d5ef705364ebb QUARK_lfo
++6057ef4eec169c82 QUARK_lfo_2
++6550fda9e5b3db6d QUARK_lfo_run
++5c856235f69024db QUARK_menu
++499a54053a4e9bdf QUARK_menu_audio
++53b032784b8b50d3 QUARK_menu_end
++98ef7140a79174c4 QUARK_menu_hold
++b99bffb7ad9024bb QUARK_menu_leds
++2807876bee1253ae QUARK_menu_midi
++bb40461c7747c049 QUARK_menu_midi_scroll
++d1a756a15a918c71 QUARK_menu_slide
++5e7c87d8bd668e14 QUARK_menu_speaker
++ab46ead41f81f279 QUARK_menu_system
++cd19856e25192b71 QUARK_message
++cc083f516371349c QUARK_message_key
++d7fb7bc85fed04fc QUARK_message_nofile
++13c0ed513e57c8a7 QUARK_mixer
++215822455816a1ba QUARK_mixer_pan
++548955fc5fd7f93e QUARK_mock_dialog
++cc031f28f7d82b21 QUARK_mock_drum
++2d5ac9e36bbe2da1 QUARK_mock_home
++3c13bacd29d69de3 QUARK_mock_menu
++7a68c77d925bff49 QUARK_mock_mixer
++97128986c25e5548 QUARK_mock_presets
++334392460c95f570 QUARK_mock_seq
++365ce550f0fa0f17 QUARK_mod
++d2f2caab0e0c2f45 QUARK_mod_env
++5555bbee9b2b27fa QUARK_mod_grid
++833be382eed72ae9 QUARK_momentary
++60ae3eb430bd43c2 QUARK_motion
++041e28d24d9dce44 QUARK_motion_card
++66410d95514edbef QUARK_motion_locks
++417a7b07b1f64333 QUARK_motion_off
++90eaae0a9e427382 QUARK_motion_rec
++a8639b64b2248068 QUARK_name_123
++0b8022c2f1a75de1 QUARK_name_empty
++cf91d50540457eb5 QUARK_name_full
++6a99e48fbe9d2a69 QUARK_name_playing
++492cbeb0f3371d8a QUARK_name_typing
++fec62d5bac621264 QUARK_name_user
++973b32bf0aa68440 QUARK_notes_chain
++49217a69b64b3516 QUARK_notes_overlap
++065b81f2e620faf4 QUARK_notes_pick
++1b15e364bfb4df54 QUARK_notes_range
++cbf2dd8d9788163d QUARK_pattern
++19ce62ca4821c431 QUARK_perform_harm
++f30d27ac4476bc0c QUARK_perform_held
++a37d086451a8cf11 QUARK_perform_peek
++232a61699b286e6f QUARK_perform_wait
++aa57602097b4548b QUARK_play_dir
++0e5f845f968cfe1f QUARK_play_gate
++5c4d3a44ea1bcdd1 QUARK_pool
++4835143379d4beeb QUARK_pool_empty
++25b0a71c30e7dcbb QUARK_pool_unused
++9d2cc9e4298d56b5 QUARK_presets
++3f71b3e00bb0f048 QUARK_presets_bass
++5b947822ee468c76 QUARK_presets_nofav
++7329b85e6934603b QUARK_project
++d99e29e415ba54a9 QUARK_project_named
++1d077552576856e1 QUARK_reverb_hall
++26cbd3ba2247ce67 QUARK_reverb_spring
++60679c8dbf6ac0a3 QUARK_roll_acid
++ad2c2cad2190d712 QUARK_roll_chords
++35e84725b7789d47 QUARK_roll_empty
++4f6ff91d835257d7 QUARK_roll_high
++9eb0dc1290a0ccf4 QUARK_roll_len32_p2
++b30513a94ec8d84e QUARK_roll_lock_held
++9bc03f2d90667233 QUARK_roll_locks
++af12e0982413b3df QUARK_roll_low
++2cf3b64d412c29de QUARK_roll_playing
++d80e5c650f0b7179 QUARK_roll_ties
++159306bb236e73ae QUARK_roll_wide
++dd52152e2df6e43c QUARK_samples
++ccfc3a0172cb49d3 QUARK_scl
++cea5dba5ee3d54d9 QUARK_shift_env
++8c3647935dd08266 QUARK_shift_home
++3ebaa06109f37bce QUARK_shift_step
++eafaf9e48e9a2daf QUARK_six_edit
++de7d63012716edc8 QUARK_six_edit_said
++c9113567ee4d28b3 QUARK_six_fx
++49d256a8523a93f2 QUARK_six_glo
++55c5d3fb1caee0c5 QUARK_six_home
++eed61566e2ca74ef QUARK_six_mixer
++eba0e7bc3787c425 QUARK_six_perform
++3c0a1bd38aa5eafb QUARK_six_song
++3ba53fe332cc8f1a QUARK_slicer
++cee3e0fda1e87b2b QUARK_slices_break
++6c757924d94216d2 QUARK_slices_nofile
++8367e9533d05f36a QUARK_slices_usr
++44dd34ad55ec458d QUARK_song
++0172dc9c3c23ebff QUARK_song_chain
++e088ce7b8b0f03ae QUARK_song_chain3
++9421b99ba2d4ba93 QUARK_song_chain_copy
++4c8d588f4aa9691e QUARK_song_chains
++95aa0f5d59a812e1 QUARK_song_clear
++fa625b9822f407bb QUARK_song_copy
++416c4485fae1ef6b QUARK_song_copyplus
++da5d40957cf020d0 QUARK_song_new
++349446574a9efff3 QUARK_song_once
++14e717b6ded027b0 QUARK_song_playing
++e962239a11e705a3 QUARK_song_rest
++dd1c9bd7ef7dd5ec QUARK_song_rest_pick
++c04aa46e32a12816 QUARK_song_sound
++aca311e18a58cbf4 QUARK_song_sounds
++72b01ea5846ef156 QUARK_splash
++2d6d2298e4c1eac4 QUARK_step
++1be62a4faa35d252 QUARK_step_mark
++5c9db1990bced8f4 QUARK_step_tiles
++d74bedfd3e12c67a QUARK_step_tiles_bar2
++d48d521bc4863412 QUARK_step_tiles_drum
++1d416e59da92fd0c QUARK_take_box
++67332efbf4f23e63 QUARK_take_partial
++3a52ec05a6f4e18e QUARK_uboot
++17ea28c194c86faa QUARK_undo_box
++cae206b4f0b165ee QUARK_user
++bd7b3f9538b972f9 QUARK_user_foot
++d8329245436dd28f QUARK_voice
++36d032a5005b0d9a QUARK_voice_2
++3e595bb60ef2bdd4 QUARK_voice_2_uni
++dc43e7d91f1a13a3 QUARK_voice_glide
+ 87b364b47f143685 SKIFF_about
+ a0a63cccb102fd7d SKIFF_about_credits
+ 600c4ef4d084815a SKIFF_about_end
+diff --git a/tests/ui_test.c b/tests/ui_test.c
+index bac3d26..7255119 100644
+--- a/tests/ui_test.c
++++ b/tests/ui_test.c
+@@ -9402,7 +9402,8 @@ static int test_playhead_line(void)
+     song.playing = 1;
+     TSEL->seq_idx = 6;
+     for (p = 0; p < NPALETTES; p++) {
+-        int figure = p == UI_CRYPT_INDEX || p == UI_NEON_INDEX || p == UI_QUARK_INDEX;
++        int figure = p == UI_CRYPT_INDEX || p == UI_NEON_INDEX || (p == UI_QUARK_INDEX && FELUCCA_QUARK_UI);   /* ((Vizzbox
++                                                     * 1.1) QUARK's collision left out with its look) */
+         menu_put(MI_COLOR, p);
+         f0 = ui.frame;
+         menu_put(MI_PHEAD, 0); ui.force = 1; ui_draw();
+diff --git a/tests/vizzbox_ui_golden.txt b/tests/vizzbox_ui_golden.txt
+index ca3e9b3..2357cca 100644
+--- a/tests/vizzbox_ui_golden.txt
++++ b/tests/vizzbox_ui_golden.txt
+@@ -69,4 +69,4 @@ QUARK_vb_saved_message       4ac7930a
+ QUARK_vb_knob_live           de9eb1cd
+ QUARK_vb_stopped             7fe40e60
+ QUARK_vb_favourites_load     d03456aa
+-QUARK_vb_groovebox           05444732
++QUARK_vb_groovebox           59850c8e
+-- 
+2.43.0
+

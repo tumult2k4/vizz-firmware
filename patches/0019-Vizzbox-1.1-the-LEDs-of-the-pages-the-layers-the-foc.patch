@@ -1,0 +1,109 @@
+From 160aca2b8498ce13737d73730dbab21914de06dd Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 06:51:41 +0000
+Subject: [PATCH 19/19] Vizzbox 1.1: the LEDs of the pages, the layers, the
+ focus track; HOME + FX keeps the FX layer open
+
+The page open lit (EDIT: KLANG, LFO: MOD), a layer up its button breathing as Skiff's own (FX's layer is Skiff's
+map), the focus track's black key breathing while it sounds, a steady mid muted. tests/producer_test.c leds: those
+LEDs, and HOME + FX keeping the FX layer open (Skiff's lock) without a DROP NOW, FX again closing it.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/ui_vizzbox.c |  5 +++--
+ tests/producer_test.c     | 47 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+), 2 deletions(-)
+
+diff --git a/firmware/src/ui_vizzbox.c b/firmware/src/ui_vizzbox.c
+index 3e7bb56..d05e295 100644
+--- a/firmware/src/ui_vizzbox.c
++++ b/firmware/src/ui_vizzbox.c
+@@ -677,9 +677,10 @@ static void vb_leds(void)
+     led_put(nl, panel.btn[B_FX], (vb.req & VQ_DROP) != 0u);
+     led_put(nl, panel.btn[B_ARP], (vb.req & VQ_BREAK) != 0u);
+     led_put(nl, panel.btn[B_SEQ], (vb.req & VQ_HOLD) != 0u);
+-    led_put(nl, panel.btn[B_EDIT], vb_pg == VP_KLANG);   /* ((1.1) the page open, the layer held */
++    led_put(nl, panel.btn[B_EDIT], vb_pg == VP_KLANG);   /* ((1.1) the page open; the layer up: its button breathes,
++                                                     * as in Skiff (ui_input.c ui_leds: FX's layer) */
+     led_put(nl, panel.btn[B_LFO], vb_pg == VP_MOD);
+-    led_put(nl, panel.btn[LAYERS[ui.layer % LAYER_N].btn], ui.layer != 0u);
++    led_put(nb, panel.btn[LAYERS[ui.layer % LAYER_N].btn], ui.layer != 0u);
+     for (k = 0; k < 27u; k++) {
+         uint32_t p = key_place(k);
+         if (key_black(k)) {                         /* (sounding: lit; (1.1) the focus track's: breathing, muted mid) */
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index aeae97c..6b37289 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -1295,6 +1295,50 @@ static void case_momentary(void)
+     ok(!vb_mine(song.sel, id), "MOMENTARY counted as the user's");
+     ok(vb_pg == VP_KLANG, "LFO let go after a turn: the page left");
+ }
++/* (3.8) the LEDs: the page open (EDIT KLANG, LFO MOD: lit), the layer held (its button breathing, as in Skiff), the
++ * focus track's black key (breathing while it sounds, a steady mid muted; the others lit while they sound). (3.5)
++ * HOME + FX: the FX layer stays open (Skiff's lock), its button breathing, no DROP NOW; FX again closes it */
++static void case_leds(void)
++{
++    uint32_t kf, kb;
++    snprintf(tag, sizeof tag, "leds, the lock");
++    boot();
++    knobs(0, 1, 0x4444u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(3.0);
++    ok(!(web_lit_buttons() & (1u << B_EDIT | 1u << B_LFO)), "SONG: EDIT or LFO lit");
++    press(1u << B_EDIT);
++    ok(((web_lit_buttons() >> B_EDIT) & 1u) && !((web_lit_buttons() >> B_LFO) & 1u), "KLANG: EDIT not lit (or LFO)");
++    press(1u << B_LFO);
++    ok(((web_lit_buttons() >> B_LFO) & 1u) && !((web_lit_buttons() >> B_EDIT) & 1u), "MOD: LFO not lit (or EDIT)");
++    press(1u << B_LFO);
++    ok(!(web_lit_buttons() & (1u << B_EDIT | 1u << B_LFO)), "SONG again: EDIT or LFO lit");
++    web_buttons(1u << B_GLO);
++    run_s(0.8);
++    ok((web_breath_buttons() >> B_GLO) & 1u, "GLO held: not breathing");
++    web_buttons(0);
++    run_s(0.2);
++    ok(!((web_breath_buttons() >> B_GLO) & 1u), "GLO let go: breathing");
++    kf = key_at(1, song.sel);
++    kb = key_at(1, R_B);
++    ok(((web_breath_keys() >> kf) & 1u) && !((web_lit_keys() >> kf) & 1u), "the focus track's black key not breathing");
++    ok((web_lit_keys() >> kb) & 1u, "T2's black key (sounding) not lit");
++    tap_key(kf);                                    /* (MUTE) */
++    run_s(0.1);
++    ok(trk[song.sel].p[P_MUTE] && ((web_mid_keys() >> kf) & 1u), "the focus track muted: its key not mid");
++    tap_key(kf);
++    run_s(0.1);
++    combo(1u << B_HOME, 1u << B_FX);               /* HOME + FX: the FX layer kept open */
++    run_s(0.3);
++    ok(ui.layer == LAYER_FX && ui.lock == LAYER_FX, "HOME + FX: the FX layer not kept open (layer %u, lock %u)", ui.layer,
++       ui.lock);
++    ok((web_breath_buttons() >> B_FX) & 1u, "the FX layer kept open: FX not breathing");
++    ok(!(vb.req & VQ_DROP), "HOME + FX: DROP NOW");
++    press(1u << B_FX);
++    run_s(0.3);
++    ok(!ui.layer && !ui.lock, "FX again: the FX layer still open");
++    ok(!(vb.req & VQ_DROP), "FX closing the kept layer: DROP NOW");
++}
+ 
+ /* ---------------------------------------------------------------- the cases, four at a time */
+ typedef struct { const char *name; uint32_t a, b; } case_t;
+@@ -1338,6 +1382,8 @@ static void one(const case_t *c)
+         case_layers();
+     else if (!strcmp(c->name, "momentary"))
+         case_momentary();
++    else if (!strcmp(c->name, "leds"))
++        case_leds();
+     else
+         case_modes();
+ }
+@@ -1368,6 +1414,7 @@ int main(int argc, char **argv)
+     cs[n++] = (case_t){"keys", 0, 0};
+     cs[n++] = (case_t){"layers", 0, 0};
+     cs[n++] = (case_t){"momentary", 0, 0};
++    cs[n++] = (case_t){"leds", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+         int st;
+-- 
+2.43.0
+

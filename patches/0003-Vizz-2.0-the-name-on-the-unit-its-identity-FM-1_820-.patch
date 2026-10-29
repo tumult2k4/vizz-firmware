@@ -1,7 +1,7 @@
 From b7fa9997c95ed776a808e790d7a6eab12731ba0e Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Mon, 26 Oct 2026 03:20:00 +0000
-Subject: [PATCH 03/16] Vizz 2.0: the name on the unit, its identity FM-1_820,
+Subject: [PATCH 03/19] Vizz 2.0: the name on the unit, its identity FM-1_820,
  its one-file installer
 
 Vizz 2.0 is a modified version of Skiff 2.0.1 for the VIZZ visualizer,

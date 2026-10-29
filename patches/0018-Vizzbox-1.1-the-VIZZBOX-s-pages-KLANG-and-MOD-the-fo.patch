@@ -1,0 +1,1539 @@
+From bef6b18aeb4a385c8a8ff3db61dcced82c79cdfa Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 06:19:51 +0000
+Subject: [PATCH 18/19] Vizzbox 1.1: the VIZZBOX's pages KLANG and MOD, the
+ focus track, its keys, the layers, the buses
+
+BRIEF-VIZZBOX-1.1.md 3: the VIZZBOX becomes a switch in front of Skiff's own interface (ui_vizzbox.c vb_input
+takes its buttons and SONG's knobs, Skiff's ui_input does the rest). EDIT KLANG, LFO MOD, the same button again
+SONG, HOME tapped SONG: Skiff's pages for the focus track with their cards and graphs; KLANG from LIVE (the
+role's four: the engine's two HOME tone knobs, RELEASE or its own decay, DIST), then EDIT's, ENV's, FX's pages
+and the MIXER, MOD LFO's; SELECT through them (a sheet's rows first), PRESETS the role's sounds by Skiff's LIST
+types (the style's first, marked *), HOME + PRESETS every sound. The focus track is the selected one: the LEAD at
+power-on, ALGORITHM on KLANG and MOD, SEL + a black key everywhere; SONG frames it and marks a track the user
+took. The white keys play it: DRUMS a lane a key, CHORDS a chord a key, the rest in the song's scale; the black
+keys never a note (producer_isr.c vb_key). FX, ARP, GLO: Skiff's layers, tapped DROP NOW / BREAK NOW (on the
+release), held the FX layer, PERFORM (its throws; the keys play, no lists), GLO the buses (BUSES, then DELAY,
+REVERB, CHORUS on SELECT) with the favourites; LFO held + a knob MOMENTARY; HOME held its map (the VIZZBOX's
+combos); HOME long the MENU (1.0 never opened it there). LEDs: the page, the layer held, the focus track's key
+breathing. The tracks are the producer's from PLAY or KLANG / MOD on, never before (the songs of 1.0 stay bit for
+bit: taking them at power-on moved an engine switch, so the audio). Leaving the VIZZBOX stopped gives the
+GROOVEBOX back its page and track.
+
+tests/producer_test.c: pages, browse, keys, layers, momentary; tests/vizzbox_ui.c: KLANG, MOD, the layers, HOME's
+map in every palette (the focus frame changes 1.0's SONG screens: intended); tests/vizzbox_inactive.c starts the
+unit in the GROOVEBOX as one switched there (it was forced after a VIZZBOX start); tests/vizzbox_mutants.py four
+faults more.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/producer.c     |   4 +-
+ firmware/src/producer_isr.c |  13 ++
+ firmware/src/seq.c          |   7 +
+ firmware/src/ui_draw.c      |  15 +-
+ firmware/src/ui_input.c     |  28 ++-
+ firmware/src/ui_layer.c     |  99 ++++++++--
+ firmware/src/ui_vizzbox.c   | 373 ++++++++++++++++++++++++++++++------
+ tests/producer_test.c       | 267 ++++++++++++++++++++++++++
+ tests/vizzbox_inactive.c    |  14 +-
+ tests/vizzbox_mutants.py    |  15 +-
+ tests/vizzbox_ui.c          |  45 +++++
+ tests/vizzbox_ui_golden.txt | 144 ++++++++++----
+ 12 files changed, 899 insertions(+), 125 deletions(-)
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index efdc735..7f4eef7 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -1449,8 +1449,8 @@ static uint32_t vb_fill(uint32_t k, int16_t *p, uint32_t en, uint32_t pi, uint32
+     p[P_DIR] = DIR_FWD;
+     p[P_ROOT] = vb.root;
+     p[P_SCALE] = vb.scale;
+-    p[P_QUANT] = k == R_D ? QN_OFF : QN_WHITE;      /* (the white keys play the track in the song's scale; (1.1) every
+-                                                     * melodic one, the focus track's: ui_vizzbox.c) */
++    p[P_QUANT] = QN_WHITE;                          /* (the white keys play the lead in the song's scale; (1.1) any
++                                                     * focus track: producer_isr.c vb_key) */
+     p[P_CHRD] = (int16_t)(k == R_C ? vb_sub()->voicing > 3u ? CH_DIA7 : CH_DIA3 : CH_OFF);   /* ((1.1) CHORDS: a chord a
+                                                      * key, the style's triad or seventh in the key) */
+     p[P_TRANS] = 0;
+diff --git a/firmware/src/producer_isr.c b/firmware/src/producer_isr.c
+index 3634772..89c590a 100644
+--- a/firmware/src/producer_isr.c
++++ b/firmware/src/producer_isr.c
+@@ -31,6 +31,8 @@ typedef struct {
+ static vb_ctl_t vb_ctl[2] __attribute__((section(".pool")));
+ static volatile uint8_t vb_run __attribute__((section(".pool")));                     /* main: the producer plays the tracks (set before PLAY) */
+ static uint8_t vb_mode __attribute__((section(".pool")));                             /* main: 1 the VIZZBOX (its screen, its controls), 0 the GROOVEBOX */
++static uint8_t vb_pg __attribute__((section(".pool")));      /* main: (1.1) the VIZZBOX's page (ui_vizzbox.c): VP_* */
++enum { VP_SONG, VP_KLANG, VP_MOD };
+ static volatile uint8_t vb_resend __attribute__((section(".pool")));                  /* main: 1 the six again; 2 CC 104 0 once (it let go) */
+ static uint32_t vb_seen __attribute__((section(".pool")));   /* launch_steps + 1 of the step put into effect last */
+ static uint8_t vb_out __attribute__((section(".pool")));     /* SEQ MIDI OUT and USB as when the six went last */
+@@ -61,6 +63,17 @@ static int vb_mine(uint32_t k, uint32_t id) { return (vb_hand.par[k % NTRK][id /
+ static uint8_t vb_gl[2u + VB_NRAMP] __attribute__((section(".pool")));   /* a control the user held let go: the steps
+                                                      * of its way from where it is to the producer's (vb_glide) */
+ 
++/* (1.1, BRIEF-VIZZBOX-1.1.md 3.2) key k on the focus track t in the VIZZBOX (seq.c keyboard_block): the black keys are
++ * MUTE's (silent here); DRUMS a lane a white key (KICK SNARE CLAP HAT HAT TOM RIM BELL, the grid's lane notes), no
++ * scale; the others as Skiff maps them (QNT WHITE: the song's scale; CHORDS' chord: chord.c). The GROOVEBOX: kb_map */
++static uint32_t vb_key(const track_t *t, uint32_t k)
++{
++    if (!vb_mode)
++        return kb_map(t, k);
++    if (key_black(k))
++        return KB_SILENT;
++    return drum_track(t) ? DRUM_LANE_NOTE[key_place(k) % NLANE] : kb_map(t, k);
++}
+ static void vb_cc(uint32_t n, uint32_t v)
+ {
+     if (seq_midi_on)
+diff --git a/firmware/src/seq.c b/firmware/src/seq.c
+index 532eab7..f07eddc 100644
+--- a/firmware/src/seq.c
++++ b/firmware/src/seq.c
+@@ -1084,6 +1084,9 @@ static void kb_outer(void)
+ }
+ #endif
+ 
++#if VIZZBOX
++static uint32_t vb_key(const track_t *t, uint32_t k);   /* ((Vizzbox 1.1) producer_isr.c) */
++#endif
+ static void keyboard_block(void)
+ {
+     uint32_t cur = fm1_in.notes, ch, k;
+@@ -1127,7 +1130,11 @@ static void keyboard_block(void)
+             else if (song.grid)                   /* the DRUM grid: a lane key plays its lane, the rest are the UI's */
+                 kb_note[k] = key_black(k) && key_place(k) < NLANE ? DRUM_LANE_NOTE[key_place(k)] : KB_SILENT;
+             else
++#if VIZZBOX
++                kb_note[k] = (uint8_t)vb_key(&trk[kb_trk[k]], k);   /* ((Vizzbox 1.1) the VIZZBOX's keys; else kb_map's */
++#else
+                 kb_note[k] = (uint8_t)kb_map(&trk[kb_trk[k]], k);
++#endif
+             if (kb_note[k] == KB_SILENT)
+                 continue;
+             key_on(k, &trk[kb_trk[k]]);
+diff --git a/firmware/src/ui_draw.c b/firmware/src/ui_draw.c
+index b57bbd5..4bff8dd 100644
+--- a/firmware/src/ui_draw.c
++++ b/firmware/src/ui_draw.c
+@@ -1381,17 +1381,16 @@ static void draw_confirm(void) { draw_confirm_blocks(); }   /* (U2: BLOCKS' dial
+ 
+ static void ui_draw_page(uint32_t counting);
+ #if VIZZBOX
+-static void vb_draw(void);                              /* (ui_vizzbox.c) */
++static int vb_draw(void);                               /* (ui_vizzbox.c) */
+ #endif
+ static void ui_draw(void)
+ {
+     static uint8_t counting;
+     ui.frame++;
+ #if VIZZBOX
+-    if (vb_mode && !ui.menu && !ui.confirm) {
+-        vb_draw();                                      /* ((Vizzbox) the VIZZBOX screen) */
+-        return;
+-    }
++    if (vb_mode && !ui.menu && !ui.confirm && vb_draw())
++        return;                                         /* ((Vizzbox) the VIZZBOX screen; (1.1) KLANG, MOD, a layer:
++                                                         * Skiff's own, below */
+ #endif
+     if (ui.take_t)                                      /* (Skiff: the TAKE box, ui_take.c) */
+         ui.take_t--;
+@@ -1445,6 +1444,12 @@ static void ui_draw_page(uint32_t counting)
+         if (ui.layer)
+             draw_layer();
+         else {
++#if VIZZBOX
++            if (vb_mode && !vb_pg) {                    /* ((Vizzbox 1.1) SONG's knobs have no cards */
++                if (ui.force)
++                    lcd_fill(0, Y_LABEL, 240, card_h(), T_BG);
++            } else
++#endif
+             draw_columns();
+             draw_shift();
+         }
+diff --git a/firmware/src/ui_input.c b/firmware/src/ui_input.c
+index ed22f58..2206ef9 100644
+--- a/firmware/src/ui_input.c
++++ b/firmware/src/ui_input.c
+@@ -384,6 +384,7 @@ static void smk_leds_out(const uint8_t *nl, const uint8_t *nd, const uint8_t *nb
+ static void vb_leds(void);                              /* ((Vizzbox) ui_vizzbox.c) */
+ static void vb_grab_g(const int16_t *vp);               /* ((Vizzbox 1.1) producer.c) */
+ static void vb_grab_snd(uint32_t k);
++static void vb_page(uint32_t p);                        /* ((Vizzbox 1.1) ui_vizzbox.c) */
+ #endif
+ static void ui_leds(void)
+ {
+@@ -396,8 +397,8 @@ static void ui_leds(void)
+     if (fm1_led_anim_on())                              /* the power-on sweep has them (main.c boot_leds) */
+         return;
+ #if VIZZBOX
+-    if (vb_mode) {
+-        vb_leds();                                      /* ((Vizzbox) the VIZZBOX's own) */
++    if (vb_mode && ui.layer != LAYER_FX) {
++        vb_leds();                                      /* ((Vizzbox) the VIZZBOX's own; (1.1) FX's layer: Skiff's map */
+         return;
+     }
+ #endif
+@@ -2009,6 +2010,13 @@ static void rec_pass_undo(int armed)
+ static int page_tap(uint32_t b)
+ {
+     uint32_t f;
++#if VIZZBOX
++    if (vb_mode) {                                      /* ((Vizzbox 1.1) EDIT: KLANG, LFO: MOD (again: SONG) */
++        if (b == B_EDIT || b == B_LFO)
++            vb_page(b == B_EDIT ? 1u : 2u);
++        return 1;
++    }
++#endif
+     if (b == B_GLO) {
+         open_global();                                  /* MIXER -> GLOBAL -> SYSTEM -> MIXER */
+         return 0;
+@@ -2099,7 +2107,7 @@ static void shift_mark(void)
+ }
+ #if VIZZBOX
+ static void vb_poll(void);                              /* ((Vizzbox) producer.c, ui_vizzbox.c) */
+-static void vb_input(uint32_t pressed, uint32_t notes);
++static int vb_input(uint32_t *pp, uint32_t notes);
+ static void vb_mode_set(uint32_t m);
+ #endif
+ static void ui_input(void)
+@@ -2143,10 +2151,9 @@ static void ui_input(void)
+         return;                                         /* (before the buttons' timers: no tap or hold after it) */
+     }
+ #if VIZZBOX
+-    if (vb_mode && !ui.menu && !ui.confirm && !name_on()) {
+-        vb_input(pressed, notes);                       /* ((Vizzbox) the VIZZBOX's own controls) */
+-        return;
+-    }
++    if (vb_mode && !ui.menu && !ui.confirm && !name_on() && vb_input(&pressed, notes))
++        return;                                         /* ((Vizzbox) the VIZZBOX's own controls; (1.1) then Skiff's for
++                                                         * its pages and layers, what it left in pressed) */
+ #endif
+     if (((pressed >> panel.btn[B_OCTUP]) & 1u) &&      /* ((1.3) MOMENTARY: OCT+ with LFO held: kept (no octave); (2.0, */
+         (mom_keep(mom_down(), layer_open() == LAYER_FX) | (layer_open() == LAYER_PERF && throw_keep()))) {   /* D 2A) */
+@@ -2401,6 +2408,13 @@ static void ui_input(void)
+         layer_tap(lytap);
+     if (home == BT_TAP)
+         layer_unlock();                                 /* ((Skiff U2) HOME tapped: a locked layer closes, as before) */
++#if VIZZBOX
++    if (home == BT_TAP && vb_mode) {                    /* ((Vizzbox 1.1) HOME tapped in the VIZZBOX: SONG */
++        if (vb_pg)
++            vb_page(vb_pg);
++        home = BT_NONE;
++    }
++#endif
+     if (home == BT_TAP && ui.home) {                    /* Skiff: HOME on HOME, the tracks <-> the scope (ui_home.c) */
+         ui.home_scope ^= 1u;
+         ui.force = 1;
+diff --git a/firmware/src/ui_layer.c b/firmware/src/ui_layer.c
+index 6ba7989..cd41873 100644
+--- a/firmware/src/ui_layer.c
++++ b/firmware/src/ui_layer.c
+@@ -102,8 +102,26 @@ static struct {
+ 
+ static int layer_allowed(void) { return !ui.menu && !ui.confirm && !ui.uboot && !name_on(); }
+ static uint32_t ly_bit(uint32_t l) { return 1u << panel.btn[LAYERS[l].btn]; }
+-/* a layer's button held opens it, on every page ((Skiff U2) SEQ's too); REC's never (it arms on its press: SHIFT + REC) */
+-static int ly_avail(uint32_t l) { return l != LAYER_REC; }
++#if VIZZBOX
++static const page_t *vb_bus_page(void);                 /* ((Vizzbox 1.1) ui_vizzbox.c) */
++static void vb_favs(int32_t y);
++static void vb_tiles(int32_t y);
++static void vb_tap(uint32_t l);
++#define VB_ON vb_mode
++#else
++#define VB_ON 0
++#define vb_bus_page() ((const page_t *)0)
++#endif
++/* a layer's button held opens it, on every page ((Skiff U2) SEQ's too); REC's never (it arms on its press: SHIFT + REC);
++ * ((Vizzbox 1.1) in the VIZZBOX FX, GLO and PERFORM: SEL, EDIT and SEQ are its own there) */
++static int ly_avail(uint32_t l)
++{
++#if VIZZBOX
++    if (vb_mode)
++        return l == LAYER_FX || l == LAYER_GLO || l == LAYER_PERF;
++#endif
++    return l != LAYER_REC;
++}
+ static uint32_t ly_down(uint32_t l) { return l && ((fm1_in.buttons & ly_bit(l)) != 0u || ui.lock == l); }   /* (locked: held) */
+ static uint32_t layer_bits(void)
+ {
+@@ -113,10 +131,21 @@ static uint32_t layer_bits(void)
+     return m;
+ }
+ static uint32_t layer_btn(void) { return LAYERS[ui.layer % LAYER_N].btn; }
+-static const char *layer_head(void) { return ui.layer == LAYER_FX && perf_latch_on ? "[FX] LATCH" : LAYERS[ui.layer % LAYER_N].head; }
++static const char *layer_head(void)
++{
++#if VIZZBOX
++    if (vb_mode && ui.layer == LAYER_GLO)
++        return "[GLO] BUSES";                           /* ((Vizzbox 1.1) its buses and favourites */
++#endif
++    return ui.layer == LAYER_FX && perf_latch_on ? "[FX] LATCH" : LAYERS[ui.layer % LAYER_N].head;
++}
+ static uint32_t layer_open(void) { return ui.ly && (ui.ly_t0 & LY_OPEN) && ly_down(ui.ly) && layer_allowed() ? ui.ly : 0u; }
+ static int layer_set_open(void)                 /* (FX LATCH: FX is one too, OCT- turns all off) */
+ {
++#if VIZZBOX
++    if (vb_mode)
++        return 0;                               /* ((Vizzbox 1.1) OCT- OCT+ the octave there, no layer to put back */
++#endif
+     return layer_open() && (LAYERS[layer_open()].kind == LK_SET || (layer_open() == LAYER_FX && perf_latch_on));
+ }
+ static uint32_t layer_held(void) { return ui.ly && ly_down(ui.ly) && layer_allowed(); }
+@@ -129,6 +158,12 @@ static void layer_masks(void)
+ {
+     uint32_t m = !layer_allowed() || (ui.ly && (ui.ly_t0 & LY_DEAD)) ? 0u
+                : ui.ly ? ly_bit(ui.ly) : layer_bits() & ~fm1_in.buttons;
++#if VIZZBOX
++    if (vb_mode)                                        /* ((Vizzbox 1.1) SAVE, GLO: the favourites; SEL, HOME: the black
++                                                         * keys' focus and give back; PERFORM's keys play */
++        m = (m & ~ly_bit(LAYER_PERF)) | 1u << panel.btn[B_SAVE] | ly_bit(LAYER_GLO) | 1u << panel.btn[B_SCL] |
++            1u << panel.btn[B_HOME];
++#endif
+     kb_mask = m;
+     perf_mask = m & ly_bit(LAYER_FX);
+     kb_lock = (uint8_t)(m && ui.lock ? 1u | (ui.lock == LAYER_FX ? 2u : 0u) : 0u);   /* (no button held: the ISR's) */
+@@ -327,6 +362,12 @@ static void layer_show(void)
+ static void layer_tap(uint32_t l)
+ {
+     uint8_t m = ui.msg_t;
++#if VIZZBOX
++    if (vb_mode) {                                      /* ((Vizzbox 1.1) FX: DROP NOW, ARP: BREAK NOW, on the release */
++        vb_tap(l);
++        return;
++    }
++#endif
+     (void)page_tap(LAYERS[l].btn);                      /* ((Skiff U2) REC is no layer button: its press arms, ui_input) */
+     if (!((layer_seen >> l) & 1u) && ui.msg_t == m && !ui.confirm && !ui.menu && !ui_hints_off) {
+         ui_say("HOLD [", KC[LY_KC[l]].label);
+@@ -605,6 +646,9 @@ static void layer_key(uint32_t l, uint32_t k)
+ static void layer_keys(uint32_t keys)
+ {
+     uint32_t k, l = layer_open() ? layer_open() : ui.layer, s = 0;
++    if (VB_ON && l != LAYER_FX)                         /* ((Vizzbox 1.1) FX's keys only: GLO's and the black keys are
++                                                         * the VIZZBOX's (ui_vizzbox.c), PERFORM's play */
++        return;
+     mute_keys(l, keys);
+     for (k = 0; keys && k < 27u; k++)
+         if ((keys >> k) & 1u)
+@@ -627,7 +671,7 @@ static void layer_knob(uint32_t k, int32_t s)
+             s = -s;                                     /* DEPTH (100 - perf_k[3]) rises to the right (#40: it fell) */
+         (void)mom_hold(&perf_k[k], 0);
+         perf_k[k] = (int16_t)clamp(perf_k[k] + accel(EN_K1 + k, s, k ? 100 : 200), k ? 0 : -100, 100);   /* (#126) */
+-    } else if (l == LAYER_GLO) {                        /* the four tracks' LEVEL (T1..T4; (Skiff phase 6) the four
++    } else if (l == LAYER_GLO && !VB_ON) {              /* the four tracks' LEVEL (T1..T4; (Skiff phase 6) the four
+                                                          * shown: ui.c trk_top), recorded as on MIXER */
+         track_t *t = &trk[trk_top() + k];
+         int16_t *vp = &t->p[P_LEVEL];
+@@ -657,13 +701,15 @@ static void layer_knob(uint32_t k, int32_t s)
+         }
+     } else if (l == LAYER_SEQ && eu.on) {               /* ((1.3) EUCLID: HITS STEPS ROT; KNOB 4: none) */
+         eu_knob(TSEL, k, s);
+-    } else if (l) {                                     /* the page's knobs, wherever the page is */
++    } else if (l) {                                     /* the page's knobs, wherever the page is ((Vizzbox 1.1) GLO's:
++                                                         * its bus page) */
+         uint8_t h = ui.home, pg = ui.page;
++        const page_t *po = page_over;
+         ui.home = 0;
+         ui.page = (uint8_t)page_first(LAYERS[l].fam);
+-        page_over = ly_page(l);
++        page_over = VB_ON && l == LAYER_GLO ? vb_bus_page() : ly_page(l);
+         edit_param(k, s);
+-        page_over = 0;
++        page_over = po;
+         ui.home = h;
+         ui.page = pg;
+     }
+@@ -1006,6 +1052,12 @@ static void layer_fx(void)
+ static void layer_glo(void)
+ {
+     uint32_t e;
++#if VIZZBOX
++    if (vb_mode) {                                      /* ((Vizzbox 1.1) the favourites on the white keys */
++        vb_favs(4);
++        return;
++    }
++#endif
+     for (e = 0; e < NTRK; e++) {                        /* (Skiff phase 6) SOLO 1..6 while held: F G A B C D (GLO_W); */
+         l6_solo(e, (perf_solo >> e) & 1u ? LS_HELD : LS_OFF);   /* MUTE 1..6, latched: F# G# A# C# D# F# ((2.0) */
+         l6_mute(e, trk[e].p[P_MUTE] || trk_cut(e) ? LS_MUTE : LS_OFF, ICON_MUTE);   /* a hold cutting too) */
+@@ -1071,6 +1123,12 @@ static void layer_perf(void)
+     int blocks = 1;                                   /* ponytail: FLAT and LINE retired (U2); U3's six rows redraw this */
+     uint16_t g0 = blocks ? T_BG : T_SURF;
+     uint32_t k, p, pos, now = scene_now(), act = (uint32_t)perf_scenes();
++#if VIZZBOX
++    if (vb_mode) {                                      /* ((Vizzbox 1.1) no lists there: the tracks, the focus framed */
++        vb_tiles(22);
++        return;
++    }
++#endif
+     if (blocks) {                                     /* (over the panel, as HOME: the rows are on the ground) */
+         cv_rect(0, 0, 240, H_GRAPH + (int32_t)foot_less(), T_BG);
+         cv_bg = T_BG;
+@@ -1276,7 +1334,7 @@ static void layer_cards(uint32_t l)
+             fmt_int(val, 100 - perf_k[3]);
+             draw_column(3, "DEPTH", val, "%", VR_LIVE, (100 - perf_k[3]) * 10, ICON_MIX);
+         }
+-    } else if (l == LAYER_GLO) {                        /* the four tracks' LEVEL (the track's icon; muted: dim; */
++    } else if (l == LAYER_GLO && !VB_ON) {              /* the four tracks' LEVEL (the track's icon; muted: dim; */
+         for (c = 0; c < 4u; c++) {                      /* (Skiff phase 6) the four shown, ui.c trk_top) */
+             uint32_t k = trk_top() + c;
+             param_format(&TP[P_LEVEL], trk[k].p[P_LEVEL], val, &unit);
+@@ -1315,13 +1373,15 @@ static void layer_cards(uint32_t l)
+             draw_column(3, "LANE", drum_lane_name(TSEL, ui.lane), "", VR_LIVE, -1, ICON_DRUM);
+         else
+             draw_column(3, "", "", "", VR_THEME, -1, ICON_NONE);
+-    } else {                                            /* the page's four (SCL: LY_SCL) */
++    } else {                                            /* the page's four (SCL: LY_SCL; (Vizzbox 1.1) GLO: its bus
++                                                         * page) */
+         uint8_t h = ui.home, pg = ui.page;
++        const page_t *po = page_over;
+         ui.home = 0;
+         ui.page = (uint8_t)page_first(LAYERS[l].fam);
+-        page_over = ly_page(l);
++        page_over = VB_ON && l == LAYER_GLO ? vb_bus_page() : ly_page(l);
+         draw_columns();
+-        page_over = 0;
++        page_over = po;
+         ui.home = h;
+         ui.page = pg;
+     }
+@@ -1382,6 +1442,10 @@ static void draw_layer(void)
+         cv_begin(240, foot_h(), T_BG);
+         if (rs) {                                       /* ((2.0) FX's macros, a throw out: LET GO .., OCT+: KEEP) */
+             ret_hints(rs, foot_line_y());
++        } else if (VB_ON && (l == LAYER_PERF || l == LAYER_GLO)) {   /* ((Vizzbox 1.1) its keys there */
++            const char *r = l == LAYER_GLO ? "BLACK: SOLO" : "BLACK: MUTE";
++            cv_free_hint(8, foot_line_y(), l == LAYER_GLO ? "WHITE: FAVOURITE" : "WHITE: PLAY", T_MID, T_BG, 110);
++            cv_free_hint(232 - head_hint_w(r, 120), foot_line_y(), r, T_MID, T_BG, 120);
+         } else if (l == LAYER_PERF) {                   /* (Skiff) as the B mockup: what the keys do, on the names' */
+             const char *r = perf_scenes() ? "[SAVE] + WHITE: STORE" : "BLACK: MUTE";   /* line (SCENE: storing) */
+             cv_free_hint(8, foot_line_y(), perf_scenes() ? "WHITE: SCENE" : "WHITE: PATTERN", T_MID, T_BG, 110);
+@@ -1456,6 +1520,19 @@ static void shift_map(smap_t *m)
+                     m[i].key = SMK[j];
+     }
+ #endif
++#if VIZZBOX
++    if (vb_mode) {                                   /* ((Vizzbox 1.1) the VIZZBOX's: its SONG page's knobs, HOME's combos */
++        static const smap_t VB[6] = {{"+ BLACK", "GIVE BACK", 2}, {"+ EDIT", "ALL BACK", 2}, {"+ PLAY", "GROOVE", 2},
++                                     {"+ PRESETS", "ALL", 2}, {"+ FX", "LOCK", 2}, {"SEL + BLACK", "FOCUS", 0}};
++        for (i = 0; i < 6u; i++)
++            m[6 + i] = VB[i];
++        if (!vb_pg) {
++            m[0] = (smap_t){"PRESETS", "SEED", 1};
++            m[1] = (smap_t){"SELECT", "TEMPO", 1};
++            m[2] = (smap_t){"ALGO", "LENGTH", 1};
++        }
++    }
++#endif
+ }
+ static void draw_shift(void)
+ {
+diff --git a/firmware/src/ui_vizzbox.c b/firmware/src/ui_vizzbox.c
+index 7b906d3..3e7bb56 100644
+--- a/firmware/src/ui_vizzbox.c
++++ b/firmware/src/ui_vizzbox.c
+@@ -8,16 +8,34 @@
+  *   white keys: the lead's sound in the song's scale (Skiff's QNT WHITE: producer.c vb_fill)
+  *   SAVE held + a white key: the song into that favourite; GLO held + a white key: that favourite onto the knobs
+  * While a song plays, GENRE, SUBGENRE, the seed, LENGTH, ENERGY and VARIATION come in at the next section (a new style
+- * over a BREAK and a BUILD, producer.c vb_next), TEMPO glides there over four bars. */
++ * over a BREAK and a BUILD, producer.c vb_next), TEMPO glides there over four bars.
++ * (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 3) Live control: the VIZZBOX is a switch in front of Skiff's own interface.
++ *   EDIT KLANG, LFO MOD (the same button again: SONG): Skiff's pages for the focus track (the selected one, at first
++ *   the LEAD: ALGORITHM, SEL + a black key on every page), its cards and graphs; KLANG from LIVE (the role's four),
++ *   then EDIT's, ENV's, FX's pages and the MIXER; MOD LFO's; SELECT through them, PRESETS the role's sounds (the
++ *   style's first, marked), HOME + PRESETS every sound. The white keys play the focus track: DRUMS a lane a key,
++ *   CHORDS a chord a key in the key, the others the song's scale (producer_isr.c vb_key)
++ *   FX held: Skiff's FX layer; tapped: DROP NOW (on its release). ARP held: PERFORM (K1..K4 the throws, the keys the
++ *   focus track's); tapped: BREAK NOW. GLO held: the buses (K1..K4, SELECT their pages), white keys the favourites,
++ *   black keys SOLO. LFO held + a knob: MOMENTARY
++ *   HOME + a black key: that track back to the producer; HOME + EDIT: every track and the buses; HOME held: the map
++ * Whatever the user turns or chooses on the producer's tracks is theirs (producer.c: the hand) */
+ 
+ /* the mode: 1 VIZZBOX (its screen, its controls), 0 GROOVEBOX. Kept in the settings (CPU2_BYTE bit 4: set, the
+  * GROOVEBOX was last), so a unit starts where it was left; a new one in the VIZZBOX */
+ #define VB_MODE_BIT 16u
++static uint8_t vb_gpg[3] __attribute__((section(".pool")));   /* (1.1) the GROOVEBOX's page, HOME, track meanwhile */
+ static void vb_fav_load(void);
+ static void vb_knob_song(void);
+ static void vb_mode_boot(void)
+ {
+     vb_mode = !(CPU2_BYTE & VB_MODE_BIT);
++    vb_gpg[0] = ui.page;                            /* ((1.1) the GROOVEBOX's page for later; the VIZZBOX on SONG, the
++                                                     * LEAD in focus) */
++    vb_gpg[1] = ui.home;
++    vb_gpg[2] = song.sel;
++    if (vb_mode)
++        sel_set(R_L);
+     vb.k.energy = 70;                               /* (the knobs at power-on: a lively song, some variation) */
+     vb.k.var = 40;
+     vb.k.len = VL_NORMAL;
+@@ -30,10 +48,22 @@ static void vb_mode_set(uint32_t m)
+     if (vb_mode == m)
+         return;
+     vb_mode = (uint8_t)m;
++    if (m) {                                        /* ((1.1) the GROOVEBOX's page kept; SONG) */
++        vb_gpg[0] = ui.page;
++        vb_gpg[1] = ui.home;
++        vb_gpg[2] = song.sel;
++        ui.home = 1;
++    } else {
++        ui.page = vb_gpg[0];
++        ui.home = vb_gpg[1];
++    }
++    vb_pg = VP_SONG;
++    page_over = 0;
+     CPU2_BYTE = (uint8_t)(m ? CPU2_BYTE & ~VB_MODE_BIT : CPU2_BYTE | VB_MODE_BIT);
+     settings_save();
+     perf_cut = perf_solo = 0;                       /* (the black keys held: theirs no more) */
+     if (!m && !song.playing) {
++        sel_set(vb_gpg[2]);                         /* ((1.1) its track too) */
+         vb_give();                                  /* (the GROOVEBOX's music back) */
+         vb_resend = 2;                              /* (BRIEF 5: into the GROOVEBOX, CC 104 0 once) */
+     }
+@@ -102,6 +132,8 @@ static void vb_knob_song(void)
+         return;
+     vb.s = vb.k;
+     vb_song();
++    if (vb.own && vb_pg)
++        vb_load();                                  /* ((1.1) KLANG, MOD: the new song's sounds in the tracks */
+ }
+ static void vb_knob(uint32_t o, int32_t s)
+ {
+@@ -149,6 +181,8 @@ static struct { uint8_t dn, solo; uint32_t t0[NTRK]; } vb_bk __attribute__((sect
+ static void vb_black(uint32_t pressed)
+ {
+     uint32_t k, p, b, glo = (fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
++    if (layer_open() == LAYER_FX)                   /* ((1.1) FX's layer: its own, ui_layer.c mute_keys) */
++        return;
+     for (k = 0; k < 27u; k++) {
+         if (!key_black(k) || (p = key_place(k)) >= NTRK)
+             continue;
+@@ -158,6 +192,10 @@ static void vb_black(uint32_t pressed)
+             ui.home_t0 |= 2u;
+             continue;
+         }
++        if (((pressed >> k) & 1u) && ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u)) {
++            track_select(p);                        /* ((1.1) SEL + a black key: the focus track) */
++            continue;
++        }
+         if ((pressed >> k) & 1u) {
+             if (glo)
+                 vb_bk.solo |= (uint8_t)b;
+@@ -210,24 +248,182 @@ static void vb_white(uint32_t pressed)
+     }
+ }
+ 
+-/* each pass in the VIZZBOX (ui_input): the buttons, the knobs, the keys */
+-static void vb_input(uint32_t pressed, uint32_t notes)
++/* ------------------------------------------------------ (1.1) pages --- */
++static uint8_t vb_kp[2] __attribute__((section(".pool")));   /* KLANG's, MOD's page when left: PAGES + 1 (0: its first,
++                                                               * 0xFF: LIVE) */
++static uint8_t vb_bus __attribute__((section(".pool")));     /* GLO held: its page, 0 BUSES, 1 DELAY .. 3 CHORUS */
++static page_t vb_live __attribute__((section(".pool")));     /* KLANG's first, LIVE: page_over (vb_live_ids) */
++/* the buses, GLO held's first page (BRIEF-VIZZBOX-1.1.md 3.6): how much of each; SELECT: DELAY, REVERB, CHORUS */
++static const page_t VB_BUSES = {"BUSES", FAM_GLO, SC_GLOBAL, GR_DELAY, {G_DMIX, G_RSIZE, G_CDEPTH, G_DFDBK}};
++static const page_t *vb_bus_page(void) { return vb_bus ? &PAGES[page_first(FAM_GLO) + vb_bus - 1u] : &VB_BUSES; }
++/* LIVE's four for the focus track's engine (3.3): its HOME page's first two (the tone: CUTOFF and RESONANCE on most, a
++ * kit's TUNE and TONE), the decay (RELEASE; its own where the engine makes the envelope: a kit's DECAY), DIST */
++static void vb_live_ids(void)
++{
++    const engine_t *e = ENGINES[TSEL->eng_req % NENGINES];
++    vb_live.title = "LIVE";
++    vb_live.fam = FAM_EDIT;
++    vb_live.scope = SC_TRACK;
++    vb_live.id[0] = e->knob[0];
++    vb_live.id[1] = e->knob[1];
++    vb_live.id[2] = e->oneshot || e->ownenv ? e->knob[2] : (uint8_t)P_REL;
++    vb_live.id[3] = P_DIST;
++}
++/* PAGES i's place on the VIZZBOX's page (KLANG: EDIT's, ENV's, FX's, the MIXER; MOD: LFO's), -1 none */
++static int32_t vb_rank(uint32_t i)
++{
++    static const uint8_t F[5] = {FAM_EDIT, FAM_ENV, FAM_FX, FAM_TRK, FAM_LFO};
++    uint32_t r = vb_pg == VP_MOD ? 4u : 0u;
++    for (; r < (vb_pg == VP_MOD ? 5u : 4u); r++)
++        if (PAGES[i].fam == F[r] && page_visible(i))
++            return (int32_t)(r * NPAGES + i);
++    return -1;
++}
++/* SELECT on KLANG or MOD: the page after (d > 0) or before; a sheet's rows first (ui_input.c select_turn); LIVE before
++ * KLANG's first */
++static void vb_step(int32_t s)
++{
++    int32_t d = s > 0 ? 1 : -1, n = s > 0 ? s : -s, o, r, b;
++    uint32_t i;
++    const sheet_t *sh;
++    while (n-- > 0) {
++        if (!page_over && (sh = sheet_of(cur_page()->graph)) != 0 && sheet_rows(sh, d))
++            continue;
++        o = page_over ? -1 : vb_rank(ui.page);
++        for (b = -1, i = 0; i < NPAGES; i++)
++            if ((r = vb_rank(i)) >= 0 && (d > 0 ? r > o : r < o) &&
++                (b < 0 || (d > 0 ? r < vb_rank((uint32_t)b) : r > vb_rank((uint32_t)b))))
++                b = (int32_t)i;
++        if (b >= 0) {
++            page_over = 0;
++            ui.page = (uint8_t)b;
++            if ((sh = sheet_of(cur_page()->graph)) != 0)
++                *sh->win = (uint8_t)(d > 0 ? 0u : sh->nwin - 1u);
++        } else if (d < 0 && !page_over && vb_pg == VP_KLANG)
++            page_over = &vb_live;
++        else {
++            ui.edge_t = 24;
++            break;
++        }
++        page_entered();
++    }
++}
++/* the tracks the producer's (1.1: the keys, KLANG and MOD play and show its sounds, stopped too): its song for the
++ * knobs, its first bar staged as at PLAY. 0: not now (playing the GROOVEBOX's music; PATTERNS FULL said) */
++static int vb_ready(void)
++{
++    if (vb.own)
++        return 1;
++    if (song.playing || !vb_take())
++        return 0;
++    vb.s = vb.k;
++    vb_song();
++    vb_load();
++    return 1;
++}
++/* the VIZZBOX's page p (the one shown again: SONG) */
++static void vb_page(uint32_t p)
++{
++    uint32_t i;
++    if (p == vb_pg || (p && !vb_ready()))
++        p = VP_SONG;
++    if (vb_pg)
++        vb_kp[vb_pg - 1u] = page_over ? 0xFFu : (uint8_t)(ui.page + 1u);
++    vb_pg = (uint8_t)p;
++    page_over = 0;
++    ui.home = !p;
++    if (p) {
++        i = vb_kp[p - 1u];
++        if (i && i != 0xFFu && vb_rank(i - 1u) >= 0)
++            ui.page = (uint8_t)(i - 1u);
++        else {
++            uint32_t j;
++            for (i = NPAGES, j = 0; j < NPAGES; j++)    /* (its first) */
++                if (vb_rank(j) >= 0 && (i == NPAGES || vb_rank(j) < vb_rank(i)))
++                    i = j;
++            ui.page = (uint8_t)i;
++            if (p == VP_KLANG)
++                page_over = &vb_live;
++        }
++        page_entered();
++    }
++    ui.force = 1;
++}
++/* PRESETS on KLANG and MOD (3.3): the focus track's sounds of its role's LIST types (Skiff's tags), the ones the
++ * producer has for this style and role first (marked), then every other factory one of those types; HOME + PRESETS:
++ * every sound, factory and user, as PRESETS' LIST ALL (ui.c preset_step). Loaded as PRESETS loads (the hand: theirs) */
++static const uint8_t VB_TYPES[NTRK] = {1u << PT_DRUM, 1u << PT_BASS, 1u << PT_PAD | 1u << PT_KEYS, 1u << PT_LEAD,
++                                       1u << PT_PLUCK | 1u << PT_LEAD | 1u << PT_KEYS, 1u << PT_FX};
++static const uint8_t *vb_cands(uint32_t k)          /* the style's sounds for role k (VB_SND indices, 0xFF ends) */
++{
++    const vb_sub_t *u = vb_sub();
++    const uint8_t li[NTRK] = {u->kit, u->blist, u->clist, u->llist, u->alist, u->flist};
++    return VB_LIST[li[k % NTRK] % NELEM(VB_LIST)];
++}
++/* list place n for track k: engine (*pi its preset), 1 the style's own; NENGINES past the end */
++static uint32_t vb_list_at(uint32_t k, uint32_t n, uint32_t *pi, int *own)
++{
++    const uint8_t *c = vb_cands(k);
++    uint32_t i, e, j;
++    for (i = 0; i < 4u && c[i] != 0xFFu; i++)
++        if (!n--) {
++            *own = 1;
++            e = VB_SND[c[i] % NELEM(VB_SND)].eng % NENGINES;
++            *pi = vb_pre(e, VB_SND[c[i] % NELEM(VB_SND)].pre);
++            return e;
++        }
++    *own = 0;
++    for (e = 0; e < NENGINES; e++) {
++        if (!eng_allowed(k, e) || !eng_ok(e))
++            continue;
++        for (*pi = 0; *pi < ENGINES[e]->npresets; (*pi)++) {
++            if (preset_orig(ENGINES[e], *pi) != *pi || !((VB_TYPES[k] >> ENGINES[e]->presets[*pi].tag) & 1u))
++                continue;
++            for (j = 0; j < 4u && c[j] != 0xFFu && !(VB_SND[c[j] % NELEM(VB_SND)].eng % NENGINES == e &&
++                                                     vb_pre(e, VB_SND[c[j] % NELEM(VB_SND)].pre) == *pi); j++)
++                ;
++            if ((j == 4u || c[j] == 0xFFu) && !n--)
++                return e;
++        }
++    }
++    return NENGINES;
++}
++static void vb_browse(int32_t s)
++{
++    uint32_t k = song.sel, n, e, pi, cur = 0xFFFFu;
++    int own;
++    for (n = 0; (e = vb_list_at(k, n, &pi, &own)) < NENGINES; n++)
++        if (cur == 0xFFFFu && e == TSEL->eng_req && pi == TSEL->preset && !TSEL->user)
++            cur = n;
++    if (!n)
++        return;
++    n = cur == 0xFFFFu ? (s > 0 ? 0u : n - 1u) : (uint32_t)clamp((int32_t)cur + (s > 0 ? 1 : -1), 0, (int32_t)n - 1);
++    e = vb_list_at(k, n, &pi, &own);
++    if (e != TSEL->eng_req && select_engine(e))
++        return;
++    apply_preset(pi);
++    ui_say(own ? "* " : "", ENGINES[e]->presets[pi].name);   /* (the style's own: marked) */
++}
++
++/* each pass in the VIZZBOX (ui_input, before Skiff's own: what it takes it leaves out of *pp; 1: nothing for Skiff) */
++static int vb_input(uint32_t *pp, uint32_t notes)
+ {
+     static const uint8_t ENC[7] = {VO_TEMPO, VO_LEN, VO_SEED, VO_GENRE, VO_SUB, VO_ENERGY, VO_VAR};
+-    uint32_t b, id, held = fm1_in.buttons;
++    uint32_t b, id, held = fm1_in.buttons, pressed = *pp, home = (held >> panel.btn[B_HOME]) & 1u,
++             lay = (held & (ly_bit(LAYER_FX) | ly_bit(LAYER_GLO) | ly_bit(LAYER_PERF))) || ui.lock;
+     int32_t s;
+-    kb_mask = 1u << panel.btn[B_SAVE] | 1u << panel.btn[B_GLO];   /* (SAVE, GLO held: the white keys the favourites',
+-                                                     * silent) */
+-    perf_mask = 0;
+-    kb_lock = 0;
++    if ((held >> panel.btn[B_SAVE]) & 1u)
++        ui.save_t0 |= 3u;                           /* (SAVE: the favourites', no UNDO, no SAVE page) */
+     for (id = 0; id < FM1_NBTN; id++) {
+         if (!((pressed >> id) & 1u))
+             continue;
+         b = panel_btn_of(id);
+         if (b == B_PLAY) {
+-            if ((held >> panel.btn[B_HOME]) & 1u) {
++            if (home) {
++                ui.home_t0 |= 2u;
+                 vb_mode_set(0);
+-                return;
++                *pp = 0;
++                return 1;
+             }
+             if (song.playing)
+                 transport_req = 2;
+@@ -235,21 +431,49 @@ static void vb_input(uint32_t pressed, uint32_t notes)
+                 (void)vb_start();
+         } else if (b == B_REC) {
+             vb_knob(VO_SEED, (int32_t)(vb_hash(vb.k.seed + fm1_ms) & 0xFFFFu) | 1);
+-        } else if (b == B_FX && vb.own && song.playing)
+-            vb.req |= VQ_DROP;
+-        else if (b == B_ARP && vb.own && song.playing)
+-            vb.req |= VQ_BREAK;
+-        else if (b == B_SEQ)
++        } else if (b == B_SEQ)
+             vb.req ^= VQ_HOLD;
+-        else if (b == B_EDIT && ((held >> panel.btn[B_HOME]) & 1u))
++        else if (b == B_EDIT && home) {
++            ui.home_t0 |= 2u;
+             vb_back(0x3Fu);                         /* ((1.1) HOME + EDIT: every track and the buses back */
+-        else if (b == B_OCTDN || b == B_OCTUP)
+-            song.octave = (int8_t)clamp(song.octave + (b == B_OCTUP ? 1 : -1), -3, 3);
++        } else if (b == B_EDIT && !lay)
++            ui.pg_down |= (uint16_t)(1u << id);     /* (on its release: KLANG, ui_input.c page_tap) */
++        else if (b != B_SCL && b != B_ENV && b != B_SAVE)
++            continue;                               /* (FX GLO ARP HOME OCT LFO: Skiff's) */
++        *pp &= ~(1u << id);
+         ui.force = 1;
+     }
+-    for (id = EN_SELECT; id <= EN_K4; id++)
+-        if ((s = panel_enc(id)) != 0)
+-            vb_knob(ENC[id], s);
++    if (layer_held() && ui.ly == LAYER_GLO) {       /* GLO: SELECT the buses' pages */
++        if ((s = panel_enc(EN_SELECT)) != 0)
++            vb_bus = (uint8_t)clamp((int32_t)vb_bus + (s > 0 ? 1 : -1), 0, 3);
++    } else if (layer_held() && ui.ly == LAYER_PERF) {   /* (PERFORM: no LAUNCH, no KEYS here) */
++        (void)panel_enc(EN_SELECT);
++        (void)panel_enc(EN_PRESET);
++    } else if (!lay) {
++        if ((s = panel_enc(EN_PRESET)) != 0) {
++            if (home) {                             /* HOME + PRESETS: every sound */
++                uint8_t f = favorites.filter, t = ui_ptag;
++                ui.home_t0 |= 2u;
++                favorites.filter = 0;
++                ui_ptag = 0;
++                if (vb_ready())
++                    preset_step(s);
++                favorites.filter = f;
++                ui_ptag = t;
++            } else if (vb_pg)
++                vb_browse(s);
++            else
++                vb_knob(VO_SEED, s);
++        }
++        if (!vb_pg) {
++            for (id = EN_SELECT; id <= EN_K4; id++)
++                if (id != EN_PRESET && (s = panel_enc(id)) != 0)
++                    vb_knob(ENC[id], s);
++        } else if ((s = panel_enc(EN_SELECT)) != 0)
++            vb_step(s);
++    }
++    if (page_over == &vb_live)
++        vb_live_ids();
+     vb_black(notes);
+     vb_white(notes);
+     vb_fav_poll();
+@@ -257,6 +481,7 @@ static void vb_input(uint32_t pressed, uint32_t notes)
+         vb_knob_song();                             /* (stopped: what the knobs turned while it played) */
+         ui.force = 1;
+     }
++    return 0;
+ }
+ 
+ /* ------------------------------------------------------------- screen --- */
+@@ -302,16 +527,72 @@ static void vb_curve(int32_t y, int32_t h)          /* the plan's energy, the ba
+     if (all && vb.own && song.playing)
+         cv_rect(8 + (int32_t)(224u * at / all), y, 2, h + 1, T_ACCENT);
+ }
+-static void vb_draw(void)
++/* (1.1) the six tracks from y on: lit playing, M muted, S soloed, the focus track framed, the user's hand on it a dot
++ * (SONG's lower half, PERFORM's panel) */
++static void vb_tiles(int32_t y0)
++{
++    uint32_t k;
++    char b[2] = {0, 0};
++    for (k = 0; k < NTRK; k++) {
++        int32_t x = 6 + 78 * (int32_t)(k % 3u), y = y0 + 44 * (int32_t)(k / 3u);
++        int mute = trk[k].p[P_MUTE] || ((perf_cut >> k) & 1u) || (perf_solo && !((perf_solo >> k) & 1u));
++        int on = vb.own && song.playing && ((vb.act >> k) & 1u) && !mute;
++        uint32_t i, hand = (vb_hand.snd >> k) & 1u;
++        for (i = 0; i < VB_PB; i++)
++            hand |= vb_hand.par[k][i];
++        if (k == song.sel)                          /* (the focus track) */
++            cv_rrect(x - 3, y - 3, 78, 44, 8, T_TEXT, T_BG);
++        cv_rrect(x, y, 72, 38, 6, on ? T_TRK(k) : T_SURF, k == song.sel ? T_TEXT : T_BG);
++        b[0] = (char)('1' + k);
++        cv_text(x + 6, y + 4, &AF_S, b, on ? T_INK : T_MID);
++        cv_text(x + 6, y + 18, &AF_S, VB_ROLE[k], on ? T_INK : mute ? T_DIM : T_TEXT);
++        if (mute || ((perf_solo >> k) & 1u))
++            cv_text_r(x + 66, y + 4, &AF_S, (perf_solo >> k) & 1u ? "S" : "M", on ? T_INK : T_ACCENT, T_SURF);
++        if (hand)                                   /* (taken by the user) */
++            cv_rect(x + 60, y + 26, 6, 6, on ? T_INK : T_ACCENT);
++    }
++}
++/* the favourites from y on: SAVE stores, GLO loads (a white key) */
++static void vb_favs(int32_t y)
++{
++    uint32_t i;
++    char b[24], *p;
++    cv_text(8, y, &AF_S, (fm1_in.buttons >> panel.btn[B_SAVE]) & 1u ? "SAVE: A WHITE KEY STORES" :
++                                                                      "GLO: A WHITE KEY LOADS", T_ACCENT);
++    for (i = 0; i < VB_NFAV; i++) {
++        const vb_song_t *f = &vb_fav.f[i];
++        p = vb_num(b, i + 1u);
++        *p++ = ' ';
++        str_cpy(p, f->genre < 10u ? VB_SNAME[vb_ri(f)] : "-", 18);
++        cv_text(8 + 116 * (int32_t)(i / 8u), y + 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < 10u ? T_TEXT : T_DIM);
++    }
++}
++/* (1.1) FX, ARP tapped (ui_layer.c layer_tap, on the release): DROP NOW, BREAK NOW */
++static void vb_tap(uint32_t l)
++{
++    if (vb.own && song.playing && (l == LAYER_FX || l == LAYER_PERF))
++        vb.req |= l == LAYER_FX ? VQ_DROP : VQ_BREAK;
++}
++/* the SONG page (0: KLANG, MOD, a layer, HOME's map: Skiff draws them, ui_draw.c) */
++static int vb_draw(void)
+ {
+     static const char *const SEC[7] = {"READY", "INTRO", "GROOVE", "BUILD", "DROP", "BREAK", "OUTRO"};
++    static uint8_t mine;
+     char b[40], *p;
+-    uint32_t k, i, list = (fm1_in.buttons >> panel.btn[B_SAVE] | fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
++    uint32_t list = (fm1_in.buttons >> panel.btn[B_SAVE] | fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
+     const vb_song_t *w = vb.own && song.playing ? &vb.s : &vb.k;
++    if (vb_pg || ui.layer || ui.shift) {
++        mine = 0;
++        return 0;
++    }
++    if (!mine) {                                    /* (from Skiff's: all of it again) */
++        mine = 1;
++        ui.force = 1;
++    }
+     if (ui.msg_t)
+         ui.msg_t--;
+     if (!ui.force && (ui.frame & 7u))
+-        return;
++        return 1;
+     ui.force = 0;
+     if (vb_ov && fm1_ms - vb_ov_t > 1200u)
+         vb_ov = VO_NONE;
+@@ -349,15 +630,7 @@ static void vb_draw(void)
+     /* below */
+     cv_begin(240, 120, T_BG);
+     if (list) {                                     /* the favourites: SAVE stores, GLO loads (a white key) */
+-        cv_text(8, 0, &AF_S, (fm1_in.buttons >> panel.btn[B_SAVE]) & 1u ? "SAVE: A WHITE KEY STORES" :
+-                                                                          "GLO: A WHITE KEY LOADS", T_ACCENT);
+-        for (i = 0; i < VB_NFAV; i++) {
+-            const vb_song_t *f = &vb_fav.f[i];
+-            p = vb_num(b, i + 1u);
+-            *p++ = ' ';
+-            str_cpy(p, f->genre < 10u ? VB_SNAME[vb_ri(f)] : "-", 18);
+-            cv_text(8 + 116 * (int32_t)(i / 8u), 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < 10u ? T_TEXT : T_DIM);
+-        }
++        vb_favs(0);
+     } else if (vb_ov) {                             /* the control turned last, big */
+         static const char *const NAME[8] = {"", "GENRE", "SUBGENRE", "ENERGY", "VARIATION", "TEMPO", "LENGTH", "SEED"};
+         cv_text(8, 4, &AF_M, NAME[vb_ov % 8u], T_MID);
+@@ -375,33 +648,22 @@ static void vb_draw(void)
+         cv_text(8, 28, &AF_V, b, T_ACCENT);
+         if (vb.own && song.playing && vb_ov != VO_TEMPO)
+             cv_text(8, 64, &AF_S, "FROM THE NEXT SECTION", T_MID);
+-    } else {                                        /* the six tracks: lit playing, M muted, S soloed */
+-        for (k = 0; k < NTRK; k++) {
+-            int32_t x = 6 + 78 * (int32_t)(k % 3u), y = 2 + 44 * (int32_t)(k / 3u);
+-            int mute = trk[k].p[P_MUTE] || ((perf_cut >> k) & 1u) || (perf_solo && !((perf_solo >> k) & 1u));
+-            int on = vb.own && song.playing && ((vb.act >> k) & 1u) && !mute;
+-            cv_rrect(x, y, 72, 38, 6, on ? T_TRK(k) : T_SURF, T_BG);
+-            b[0] = (char)('1' + k);
+-            b[1] = 0;
+-            cv_text(x + 6, y + 4, &AF_S, b, on ? T_INK : T_MID);
+-            cv_text(x + 6, y + 18, &AF_S, VB_ROLE[k], on ? T_INK : mute ? T_DIM : T_TEXT);
+-            if (mute || ((perf_solo >> k) & 1u))
+-                cv_text_r(x + 66, y + 4, &AF_S, (perf_solo >> k) & 1u ? "S" : "M", on ? T_INK : T_ACCENT, T_SURF);
+-        }
+-    }
++    } else                                          /* the six tracks */
++        vb_tiles(5);
+     if (ui.msg_t && !list)
+         cv_text(8, 102, &AF_S, ui.msg, T_ACCENT);
+     else if (!list && !vb_ov)
+         cv_text(8, 102, &AF_S, song.playing ? "FX DROP  ARP BREAK  SEQ HOLD  REC NEW" : "PLAY: A SONG  REC: NEW SEED",
+                 T_DIM);
+     cv_blit(0, 120);
++    return 1;
+ }
+ 
+ /* the LEDs (main.c, instead of ui_leds): PLAY green while playing; FX, ARP, SEQ lit for DROP NOW, BREAK NOW and HOLD;
+  * the black keys of the tracks sounding lit; the white keys of the stored favourites glowing (SAVE or GLO held: lit) */
+ static void vb_leds(void)
+ {
+-    uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0};
++    uint8_t nl[FM1_NCOL] = {0}, nd[FM1_NCOL] = {0}, nb[FM1_NCOL] = {0}, nm[FM1_NCOL] = {0};
+     uint32_t k, c, list = (fm1_in.buttons >> panel.btn[B_SAVE] | fm1_in.buttons >> panel.btn[B_GLO]) & 1u;
+     static uint8_t ready;
+     if (fm1_led_anim_on())
+@@ -415,20 +677,23 @@ static void vb_leds(void)
+     led_put(nl, panel.btn[B_FX], (vb.req & VQ_DROP) != 0u);
+     led_put(nl, panel.btn[B_ARP], (vb.req & VQ_BREAK) != 0u);
+     led_put(nl, panel.btn[B_SEQ], (vb.req & VQ_HOLD) != 0u);
++    led_put(nl, panel.btn[B_EDIT], vb_pg == VP_KLANG);   /* ((1.1) the page open, the layer held */
++    led_put(nl, panel.btn[B_LFO], vb_pg == VP_MOD);
++    led_put(nl, panel.btn[LAYERS[ui.layer % LAYER_N].btn], ui.layer != 0u);
+     for (k = 0; k < 27u; k++) {
+         uint32_t p = key_place(k);
+-        if (key_black(k))
+-            led_put(nl, LED_KEY0 + k, p < NTRK && !trk[p].p[P_MUTE] && !((perf_cut >> p) & 1u) &&
+-                                          (!perf_solo || ((perf_solo >> p) & 1u)));
+-        else if (p < VB_NFAV && vb_fav.f[p].genre < 10u)
++        if (key_black(k)) {                         /* (sounding: lit; (1.1) the focus track's: breathing, muted mid) */
++            int on = p < NTRK && !trk[p].p[P_MUTE] && !((perf_cut >> p) & 1u) && (!perf_solo || ((perf_solo >> p) & 1u));
++            led_put(p != song.sel ? nl : on ? nb : nm, LED_KEY0 + k, p != song.sel ? on : 1);
++        } else if (p < VB_NFAV && vb_fav.f[p].genre < 10u)
+             led_put(list ? nl : nd, LED_KEY0 + k, 1);
+     }
+     if (song.playing)
+         nl[LED_PLAY_GREEN >> 3] |= (uint8_t)(1u << (LED_PLAY_GREEN & 7u));
+     for (c = 0; c < FM1_NCOL; c++) {
+         fm1_led_dim[c] = nd[c];
+-        fm1_led_breath[c] = 0;
+-        fm1_led_mid[c] = 0;
++        fm1_led_breath[c] = nb[c];
++        fm1_led_mid[c] = nm[c];
+         fm1_led[c] = nl[c];
+     }
+ }
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index 674d643..aeae97c 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -1044,6 +1044,258 @@ static void case_hand_notes(void)
+     ok(b.n <= a.n, "more notes with the hand (%u) than without (%u)", b.n, a.n);
+ }
+ 
++/* ---------------------------------------------------------------- (1.1) the VIZZBOX's pages, keys and layers (3) */
++static uint32_t key_at(int black, uint32_t place)
++{
++    uint32_t k;
++    for (k = 0; k < 27u && !(key_black(k) == black && key_place(k) == place); k++)
++        ;
++    return k;
++}
++static void tap_key(uint32_t k)
++{
++    web_keys(1u << k);
++    run_s(0.08);
++    web_keys(0);
++    run_s(0.05);
++}
++static void focus(uint32_t k)                       /* SEL + track k's black key */
++{
++    black_with(1u << B_SCL, k);
++}
++/* EDIT KLANG, LFO MOD, again SONG; SELECT through KLANG (LIVE, EDIT's, ENV's, FX's pages, the MIXER) and MOD (LFO's);
++ * ALGORITHM and SEL + a black key the focus track; LIVE's four the role's, a turn the user's */
++static void case_pages(void)
++{
++    uint32_t i, seen = 0, fam_ok = 1, id;
++    snprintf(tag, sizeof tag, "pages");
++    boot();
++    ok(vb_mode && !vb_pg && song.sel == R_L, "a new unit: not the VIZZBOX's SONG, LEAD in focus");
++    press(1u << B_EDIT);
++    ok(vb_pg == VP_KLANG && page_over == &vb_live && vb.own, "EDIT: not KLANG's LIVE (the tracks the producer's)");
++    for (i = 0; i < 4u; i++)
++        ok(vb_live.id[i] == (i < 2u ? ENGINES[TSEL->eng_req % NENGINES]->knob[i] : i == 2u ? P_REL : P_DIST),
++           "LIVE KNOB %u: parameter %u", i + 1u, vb_live.id[i]);
++    id = vb_live.id[0];
++    web_enc(EN_K1, 4);
++    run_s(0.1);
++    ok(vb_mine(R_L, id), "LIVE KNOB 1: not the user's");
++    for (i = 0; i < 40u; i++) {                       /* SELECT to KLANG's end */
++        web_enc(EN_SELECT, 1);
++        run_s(0.03);
++        if (!page_over) {
++            uint32_t f = PAGES[ui.page].fam;
++            seen |= 1u << f;
++            fam_ok &= f == FAM_EDIT || f == FAM_ENV || f == FAM_FX || f == FAM_TRK;
++        }
++    }
++    ok(fam_ok && seen == (1u << FAM_EDIT | 1u << FAM_ENV | 1u << FAM_FX | 1u << FAM_TRK), "KLANG's pages: families %03x", seen);
++    ok(PAGES[ui.page].fam == FAM_TRK, "KLANG ends on the MIXER (page %u)", ui.page);
++    for (i = 0; i < 40u; i++) {
++        web_enc(EN_SELECT, -1);
++        run_s(0.03);
++    }
++    ok(page_over == &vb_live, "SELECT back: not LIVE first");
++    web_enc(EN_ALGO, -1);
++    run_s(0.05);
++    ok(song.sel == R_C, "ALGORITHM on KLANG: the focus T%u", song.sel + 1u);
++    press(1u << B_LFO);
++    ok(vb_pg == VP_MOD && PAGES[ui.page].fam == FAM_LFO, "LFO: not MOD");
++    for (i = 0; i < 10u; i++) {
++        web_enc(EN_SELECT, 1);
++        run_s(0.03);
++        ok(PAGES[ui.page].fam == FAM_LFO, "MOD: page %u not LFO's", ui.page);
++    }
++    press(1u << B_LFO);
++    ok(!vb_pg && ui.home, "LFO again: not SONG");
++    focus(R_B);
++    ok(song.sel == R_B, "SEL + black key 2: the focus T%u", song.sel + 1u);
++    ok(!trk[R_B].p[P_MUTE], "SEL + black key 2 muted T2");
++    press(1u << B_EDIT);
++    press(1u << B_HOME);
++    ok(!vb_pg && !ui.menu, "HOME tapped on KLANG: not SONG");
++}
++/* PRESETS on KLANG: the role's sounds, the style's own first (marked), then the others of the role's types; HOME +
++ * PRESETS every sound; each one the user's */
++static void case_browse(void)
++{
++    uint32_t i, k, e, pi, n = 0, typed = 1;
++    int own;
++    const uint8_t *c;
++    snprintf(tag, sizeof tag, "browse");
++    boot();
++    knobs(1, 1, 0x4321u, 70, 40, 1);
++    press(1u << B_EDIT);
++    for (k = 0; k < NTRK; k++) {
++        focus(k);
++        c = vb_cands(k);
++        for (n = 0; n < 4u && c[n] != 0xFFu; n++)
++            ;
++        for (i = 0; i < n + 2u; i++) {               /* (from the sound the track has: the list's next) */
++            uint32_t at;
++            for (at = 0; (e = vb_list_at(k, at, &pi, &own)) < NENGINES &&
++                         !(e == trk[k].eng_req && pi == trk[k].preset && !trk[k].user); at++)
++                ;
++            at = e < NENGINES ? at + 1u : 0u;
++            web_enc(EN_PRESET, 1);
++            run_s(0.15);
++            e = vb_list_at(k, at, &pi, &own);
++            ok(trk[k].eng_req == e && trk[k].preset == pi, "T%u PRESETS: not the list's sound %u", k + 1u, at);
++            ok(own == (at < n) && (ui.msg[0] == '*') == (at < n), "T%u PRESETS %u: the style's own %d, said '%s'", k + 1u, at,
++               own, ui.msg);
++            if (at >= n)
++                typed &= (VB_TYPES[k] >> ENGINES[e]->presets[pi].tag) & 1u;
++        }
++        ok((vb_hand.snd >> k) & 1u, "T%u: a sound chosen, not the user's", k + 1u);
++    }
++    ok(typed, "a sound of another type in a role's list");
++    web_buttons(1u << B_HOME);                       /* HOME + PRESETS: PRESETS' ALL list */
++    run_s(0.1);
++    web_enc(EN_PRESET, 1);
++    run_s(0.2);
++    web_buttons(0);
++    run_s(0.1);
++    ok(!ui.menu, "HOME + PRESETS: the MENU");
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
++/* the white keys play the focus track (3.2): LEAD in the song's scale; DRUMS a lane a key; CHORDS a chord a key, in the
++ * key; the black keys never a note; out over USB on the focus track's channel */
++static void case_keys(void)
++{
++    uint32_t i, k, n, notes, inkey, lane_ok = 1, chord_ok = 1;
++    snprintf(tag, sizeof tag, "keys");
++    boot();
++    knobs(0, 0, 0x1111u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(2.0);
++    press(1u << B_PLAY);                             /* (stopped: the tracks still the producer's, only the keys sound) */
++    run_s(1.0);
++    for (i = 0, notes = inkey = 0; i < 16u; i++) {   /* LEAD: every white key in the key */
++        nev = 0;
++        tap_key(key_at(0, i));
++        for (k = 0; k < nev; k++)
++            if (ev[k].st == (0x90u | R_L) && ev[k].d2) {
++                notes++;
++                inkey += (uint32_t)key_has(ev[k].d1);
++            }
++    }
++    ok(notes >= 16u && inkey == notes, "LEAD: %u of %u notes out in the key (channel 4)", inkey, notes);
++    focus(R_D);
++    for (i = 0; i < 8u; i++) {                       /* DRUMS: a lane a white key */
++        nev = 0;
++        tap_key(key_at(0, i));
++        for (k = 0, n = 0; k < nev; k++)
++            n += ev[k].st == 0x90u && ev[k].d2 && ev[k].d1 == DRUM_LANE_NOTE[i];
++        lane_ok &= n == 1u;
++    }
++    ok(lane_ok, "DRUMS: the white keys not the lanes");
++    focus(R_C);
++    for (i = 0; i < 7u; i++) {                       /* CHORDS: a chord a key, in the key */
++        nev = 0;
++        tap_key(key_at(0, i));
++        for (k = 0, n = 0; k < nev; k++)
++            if (ev[k].st == (0x90u | R_C) && ev[k].d2) {
++                n++;
++                chord_ok &= key_has(ev[k].d1);
++            }
++        chord_ok &= n == (VB_SUB[vb.ri].voicing > 3u ? 4u : 3u);
++    }
++    ok(chord_ok, "CHORDS: not a chord of the key on every white key");
++    for (i = 0, n = 0; i < 6u; i++) {                /* the black keys: MUTE, never a note */
++        nev = 0;
++        tap_key(key_at(1, i));
++        ok(trk[i].p[P_MUTE] != 0, "black key %u: T%u not muted", i + 1u, i + 1u);
++        tap_key(key_at(1, i));
++        for (k = 0; k < nev; k++)
++            n += (ev[k].st & 0xF0u) == 0x90u && ev[k].d2;
++    }
++    ok(n == 0u, "the black keys played %u notes", n);
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
++/* FX and ARP tapped: DROP NOW, BREAK NOW (on the release); held: their layers, no DROP, no BREAK; PERFORM's white keys
++ * play the focus track; GLO held: the buses (KNOB 1 its first's), SELECT their pages, a white key a favourite */
++static void case_layers(void)
++{
++    uint32_t k, n;
++    int16_t m;
++    snprintf(tag, sizeof tag, "layers");
++    boot();
++    knobs(0, 1, 0x2222u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(6.0);
++    web_buttons(1u << B_FX);
++    run_s(0.04);
++    ok(!(vb.req & VQ_DROP), "FX pressed: DROP NOW before its release");
++    web_buttons(0);
++    run_s(0.02);
++    ok((vb.req & VQ_DROP) != 0u, "FX tapped: no DROP NOW");
++    vb.req = 0;
++    web_buttons(1u << B_FX);
++    run_s(0.8);
++    ok(layer_open() == LAYER_FX && ui.layer == LAYER_FX, "FX held: no layer");
++    web_buttons(0);
++    run_s(0.1);
++    ok(!(vb.req & VQ_DROP), "FX held: DROP NOW");
++    press(1u << B_ARP);
++    ok((vb.req & VQ_BREAK) != 0u, "ARP tapped: no BREAK NOW");
++    vb.req = 0;
++    web_buttons(1u << B_ARP);
++    run_s(0.8);
++    ok(layer_open() == LAYER_PERF, "ARP held: no PERFORM");
++    nev = 0;
++    web_keys(1u << key_at(0, 4));
++    run_s(0.1);
++    for (k = 0, n = 0; k < nev; k++)
++        n += ev[k].st == (0x90u | song.sel) && ev[k].d2;
++    ok(n == 1u, "PERFORM: a white key not the focus track's note (%u)", n);
++    web_keys(0);
++    web_buttons(0);
++    run_s(0.1);
++    ok(!(vb.req & VQ_BREAK), "ARP held: BREAK NOW");
++    press(1u << B_SEQ);
++    ok((vb.req & VQ_HOLD) != 0u, "SEQ: not HOLD");
++    press(1u << B_SEQ);
++    m = song.g[G_DMIX];
++    web_buttons(1u << B_GLO);
++    run_s(0.8);
++    web_enc(EN_K1, 5);
++    run_s(0.1);
++    ok(song.g[G_DMIX] > m && ((vb_hand.glo >> G_DMIX) & 1u), "GLO + KNOB 1: the delay's MIX %d (was %d), not the user's", song.g[G_DMIX], m);
++    web_enc(EN_SELECT, 1);
++    run_s(0.1);
++    ok(vb_bus == 1u && vb_bus_page() == &PAGES[page_first(FAM_GLO)], "GLO + SELECT: not DELAY");
++    web_buttons(0);
++    run_s(0.1);
++    ok(song.g[G_BPM] == vb.bpm, "GLO + SELECT changed the tempo");
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
++/* LFO held + a knob on KLANG: MOMENTARY, as in Skiff: the value while held, back over RETURN; not the user's */
++static void case_momentary(void)
++{
++    uint32_t id, i;
++    int16_t v0, v1;
++    snprintf(tag, sizeof tag, "momentary");
++    boot();
++    knobs(0, 1, 0x3333u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(3.0);
++    press(1u << B_EDIT);
++    id = vb_live.id[0];
++    v0 = TSEL->p[id];
++    web_buttons(1u << B_LFO);
++    run_s(0.1);
++    web_enc(EN_K1, 6);
++    run_s(0.2);
++    v1 = TSEL->p[id];
++    ok(v1 != v0, "LFO + KNOB 1: no change");
++    web_buttons(0);
++    for (i = 0; i < 100u && TSEL->p[id] != v0; i++)
++        run_s(0.05);
++    ok(TSEL->p[id] == v0, "LFO let go: not back (%d, was %d)", TSEL->p[id], v0);
++    ok(!vb_mine(song.sel, id), "MOMENTARY counted as the user's");
++    ok(vb_pg == VP_KLANG, "LFO let go after a turn: the page left");
++}
++
+ /* ---------------------------------------------------------------- the cases, four at a time */
+ typedef struct { const char *name; uint32_t a, b; } case_t;
+ static void one(const case_t *c)
+@@ -1076,6 +1328,16 @@ static void one(const case_t *c)
+         case_hand_perf();
+     else if (!strcmp(c->name, "hand_notes"))
+         case_hand_notes();
++    else if (!strcmp(c->name, "pages"))
++        case_pages();
++    else if (!strcmp(c->name, "browse"))
++        case_browse();
++    else if (!strcmp(c->name, "keys"))
++        case_keys();
++    else if (!strcmp(c->name, "layers"))
++        case_layers();
++    else if (!strcmp(c->name, "momentary"))
++        case_momentary();
+     else
+         case_modes();
+ }
+@@ -1101,6 +1363,11 @@ int main(int argc, char **argv)
+     cs[n++] = (case_t){"hand_param", 0, 0};
+     cs[n++] = (case_t){"hand_perf", 0, 0};
+     cs[n++] = (case_t){"hand_notes", 0, 0};
++    cs[n++] = (case_t){"pages", 0, 0};
++    cs[n++] = (case_t){"browse", 0, 0};
++    cs[n++] = (case_t){"keys", 0, 0};
++    cs[n++] = (case_t){"layers", 0, 0};
++    cs[n++] = (case_t){"momentary", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+         int st;
+diff --git a/tests/vizzbox_inactive.c b/tests/vizzbox_inactive.c
+index ba9bedd..45ff7a1 100644
+--- a/tests/vizzbox_inactive.c
++++ b/tests/vizzbox_inactive.c
+@@ -62,12 +62,20 @@ int main(void)
+     ahash = mhash = 2166136261u;
+     web_nor_erase();
+     web_boot();
++    ms(1500);
++#if VIZZBOX
++    vb_mode_set(0);                                 /* (the unit in the GROOVEBOX, as one switched there before: (1.1)
++                                                     * on again, so it starts there) */
++#endif
++    ms(25000);
++    ahash = mhash = 2166136261u;
++    nmidi = 0;
++    web_boot();
+     usb.config = 1;
+     web_master(1023);
+ #if VIZZBOX
+-    CPU2_BYTE |= VB_MODE_BIT;                       /* (the unit in the GROOVEBOX, as one switched there before) */
+-    vb_mode = 0;
+-    ui.force = 1;
++    if (vb_mode)
++        printf("inactive: the unit did not start in the GROOVEBOX\n");
+ #endif
+     ms(1500);
+     scene("boot, the splash, HOME");
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+index 6b4d5e5..d000625 100644
+--- a/tests/vizzbox_mutants.py
++++ b/tests/vizzbox_mutants.py
+@@ -92,7 +92,7 @@ FAULTS = [
+         ("    if (!vb_fav_dirty || song.playing || !flash_ok)", "    if (!vb_fav_dirty || !flash_ok)")],
+      ("producer", "favourites")),
+     ("the GROOVEBOX's music not given back", P, [
+-        ("    vb_run = 0;\n    vb_resend = 2;\n    if (vb.kept) {", "    vb_run = 0;\n    vb_resend = 2;\n    if (0) {")],
++        ("    if (vb.kept) {\n        int n = proj_import", "    if (0) {\n        int n = proj_import")],
+      ("producer", "modes")),
+     ("the autosave keeps the producer's song as the user's session", PRJ, [
+         ("    if (vb_owns())\n        return;                                    /* ((Vizzbox) the producer's song is no session to keep) */",
+@@ -118,6 +118,19 @@ FAULTS = [
+         ("    if (vb_gl[g]) {\n        v = *vp + (v - *vp) / (int32_t)vb_gl[g];\n        vb_gl[g]--;\n    }",
+          "    vb_gl[g] = 0;")],
+      ("producer", "hand_perf")),
++    ("1.1: FX tapped opens nothing (no DROP NOW)", UI, [
++        ("        vb.req |= l == LAYER_FX ? VQ_DROP : VQ_BREAK;", "        vb.req |= l == LAYER_FX ? 0u : VQ_BREAK;")],
++     ("producer", "layers")),
++    ("1.1: FX held sets DROP NOW (on its press, as 1.0)", UI, [
++        ("        } else if (b == B_SEQ)\n            vb.req ^= VQ_HOLD;",
++         "        } else if (b == B_SEQ)\n            vb.req ^= VQ_HOLD;\n        else if (b == B_FX)\n            vb.req |= VQ_DROP;")],
++     ("producer", "layers")),
++    ("1.1: DRUMS' white keys the GM map (not the lanes)", ISR, [
++        ("    return drum_track(t) ? DRUM_LANE_NOTE[key_place(k) % NLANE] : kb_map(t, k);", "    return kb_map(t, k);")],
++     ("producer", "keys")),
++    ("1.1: PRESETS on KLANG the style's sounds unmarked", UI, [
++        ("    ui_say(own ? \"* \" : \"\", ENGINES[e]->presets[pi].name);", "    ui_say(\"\", ENGINES[e]->presets[pi].name);")],
++     ("producer", "browse")),
+     ("1.1: the songs of 1.0 changed (a velocity a little more human)", P, [
+         ("    int32_t x = (int32_t)v + (int32_t)vb_below(11u) - 5;", "    int32_t x = (int32_t)v + (int32_t)vb_below(13u) - 6;")],
+      ("golden", "1")),
+diff --git a/tests/vizzbox_ui.c b/tests/vizzbox_ui.c
+index bbd7cd4..eb958ca 100644
+--- a/tests/vizzbox_ui.c
++++ b/tests/vizzbox_ui.c
+@@ -114,6 +114,51 @@ static void scenes(uint32_t pal)
+     shot("vb_favourites_load");
+     web_buttons(0);
+     ms(100);
++    /* (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 3.8) the pages, the layers, HOME's map; the focus framed, the hand marked */
++    press(1u << B_PLAY, 40);
++    ms(12000);
++    press(1u << B_EDIT, 40);
++    ms(300);
++    shot("vb11_klang_live");                        /* KLANG: LIVE, the LEAD's four */
++    web_enc(EN_K1, 3);                              /* (a turn: the user's, its value big) */
++    ms(100);
++    shot("vb11_klang_turned");
++    web_enc(EN_SELECT, 1);
++    ms(1500);
++    shot("vb11_klang_edit1");                       /* the engine's first page */
++    web_enc(EN_PRESET, 1);
++    ms(300);
++    shot("vb11_klang_preset");                      /* PRESETS: the role's next sound, said */
++    press(1u << B_LFO, 40);
++    ms(1500);
++    shot("vb11_mod");                               /* MOD: LFO */
++    press(1u << B_LFO, 40);
++    ms(300);
++    shot("vb11_song_hand");                         /* SONG: the LEAD framed and taken */
++    web_buttons(1u << B_FX);
++    ms(900);
++    shot("vb11_fx_layer");
++    web_buttons(0);
++    ms(300);
++    web_buttons(1u << B_GLO);
++    ms(900);
++    shot("vb11_glo_layer");                         /* GLO held: the buses, the favourites */
++    web_buttons(0);
++    ms(300);
++    web_buttons(1u << B_ARP);
++    ms(900);
++    shot("vb11_perform");                           /* ARP held: the throws, the tracks */
++    web_buttons(0);
++    ms(300);
++    web_buttons(1u << B_HOME);
++    ms(600);
++    shot("vb11_home_map");                          /* HOME held: its map */
++    web_buttons(0);
++    ms(100);
++    if (ui.menu)
++        press(1u << B_HOME, 40);
++    press(1u << B_PLAY, 40);
++    ms(3000);
+     web_buttons(1u << B_HOME);
+     ms(60);
+     web_buttons(1u << B_HOME | 1u << B_PLAY);
+diff --git a/tests/vizzbox_ui_golden.txt b/tests/vizzbox_ui_golden.txt
+index 2357cca..3611236 100644
+--- a/tests/vizzbox_ui_golden.txt
++++ b/tests/vizzbox_ui_golden.txt
+@@ -1,72 +1,132 @@
+-SKIFF_vb_ready               1fcdf24f
++SKIFF_vb_ready               26ab7abf
+ SKIFF_vb_knob_genre          a27d9add
+-SKIFF_vb_techno_ready        c3db5ee6
++SKIFF_vb_techno_ready        c10b0b46
+ SKIFF_vb_knob_length         3cf5c2e2
+-SKIFF_vb_playing             9b902b30
+-SKIFF_vb_muted_t2            9c9e101f
++SKIFF_vb_playing             42fbd360
++SKIFF_vb_muted_t2            0925b04f
+ SKIFF_vb_favourites_save     13dd2b49
+-SKIFF_vb_saved_message       2e9e7781
++SKIFF_vb_saved_message       4d115391
+ SKIFF_vb_knob_live           b72f8738
+-SKIFF_vb_stopped             f4f8da19
++SKIFF_vb_stopped             8d705f59
+ SKIFF_vb_favourites_load     cc33ac0d
+-SKIFF_vb_groovebox           0ff0a1ac
+-HI-CON_vb_ready               3edc1ad8
++SKIFF_vb11_klang_live        76b26e52
++SKIFF_vb11_klang_turned      04bb9be1
++SKIFF_vb11_klang_edit1       1316eb4c
++SKIFF_vb11_klang_preset      73ac94e0
++SKIFF_vb11_mod               45af6d33
++SKIFF_vb11_song_hand         6f508c63
++SKIFF_vb11_fx_layer          5648e23a
++SKIFF_vb11_glo_layer         bdca45fc
++SKIFF_vb11_perform           677b51f3
++SKIFF_vb11_home_map          e5933542
++SKIFF_vb_groovebox           3e5927f0
++HI-CON_vb_ready               6bcdfb80
+ HI-CON_vb_knob_genre          e520bb6c
+-HI-CON_vb_techno_ready        ef702197
++HI-CON_vb_techno_ready        71635a17
+ HI-CON_vb_knob_length         04e1cd50
+-HI-CON_vb_playing             789fa18b
+-HI-CON_vb_muted_t2            b596c112
++HI-CON_vb_playing             30b3ad93
++HI-CON_vb_muted_t2            282361ea
+ HI-CON_vb_favourites_save     900aaac2
+-HI-CON_vb_saved_message       82925c94
++HI-CON_vb_saved_message       606fa67c
+ HI-CON_vb_knob_live           af951491
+-HI-CON_vb_stopped             26f87998
++HI-CON_vb_stopped             a0d12c40
+ HI-CON_vb_favourites_load     a3ec6c86
+-HI-CON_vb_groovebox           c7197e7f
+-PAPER_vb_ready               ee7334b5
++HI-CON_vb11_klang_live        04446cbe
++HI-CON_vb11_klang_turned      463d4c4e
++HI-CON_vb11_klang_edit1       1f9ab5d7
++HI-CON_vb11_klang_preset      aab35f28
++HI-CON_vb11_mod               46ff18d8
++HI-CON_vb11_song_hand         a3ac43ab
++HI-CON_vb11_fx_layer          090feaaa
++HI-CON_vb11_glo_layer         249707e7
++HI-CON_vb11_perform           d97b2a35
++HI-CON_vb11_home_map          52010cb9
++HI-CON_vb_groovebox           0fcbe209
++PAPER_vb_ready               db04dc29
+ PAPER_vb_knob_genre          aecc7918
+-PAPER_vb_techno_ready        eb55c0d1
++PAPER_vb_techno_ready        db00e455
+ PAPER_vb_knob_length         8c64b9c0
+-PAPER_vb_playing             c5df6986
+-PAPER_vb_muted_t2            1afb03d4
++PAPER_vb_playing             4d995312
++PAPER_vb_muted_t2            69a8ca48
+ PAPER_vb_favourites_save     1cbc94a3
+-PAPER_vb_saved_message       acc6cfe3
++PAPER_vb_saved_message       0610d66f
+ PAPER_vb_knob_live           4f39baf8
+-PAPER_vb_stopped             69ebad0a
++PAPER_vb_stopped             84ce845e
+ PAPER_vb_favourites_load     e93d8c0b
+-PAPER_vb_groovebox           bfa61eea
+-CRYPT_vb_ready               f9d52929
++PAPER_vb11_klang_live        d090893b
++PAPER_vb11_klang_turned      cf58ea77
++PAPER_vb11_klang_edit1       0b7c2475
++PAPER_vb11_klang_preset      eccde14e
++PAPER_vb11_mod               124d35bc
++PAPER_vb11_song_hand         94e0cc95
++PAPER_vb11_fx_layer          3b474cd7
++PAPER_vb11_glo_layer         4e47273c
++PAPER_vb11_perform           3601421f
++PAPER_vb11_home_map          62e33f6d
++PAPER_vb_groovebox           21263ca3
++CRYPT_vb_ready               fb393bef
+ CRYPT_vb_knob_genre          436def34
+-CRYPT_vb_techno_ready        920c70b9
++CRYPT_vb_techno_ready        8701421f
+ CRYPT_vb_knob_length         f80b5935
+-CRYPT_vb_playing             87e895d6
+-CRYPT_vb_muted_t2            8fbe54d2
++CRYPT_vb_playing             c506af56
++CRYPT_vb_muted_t2            5180c92c
+ CRYPT_vb_favourites_save     0fcd4af2
+-CRYPT_vb_saved_message       cd12bd5e
++CRYPT_vb_saved_message       6d318cde
+ CRYPT_vb_knob_live           c8267084
+-CRYPT_vb_stopped             30e4148c
++CRYPT_vb_stopped             0c4213e6
+ CRYPT_vb_favourites_load     99566b5f
+-CRYPT_vb_groovebox           0aa487f7
+-NEON_vb_ready               f198afa2
++CRYPT_vb11_klang_live        38af299d
++CRYPT_vb11_klang_turned      f944b802
++CRYPT_vb11_klang_edit1       c5de3b01
++CRYPT_vb11_klang_preset      2b7b93a0
++CRYPT_vb11_mod               7c785bcc
++CRYPT_vb11_song_hand         2e3660e2
++CRYPT_vb11_fx_layer          7d9fed7d
++CRYPT_vb11_glo_layer         f721bef6
++CRYPT_vb11_perform           1ed57c34
++CRYPT_vb11_home_map          8d5b4a71
++CRYPT_vb_groovebox           96ec59f6
++NEON_vb_ready               d447c60a
+ NEON_vb_knob_genre          7fb3acd8
+-NEON_vb_techno_ready        b2fe4804
++NEON_vb_techno_ready        2b959c44
+ NEON_vb_knob_length         47dcaab1
+-NEON_vb_playing             c42cf688
+-NEON_vb_muted_t2            9e6c3b5c
++NEON_vb_playing             d43f5f48
++NEON_vb_muted_t2            d0b97c3c
+ NEON_vb_favourites_save     17137a69
+-NEON_vb_saved_message       3723ff94
++NEON_vb_saved_message       2a7e5f54
+ NEON_vb_knob_live           fb01325b
+-NEON_vb_stopped             cec19a74
++NEON_vb_stopped             0f04e8f4
+ NEON_vb_favourites_load     5eeedbcb
+-NEON_vb_groovebox           d4f3380a
+-QUARK_vb_ready               c841162e
++NEON_vb11_klang_live        473540ca
++NEON_vb11_klang_turned      575f3b75
++NEON_vb11_klang_edit1       ded7330b
++NEON_vb11_klang_preset      66917d76
++NEON_vb11_mod               7d6f68cc
++NEON_vb11_song_hand         4040dd4d
++NEON_vb11_fx_layer          0a34ea8d
++NEON_vb11_glo_layer         8cf6f8b0
++NEON_vb11_perform           ce2bcb9f
++NEON_vb11_home_map          ecc5755d
++NEON_vb_groovebox           516eead4
++QUARK_vb_ready               19460ea6
+ QUARK_vb_knob_genre          12fe58ec
+-QUARK_vb_techno_ready        a830c051
++QUARK_vb_techno_ready        e1f85e89
+ QUARK_vb_knob_length         76efca21
+-QUARK_vb_playing             32d6d4f2
+-QUARK_vb_muted_t2            7e413d7f
++QUARK_vb_playing             1e04a80a
++QUARK_vb_muted_t2            6fd94547
+ QUARK_vb_favourites_save     0f8854b0
+-QUARK_vb_saved_message       4ac7930a
++QUARK_vb_saved_message       5ede0692
+ QUARK_vb_knob_live           de9eb1cd
+-QUARK_vb_stopped             7fe40e60
++QUARK_vb_stopped             5737b768
+ QUARK_vb_favourites_load     d03456aa
+-QUARK_vb_groovebox           59850c8e
++QUARK_vb11_klang_live        8b685df2
++QUARK_vb11_klang_turned      e070907f
++QUARK_vb11_klang_edit1       b7512a86
++QUARK_vb11_klang_preset      7475bf23
++QUARK_vb11_mod               cb1f0896
++QUARK_vb11_song_hand         27239d35
++QUARK_vb11_fx_layer          e2d2873c
++QUARK_vb11_glo_layer         546b88f7
++QUARK_vb11_perform           16fe9ece
++QUARK_vb11_home_map          dce9be35
++QUARK_vb_groovebox           7a1a97e8
+-- 
+2.43.0
+
