@@ -1,7 +1,7 @@
 From 24a1b8984ebd4bf07b4bf07eaf387c212ec1819b Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Mon, 26 Oct 2026 03:20:29 +0000
-Subject: [PATCH 04/20] tests: the Vizz installer over a unit running Vizz 1.0
+Subject: [PATCH 04/21] tests: the Vizz installer over a unit running Vizz 1.0
  (backup, install, conversion)
 
 Skiff 2.0's installer takes a complete backup before it installs over

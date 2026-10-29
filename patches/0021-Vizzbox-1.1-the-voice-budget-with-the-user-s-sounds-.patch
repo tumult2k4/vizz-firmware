@@ -1,0 +1,817 @@
+From 78fd959c5f20af5f58b1764348886ef10bd1fd49 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 07:43:03 +0000
+Subject: [PATCH 21/21] Vizzbox 1.1: the voice budget with the user's sounds
+ and playing along (BRIEF-VIZZBOX-1.1.md 7)
+
+A sound the user chose (or its release, ENV SYNC, voice mode turned) is planned with its own tail, estimated from its
+envelopes (producer.c vb_tail_ms, vb_ring_ms): the amplitude envelope's release to the end of a voice, ENV SYNC's note
+value, FM6's carriers (its own envelopes end its voices), DRUM-X a lane's DECAY (the louder end of MORPH, its DECAY
+knob), DRUM's presets from a small measured table (VB_DRING) moved by its DECAY knobs; every factory sound measured
+against it. A POLY sound (or one of hits) on a role the producer plays with one voice counts a voice a note (vb_ply,
+at most its engine's voices), as the chords do. Playing along: the white keys held and still ringing on the focus
+track (a sound of one voice: none; DRUMS a lane a key; CHORDS three or four a key, at most six) leave the bar after
+next that much room (vb_room). The engines' costs in the budget (the brief's way when the heaviest choice does not fit
+otherwise): a voice of a sound the user chose counts its engine's dearest factory voice measured, in quarter voices
+(VB_EW: PHYS two, GRAIN 1 3/4, FM6 and DRUM-X 1 1/2, the others one); with a bass sound of the user's ringing on, the
+budget may take its notes too. Without a hand on them the songs of 1.0 bit for bit (the golden).
+
+tests/producer_test.c tails (every factory sound, the kits each lane, the DECAY knobs moved: never longer than
+estimated), budget_user (the longest tails on every role and random factory sounds over three drops: at most 8 voices,
+none stolen from the DROP on; two keys on a POLY LEAD, a one-finger chord on CHORDS: none stolen from the fourth bar
+on; DRUM-X DEEP KIT and PHYS BOWED METAL everywhere: never more than the budget in quarter voices);
+tests/vizzbox_budget.c: the heaviest choice (each factory sound's CPU a voice, less the device without its notes, for
+its place in the budget: the dearest on every track, in the heaviest drop, every effect) against Skiff's heavy song;
+tests/vizzbox_mutants.py five faults more.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/producer.c  | 244 +++++++++++++++++++++++++++++++++------
+ tests/producer_test.c    | 214 ++++++++++++++++++++++++++++++++++
+ tests/run_tests.sh       |   4 +-
+ tests/vizzbox_budget.c   |  96 ++++++++++++++-
+ tests/vizzbox_mutants.py |  16 +++
+ 5 files changed, 530 insertions(+), 44 deletions(-)
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index 66a134e..c70d44b 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -921,24 +921,122 @@ static uint16_t vb_tq[NTRK] __attribute__((section(".pool")));   /* each role's
+ static uint16_t vb_lq[NLANE] __attribute__((section(".pool")));  /* each drum lane's ring */
+ #define VB_CHV 8u                                   /* chord voices tracked: a chord's notes and the last one's tails */
+ static struct {
+-    int16_t lane[NLANE], mono[NTRK], ch[VB_CHV];    /* where what sounds into the next bar ends (quarter steps from its
+-                                                     * start; <= 0 nothing) */
+-    uint8_t chn[VB_CHV];                            /* the chord notes' pitches */
++    int16_t lane[NLANE], mono[NTRK], ch[NTRK][VB_CHV];   /* where what sounds into the next bar ends (quarter steps from
++                                                     * its start; <= 0 nothing); ch: the chords' voices ((1.1) and a
++                                                     * POLY sound's of the user's: vb_ply) */
++    uint8_t chn[NTRK][VB_CHV];                      /* their pitches */
+ } vb_vc __attribute__((section(".pool")));
++static uint8_t vb_room __attribute__((section(".pool")));   /* (1.1) what the staged bar may take, in quarter voices
++                                                     * (vb_w): the budget, less what the user's keys took of late
++                                                     * (vb_budget) */
+ static uint32_t vb_q(uint32_t ms)                   /* ms -> quarter steps at the staged bar's tempo, up */
+ {
+     uint32_t qs = FS * 15u / (4u * (vb.bpm ? vb.bpm : 120u));
+     return (ms * (FS / 1000u) + qs - 1u) / qs;
+ }
++/* (1.1, BRIEF-VIZZBOX-1.1.md 7) a sound the user chose (or its release, voice mode turned): how long its voices last
++ * past their note's end, ms, at most. From its envelopes: the amplitude envelope's release to its end (voice.c env_tick
++ * stops a voice at -72 dB: 8.3 time constants, the table's time is 4.6; here 8.5 and 40 ms), ENV SYNC's note value;
++ * FM6's carriers (its own envelopes end its voices: fm6_core.c, the level falling by inc a block from the highest of
++ * L1..L3 to the floor; L4 above silence: a voice that never ends, 12 s); DRUM-X a lane's DECAY (drumx_voice.c dx_tau, morph and the DECAY
++ * knob in it, the louder end of MORPH: 6.6 to 8.5 of it measured, here 10 and 40 ms); DRUM's presets measured
++ * (VB_DRING), the DECAY knob and the lane's own moving them (about x1.5 per 16 up, x1.2 down; here x2 per 24 up, /2 per
++ * 64 down, straight between), its KIT another preset's, a lower PITCH or another KICK twice, a kit no preset has (or a
++ * user kit's samples) 6 s. At most 12 s. Checked against every factory sound's measured tail (tests/producer_test.c
++ * tails) */
++static const uint8_t VB_DRING[][NLANE] = {         /* DRUM's presets as they load: each lane's ring, 64 ms, up */
++    {9, 11, 10, 3, 15, 29, 1, 17}, {39, 18, 22, 5, 39, 65, 1, 41}, {11, 5, 13, 3, 13, 8, 1, 10},
++    {27, 8, 25, 5, 33, 17, 1, 22}, {25, 15, 104, 12, 84, 18, 1, 172}, {7, 2, 9, 9, 10, 4, 1, 2},
++    {6, 4, 8, 4, 20, 9, 1, 5}, {20, 10, 13, 13, 72, 19, 3, 54}, {4, 7, 6, 2, 8, 16, 1, 9},
++    {16, 12, 12, 3, 18, 33, 1, 19}, {20, 5, 13, 3, 16, 19, 1, 185}, {5, 2, 13, 4, 18, 8, 1, 10},
++    {27, 10, 13, 10, 12, 5, 3, 2}};
++static int vb_hand_snd(uint32_t k)                  /* the sound on track k the user's (its release or voice mode too) */
++{
++    return ((vb_hand.snd >> k) & 1u) || vb_mine(k, P_REL) || vb_mine(k, P_ESYNC) || vb_mine(k, P_VOICE);
++}
++/* (1.1, BRIEF-VIZZBOX-1.1.md 7: "das Stimmenbudget rechnet die Kosten der Engines mit ein") what a voice of track k
++ * counts in the budget, in quarter voices: the producer's own sounds one voice each, as in 1.0 (its songs); a sound
++ * the user chose its engine's dearest factory voice measured (tests/vizzbox_budget.c heaviest: the CPU a voice adds),
++ * in quarters of the VOICE engine's dearest (MONK CHANT), at least one voice: PHYS two, GRAIN 1 3/4, FM6 and DRUM-X
++ * 1 1/2. So the heaviest choice stays in the CPU budget with fewer voices */
++static const uint8_t VB_EW[NENGINES] = {4, 4, 4, 4, 4, 4, 4, 4, 7, 8, 4, 4, 6, 4, 6};   /* (fx.c ENG_VCOST: an
++                                                     * engine's mean, the dual-core builds' only, DRUM-X DRUM's) */
++static uint32_t vb_w(uint32_t k)
++{
++    return (vb_hand.snd >> k) & 1u ? VB_EW[trk[k].eng_req % NENGINES] : 4u;
++}
++static uint32_t vb_tail_ms(uint32_t k)
++{
++    const track_t *t = &trk[k];
++    uint32_t ms, o;
++    if (t->eng_req == ENGI_FM6) {
++        const uint8_t *p = fm6_eff[k].p;
++        uint32_t car = fm6_carriers(fm6_eff[k].alg);
++        for (o = 0, ms = 0; o < 6u; o++)
++            if ((car >> o) & 1u) {
++                const uint8_t *op = p + o * FP_OP;
++                fm6_env_t e;
++                int32_t from = 16, l, q;
++                uint32_t i, m;
++                fm6_op_env_init(&e, op, 48, 127);   /* (a low note: the slowest rate scaling; full velocity) */
++                for (i = 0; i < 3u; i++)
++                    if ((l = ((fm6_scaleout(op[FP_L1 + i]) >> 1) << 6) + e.outlevel - 4256) > from)
++                        from = l;
++                q = ((op[FP_R1 + 3] * 41) >> 6) + e.rscale;
++                q = q > 63 ? 63 : q;
++                m = op[FP_L1 + 3] && ((fm6_scaleout(op[FP_L1 + 3]) >> 1) << 6) + e.outlevel - 4256 > 16 ? 12000u :
++                    (uint32_t)(((uint32_t)(from - 16) << 16) / ((4u + (q & 3)) << (2 + FM6_LG_N + (q >> 2)))) * FM6_N /
++                    (FS / 1000u);
++                ms = m > ms ? m : ms;
++            }
++    } else if (t->p[P_ESYNC])
++        ms = 60000u / (vb.bpm ? vb.bpm : 120u) * ESYNC_UNITS[esync_idx(t->p[P_REL])] / 96u * 185u / 100u;
++    else
++        ms = TIME_MS_X10[t->p[P_REL] & 127] * 185u / 1000u;
++    return (ms > 12000u ? 12000u : ms) + 40u;
++}
++static uint32_t vb_ring_ms(uint32_t l)              /* the drum track's lane l, the user's sound on it */
++{
++    const track_t *t = &trk[R_D];
++    const int16_t *p = t->p;
++    int32_t d;
++    uint32_t ms;
++    if (t->eng_req == ENGI_DRUMX) {
++        const dx_lane_t *x = &dx_kit[l];
++        d = (x->a[DXP_DECAY] > x->b[DXP_DECAY] ? x->a[DXP_DECAY] : x->b[DXP_DECAY]) + p[P_E3] - 64;
++        return dx_tau((uint32_t)clamp(d, 0, 127)) / 100u + 40u;
++    }
++    if (t->eng_req != ENGI_DRUM)
++        return vb_tail_ms(R_D) + 250u;               /* (another sound on the lanes: a lane note's length and its tail) */
++    {
++        const preset_t *pr = ENGINES[ENGI_DRUM]->presets;
++        uint32_t i = t->preset % NELEM(VB_DRING);
++        if (pr[i].e[0] != p[P_E0])                  /* (its KIT changed: a preset with that one) */
++            for (i = 0; i < NELEM(VB_DRING) && pr[i].e[0] != p[P_E0]; i++)
++                ;
++        if (i == NELEM(VB_DRING))
++            return 6000u;
++        ms = 64u * VB_DRING[i][l];
++        if (p[P_E1] < pr[i].e[1] || p[P_E6] != pr[i].e[6])
++            ms *= 2u;
++        d = p[P_E3] - pr[i].e[3] + p[P_LDECAY0 + l];
++    }
++    for (; d >= 24 && ms < 12000u; d -= 24)
++        ms *= 2u;
++    for (; d <= -64; d += 64)
++        ms /= 2u;
++    ms = d >= 0 ? ms + ms * (uint32_t)d / 24u : ms - ms * (uint32_t)-d / 128u;
++    return ms > 12000u ? 12000u : ms;
++}
+ static void vb_tails(void)                          /* the sounds' tails at the staged bar's tempo and the swing */
+ {
+     uint32_t k, l, i, sw = (4u * (uint32_t)vb_sub()->swing + 249u) / 250u;   /* (a swung step's late start: seq.c
+                                                                                 * swing_step_len, in quarter steps) */
+     for (k = 0; k < NTRK; k++)
+-        vb_tq[k] = (uint16_t)(vb_q(16u * VB_SND[vb.snd[k] % NELEM(VB_SND)].tail) + sw);
++        vb_tq[k] = (uint16_t)(vb_q(vb_hand_snd(k) ? vb_tail_ms(k) : 16u * VB_SND[vb.snd[k] % NELEM(VB_SND)].tail) + sw);
+     for (l = 0; l < NLANE; l++)
+-        vb_lq[l] = (uint16_t)(vb_q(1000u) + sw);
+-    for (i = 0; i < NELEM(VB_KIT); i++)
++        vb_lq[l] = (uint16_t)(vb_q(vb_hand_snd(R_D) ? vb_ring_ms(l) : 1000u) + sw);
++    for (i = 0; !vb_hand_snd(R_D) && i < NELEM(VB_KIT); i++)
+         if (VB_KIT[i].snd == vb.snd[R_D])
+             for (l = 0; l < NLANE; l++)
+                 vb_lq[l] = (uint16_t)(vb_q(32u * VB_KIT[i].ring[l]) + sw);
+@@ -957,22 +1055,38 @@ static int32_t vb_end(const step_t *o, uint32_t s, uint32_t gate)
+ #define VB_NONE 32u
+ static uint8_t vb_onl __attribute__((section(".pool")));   /* the lanes that took a voice of their own at the step
+                                                      * returned */
++/* (1.1) track k's notes a voice each: the chords; a sound of the user's that plays POLY (or hits: engine_t.oneshot), on
++ * any role but the drums' (its lanes are voices as they are); at most its engine's voices (voice.c trk_nvoice) */
++static uint32_t vb_ply(uint32_t k)
++{
++    const track_t *t = &trk[k];
++    const engine_t *e = ENGINES[t->eng_req % NENGINES];
++    if (!vb_hand_snd(k))
++        return k == R_C ? VB_CHV : 0u;
++    if (k == R_D || (!e->oneshot && t->p[P_VOICE] != V_POLY))
++        return 0;
++    return e->poly && e->poly < VB_CHV ? e->poly : VB_CHV;
++}
+ static uint32_t vb_over(step_t *const *dst, uint32_t from, int fin)
+ {
+-    int16_t lane[NLANE], mono[NTRK], ch[VB_CHV];
+-    uint8_t chn[VB_CHV];
+-    uint32_t s, k, l, i, j, n;
++    int16_t lane[NLANE], mono[NTRK], ch[NTRK][VB_CHV];
++    uint8_t chn[NTRK][VB_CHV], cap[NTRK], w[NTRK];
++    uint32_t s, k, l, i, j, n, m;
+     memcpy(lane, vb_vc.lane, sizeof lane);
+     memcpy(mono, vb_vc.mono, sizeof mono);
+     memcpy(ch, vb_vc.ch, sizeof ch);
+     memcpy(chn, vb_vc.chn, sizeof chn);
++    for (k = 0; k < NTRK; k++) {
++        cap[k] = (uint8_t)vb_ply(k);
++        w[k] = (uint8_t)vb_w(k);
++    }
+     for (k = R_B; k < NTRK; k++)                    /* (the bar opening on TIEs: what it holds goes on) */
+         if (dst[k][0].time == ST_TIE) {
+-            int32_t e = vb_end(dst[k], 0, vb_gate(k)) + (k == R_C ? 0 : vb_tq[k]);
+-            if (k == R_C) {
++            int32_t e = vb_end(dst[k], 0, vb_gate(k)) + (cap[k] ? 0 : vb_tq[k]);
++            if (cap[k]) {
+                 for (i = 0; i < VB_CHV; i++)
+-                    if (ch[i] > 0)
+-                        ch[i] = (int16_t)(e + vb_tq[k]);
++                    if (ch[k][i] > 0)
++                        ch[k][i] = (int16_t)(e + vb_tq[k]);
+             } else if (mono[k] > 0)
+                 mono[k] = (int16_t)e;
+         }
+@@ -996,56 +1110,62 @@ static uint32_t vb_over(step_t *const *dst, uint32_t from, int fin)
+             if (o->time != ST_NOTE || !o->n)
+                 continue;
+             e = vb_end(dst[k], s, vb_gate(k)) + vb_tq[k];
+-            if (k != R_C) {
++            if (!cap[k]) {
+                 mono[k] = (int16_t)e;
+                 continue;
+             }
+             for (i = 0; i < o->n && i < 4u; i++) {   /* a chord note: its voice again, or a free one */
+-                for (j = 0; j < VB_CHV && !(ch[j] > q && chn[j] == o->note[i]); j++)
++                for (j = 0; j < VB_CHV && !(ch[k][j] > q && chn[k][j] == o->note[i]); j++)
+                     ;
+                 if (j == VB_CHV)
+-                    for (j = 0; j < VB_CHV && ch[j] > q; j++)
++                    for (j = 0; j < VB_CHV && ch[k][j] > q; j++)
+                         ;
+                 if (j == VB_CHV)                    /* (no slot: the earliest ending one) */
+                     for (j = 0, l = 1; l < VB_CHV; l++)
+-                        if (ch[l] < ch[j])
++                        if (ch[k][l] < ch[k][j])
+                             j = l;
+-                ch[j] = (int16_t)e;
+-                chn[j] = o->note[i];
++                ch[k][j] = (int16_t)e;
++                chn[k][j] = o->note[i];
+             }
+         }
+         for (n = 0, l = 0; l < NLANE; l++)          /* (what ends on this step still holds its voice while the step's
+                                                      * new ones start) */
+-            n += lane[l] >= q;
+-        for (k = R_B; k < NTRK; k++)
+-            n += k != R_C && mono[k] >= q;
+-        for (i = 0; i < VB_CHV; i++)
+-            n += ch[i] >= q;
+-        if (n > VB_BUDGET && !fin && s >= from)
++            n += lane[l] >= q ? w[R_D] : 0u;
++        for (k = R_B; k < NTRK; k++) {
++            n += (k != R_C || (mono[k] > 0 && vb_hand_snd(k))) && mono[k] >= q ? w[k] : 0u;
++            for (i = 0, m = 0; i < VB_CHV; i++)     /* ((1.1) the chords' as in 1.0; another's: what sounds) */
++                m += ch[k][i] >= q && (k == R_C || ch[k][i] > 0);
++            n += (cap[k] && m > cap[k] ? cap[k] : m) * w[k];
++        }
++        if (n > vb_room && !fin && s >= from)
+             return s;
+     }
+     if (!fin && from < 20u) {
+         uint32_t kick = 1, bass = vb_sub()->bass != BS_NONE;   /* (whatever this bar plays: the next may start them) */
+         for (s = from > 16u ? from : 16u; s < 20u; s++) {   /* (the next bar's first beat) */
+             int32_t q = (int32_t)(4u * s);
+-            for (n = kick, l = 0; l < NLANE; l++)
+-                n += lane[l] >= q && (l != LN_KICK || !kick);
+-            for (k = R_B; k < NTRK; k++)
+-                n += k != R_C && (k == R_B ? bass || mono[k] >= q : mono[k] >= q);
+-            for (i = 0; i < VB_CHV; i++)
+-                n += ch[i] >= q;
+-            if (n > VB_BUDGET)
++            for (n = kick * w[R_D], l = 0; l < NLANE; l++)
++                n += lane[l] >= q && (l != LN_KICK || !kick) ? w[R_D] : 0u;
++            for (k = R_B; k < NTRK; k++) {
++                n += (k != R_C || (mono[k] > 0 && vb_hand_snd(k))) && (k == R_B ? bass || mono[k] >= q : mono[k] >= q) ?
++                     w[k] : 0u;
++                for (i = 0, m = 0; i < VB_CHV; i++)
++                    m += ch[k][i] >= q && (k == R_C || ch[k][i] > 0);
++                n += (cap[k] && m > cap[k] ? cap[k] : m) * w[k];
++            }
++            if (n > vb_room)
+                 return s;
+         }
+     }
+     if (fin) {
+         for (l = 0; l < NLANE; l++)
+             vb_vc.lane[l] = (int16_t)(lane[l] - 64);
+-        for (k = 0; k < NTRK; k++)
++        for (k = 0; k < NTRK; k++) {
+             vb_vc.mono[k] = (int16_t)(mono[k] - 64);
+-        for (i = 0; i < VB_CHV; i++) {
+-            vb_vc.ch[i] = (int16_t)(ch[i] - 64);
+-            vb_vc.chn[i] = chn[i];
++            for (i = 0; i < VB_CHV; i++) {
++                vb_vc.ch[k][i] = (int16_t)(ch[k][i] - 64);
++                vb_vc.chn[k][i] = chn[k][i];
++            }
+         }
+     }
+     return VB_NONE;
+@@ -1087,11 +1207,54 @@ static int vb_later(step_t *o, int32_t i)
+         step_clear(&o[j]);
+     return 1;
+ }
++/* (1.1, BRIEF-VIZZBOX-1.1.md 7) playing along: the voices the white keys take on the focus track, held and still
++ * ringing (a key let go within its sound's tail: vb_tail_ms) (none for a sound of one voice: the role's own; DRUMS a
++ * lane a key; CHORDS' one-finger chord three or four), at most six; the most of this bar and the one before, so the
++ * next bar leaves them room (the first notes of a run take what Skiff frees: voice.c voice_room) */
++static uint8_t vb_kpk[2] __attribute__((section(".pool")));
++static uint32_t vb_kup[4] __attribute__((section(".pool")));   /* when the last four keys were let go (fm1_ms) */
++static uint32_t vb_kwas __attribute__((section(".pool")));      /* the white keys held at the last look */
++static uint32_t vb_keys(void)
++{
++    const track_t *t = TSEL;
++    const engine_t *e = ENGINES[t->eng_req % NENGINES];
++    uint32_t k, n = 0, held = 0, tail;
++    if (!vb_mode || !vb.own)
++        return 0;
++    for (k = 0; k < 27u; k++)
++        if (((fm1_in.notes >> k) & 1u) && !key_black(k))
++            held |= 1u << k;
++    for (k = 0; k < 27u; k++)
++        if (((vb_kwas & ~held) >> k) & 1u) {        /* (let go: when) */
++            vb_kup[3] = vb_kup[2];
++            vb_kup[2] = vb_kup[1];
++            vb_kup[1] = vb_kup[0];
++            vb_kup[0] = fm1_ms | 1u;
++        }
++    vb_kwas = held;
++    if (song.sel != R_D && !e->oneshot && t->p[P_VOICE] != V_POLY)
++        return 0;
++    tail = song.sel == R_D ? 1000u : vb_tail_ms(song.sel);
++    for (k = 0; k < 27u; k++)
++        n += (held >> k) & 1u;
++    for (k = 0; k < 4u; k++)
++        n += vb_kup[k] && fm1_ms - vb_kup[k] < tail;
++    if (t->p[P_CHRD] != CH_OFF)
++        n *= t->p[P_CHRD] == CH_DIA7 ? 4u : 3u;
++    return n > 6u ? 6u : n;
++}
+ static void vb_budget(step_t *const *dst)
+ {
+     static const uint8_t PERC = 1u << LN_TOM | 1u << LN_RIM | 1u << LN_BELL | 1u << LN_HATO;
+-    uint32_t s, guard, from = 0;
++    uint32_t s, guard, from = 0, r = vb_keys();
+     int32_t i;
++    r = r > vb_kpk[0] ? r : vb_kpk[0];
++    r = r > vb_kpk[1] ? r : vb_kpk[1];
++    vb_kpk[1] = vb_kpk[0];
++    vb_kpk[0] = 0;
++    r *= vb_w(song.sel);                            /* (the keys play the focus track: its voices' weight; at most
++                                                     * six voices' worth) */
++    vb_room = (uint8_t)(4u * VB_BUDGET - (r < 24u ? r : 24u));
+     for (guard = 0; guard < 64u && (s = vb_over(dst, from, 0)) < 20u; guard++) {
+         if ((i = vb_last(dst, R_A, s, 0)) >= 0)
+             step_clear(&dst[R_A][i]);
+@@ -1121,7 +1284,10 @@ static void vb_budget(step_t *const *dst)
+                                                      * the kick) */
+             if (!dst[R_D][s].hit)
+                 dst[R_D][s].time = ST_REST;
+-        } else
++        } else if (vb_hand_snd(R_B) && (i = vb_last(dst, R_B, s, 0)) >= 0)
++            step_clear(&dst[R_B][i]);               /* ((1.1) a bass sound of the user's, a heavy or POLY one ringing
++                                                     * on: its note too, the producer's never) */
++        else
+             from = s + 1u;                          /* (what the bar before rings on: nothing of this bar to take) */
+     }
+     (void)vb_over(dst, 16, 1);
+@@ -1744,6 +1910,8 @@ static void vb_poll(void)
+     }
+     if (!vb.own || !vb_run)
+         return;
++    if ((k = vb_keys()) > vb_kpk[0])                /* ((1.1) playing along: vb_budget) */
++        vb_kpk[0] = (uint8_t)k;
+     for (k = 0; k < NTRK; k++) {
+         launch_q[k].done = 0;
+         armed |= launch_q[k].armed;
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index e1a6822..1e9671a 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -15,6 +15,10 @@
+  *   - ENDLESS for 60 minutes: related subgenres come, 8 BPM at most each time, the plan does not grow, no voice stolen
+  *   - favourites: stored, the unit off and on again (its flash kept), loaded, played: the same song, bit for bit
+  *   - VIZZBOX <-> GROOVEBOX, playing too: the song goes on; stopped in the GROOVEBOX, its music comes back
++ *   (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 9) the user's hand (hand_sound, hand_trip, hand_param, hand_perf, hand_notes);
++ *   the controls (pages, browse, keys, layers, momentary, leds); favourites with sounds (fav_sounds, its other half a
++ *   device booting in a process of its own: fav_boot); the budget with the user's sounds (tails, budget_user: their
++ *   tails, POLY, the keys, the engines' costs)
+  *   producer_test [CASE]      (no CASE: all; prints "producer: all passed" or the failures) */
+ #define VIZZBOX 1
+ #include "../web/emu/felucca_web.c"
+@@ -1491,6 +1495,210 @@ static void case_fav_sounds(void)
+     ok(voice_kills == 0, "%u voices stolen", voice_kills);
+ }
+ 
++/* (1.1, BRIEF-VIZZBOX-1.1.md 7) a sound the user chose: how long its voices last past their note (producer.c vb_tail_ms,
++ * vb_ring_ms) never shorter than they do: every factory sound one note held 0.5 s on T1, then off, until its voices
++ * end; the kits each lane; DRUM's and DRUM-X's DECAY knob, a lane's DECAY, DRUM-X's MORPH moved */
++static uint32_t act1(void)
++{
++    uint32_t i, n = 0;
++    for (i = 0; i < NVOICE; i++)
++        n += trk[0].v[i].active && trk[0].v[i].stage != 4u;
++    return n;
++}
++static uint32_t ring_of(uint32_t note, double hold)  /* T1: a note held, then off: ms until its voices end */
++{
++    uint32_t ms = 0;
++    trk_note_on(&trk[0], note, 127);
++    run_s(hold);
++    trk_note_off(&trk[0], note);
++    while (act1() && ms < 20000u) {
++        run_s(0.01);
++        ms += 10u;
++    }
++    return ms;
++}
++static void case_tails(void)
++{
++    static const int8_t DV[4][3] = {{40, 0, 64}, {100, 0, 64}, {64, -30, 127}, {64, 40, 0}};   /* DECAY, a lane's, MORPH */
++    uint32_t e, p, l, v, n = 0, est, ms;
++    snprintf(tag, sizeof tag, "the tails of the user's sounds");
++    boot();
++    vb_mode_set(0);                                 /* (T1 free: the GROOVEBOX, stopped) */
++    run_s(0.2);
++    sel_set(0);
++    for (e = 0; e < NENGINES; e++) {
++        if (!eng_ok(e) || set_engine_of(&trk[0], e))
++            continue;
++        for (p = 0; p < ENGINES[e]->npresets; p++) {
++            apply_preset_to(&trk[0], p);
++            run_s(0.2);
++            if (e != ENGI_DRUM && e != ENGI_DRUMX) {
++                ms = ring_of(60, 0.5);
++                est = vb_tail_ms(0);
++                ok(est >= ms, "%s %s: %u ms, estimated %u", ENGINES[e]->name, ENGINES[e]->presets[p].name, ms, est);
++                n++;
++                continue;
++            }
++            for (v = 0; v < (p ? 1u : 5u); v++) {   /* (the first kit: the knobs moved too) */
++                if (v) {
++                    trk[0].p[P_E3] = DV[v - 1u][0];
++                    if (e == ENGI_DRUMX)
++                        trk[0].p[P_E0] = DV[v - 1u][2];
++                }
++                for (l = 0; l < NLANE; l++) {
++                    if (v)
++                        trk[0].p[P_LDECAY0 + l] = DV[v - 1u][1];
++                    run_s(0.05);
++                    ms = ring_of(DRUM_LANE_NOTE[l], 0.07);
++                    est = vb_ring_ms(l);
++                    ok(est >= ms, "%s %s lane %u (DECAY %d, lane %d): %u ms, estimated %u", ENGINES[e]->name,
++                       ENGINES[e]->presets[p].name, l, trk[0].p[P_E3], trk[0].p[P_LDECAY0 + l], ms, est);
++                    n++;
++                }
++            }
++        }
++    }
++    ok(n > 300u, "%u sounds measured", n);
++}
++/* (1.1, 7) the user's sounds over the heaviest drops: long POLY tails on every role, a kit that rings (and random
++ * factory sounds on every track): at most 8 voices, none stolen from the DROP on (the bars staged before the sounds came
++ * were planned for the producer's); playing along (two keys on a POLY LEAD, a one-finger chord on CHORDS): none stolen
++ * once the producer leaves them room: from the fourth bar on (the bar staged as they began rings into the next) */
++static uint32_t maxv;
++static uint32_t voices_now(void)
++{
++    uint32_t k, i, n = 0;
++    for (k = 0; k < NTRK; k++)
++        for (i = 0; i < NVOICE; i++)
++            n += trk[k].v[i].active && trk[k].v[i].stage != 4u;
++    return n;
++}
++static uint32_t maxw;                               /* (1.1) the most at once in the budget's quarter voices (as
++                                                     * producer.c vb_w counts them, VB_EW) */
++static void run_v(double sec)                       /* run, the most voices at once kept */
++{
++    double t;
++    uint32_t k, i, w;
++    for (t = 0; t < sec; t += 0.01) {
++        run_s(0.01);
++        if (voices_now() > maxv)
++            maxv = voices_now();
++        for (k = 0, w = 0; k < NTRK; k++)
++            for (i = 0; i < NVOICE; i++)
++                w += trk[k].v[i].active && trk[k].v[i].stage != 4u ?
++                     ((vb_hand.snd >> k) & 1u ? VB_EW[trk[k].eng_req % NENGINES] : 4u) : 0u;
++        maxw = w > maxw ? w : maxw;
++    }
++}
++static void take(uint32_t k, uint32_t e, uint32_t p)   /* track k: engine e's preset p, as PRESETS loads it */
++{
++    uint32_t sel = song.sel;
++    if (!eng_allowed(k, e))
++        return;
++    sel_set(k);
++    if (trk[k].eng_req != e)
++        (void)set_engine_of(&trk[k], e);
++    apply_preset_to(&trk[k], p);
++    sel_set(sel);
++}
++static int to_drop(double max_s)                    /* on to a DROP's one */
++{
++    double t;
++    for (t = 0; t < max_s && !(vb_cur()->type == VS_DROP && vb.sbar == 0u); t += 0.1)
++        run_v(0.1);
++    return t < max_s;
++}
++static void bu_one(uint32_t i)                      /* case_budget_user's case i, on a device of its own */
++{
++    static const struct { uint8_t g, s; } ST[3] = {{2, 1}, {0, 0}, {3, 0}};
++    static const uint8_t LONG[NTRK][2] = {{ENGI_DRUM, 4}, {0, 1}, {11, 7}, {8, 2}, {ENGI_FM6, 1}, {5, 4}};
++    uint32_t k, b, r = 0x2468ACE1u + i * 0x9E3779B9u;
++    boot();
++    if (i < 6u) {
++        knobs(ST[i % 3u].g, ST[i % 3u].s, 0x5150u + i, 100, 100, 1);
++        press(1u << B_PLAY);
++        run_s(0.5);
++        for (k = 0; k < NTRK; k++)
++            if (i < 3u)
++                take(k, LONG[k][0], LONG[k][1]);    /* (the longest tails: CRISP KIT, SOFT PAD, OCEAN, FROZEN, GLASS
++                                                     * BELL, CRYPT CHOIR) */
++            else {                                  /* (any factory sound) */
++                uint32_t e;
++                do {
++                    r = r * 1664525u + 1013904223u;
++                    e = (r >> 8) % NENGINES;
++                } while (!eng_ok(e) || !eng_allowed(k, e) || !ENGINES[e]->npresets ||
++                         (k == R_D) != (e == ENGI_DRUM || e == ENGI_DRUMX));
++                take(k, e, (r >> 20) % ENGINES[e]->npresets);
++            }
++        ok(vb_hand.snd == 0x3Fu, "case %u: not every sound the user's (%02x)", i, vb_hand.snd);
++        maxv = 0;
++        ok(to_drop(240.0), "case %u: no DROP", i);
++        voice_kills = 0;                            /* (the bars staged before the sounds came planned for the
++                                                     * producer's: from the DROP on) */
++        run_v(30.0);
++        ok(maxv <= 8u && voice_kills == 0u, "case %u (%s): %u voices at most, %u stolen", i, VB_SNAME[vb.ri], maxv,
++           voice_kills);
++        return;
++    }
++    if (i == 8u) {                                  /* (the engines' costs: DRUM-X DEEP KIT on DRUMS, PHYS BOWED METAL
++                                                     * where the others may have it, a voice of it two in the budget) */
++        knobs(2, 1, 0x5158u, 100, 100, 1);
++        press(1u << B_PLAY);
++        run_s(0.5);
++        for (k = 0; k < NTRK; k++)
++            take(k, k == R_D ? ENGI_DRUMX : 9u, 3);
++        ok(to_drop(240.0), "the engines' costs: no DROP");
++        voice_kills = 0;
++        maxv = maxw = 0;
++        run_v(30.0);
++        ok(maxw <= 4u * VB_BUDGET && voice_kills == 0u && maxv > 2u,
++           "the engines' costs: DEEP KIT and BOWED METAL: %u voices at most, %u quarter voices (budget %u), %u stolen",
++           maxv, maxw, 4u * VB_BUDGET, voice_kills);
++        return;
++    }
++    {                                               /* playing along */
++        uint32_t f = i == 7u ? R_C : R_L, k1 = key_at(0, 3), k2 = key_at(0, 5);
++        knobs(2, 1, 0x7171u + i, 100, 100, 1);
++        press(1u << B_PLAY);
++        run_s(0.5);
++        take(f, 0, 11);                             /* (STRINGS: POLY, 0.6 s) */
++        focus(f);
++        ok(to_drop(240.0), "playing along on %s: no DROP", f == R_C ? "CHORDS" : "LEAD");
++        maxv = 0;
++        for (b = 0; b < 8u; b++) {                  /* eight bars: a key held half a bar, another, again */
++            double bar = 240.0 / vb.bpm;
++            if (b == 3u)                            /* (the bar staged as they began, and its tails in the next) */
++                voice_kills = 0;
++            web_keys(1u << k1 | (f == R_C ? 0u : 1u << k2));
++            run_v(bar / 2.0);
++            web_keys(f == R_C ? 1u << k2 : 1u << k2 | 1u << key_at(0, 7));
++            run_v(bar / 2.0);
++        }
++        web_keys(0);
++        run_v(1.0);
++        ok(maxv <= 8u && voice_kills == 0u, "playing along on %s: %u voices at most, %u stolen from the fourth bar on",
++           f == R_C ? "CHORDS" : "LEAD", maxv, voice_kills);
++    }
++}
++static void case_budget_user(void)
++{
++    uint32_t i;
++    int st;
++    snprintf(tag, sizeof tag, "budget: the user's sounds");
++    for (i = 0; i < 9u; i++) {
++        fflush(stdout);
++        if (!fork()) {
++            fails = 0;
++            bu_one(i);
++            fflush(stdout);
++            _exit(fails ? 1 : 0);
++        }
++        wait(&st);
++        ok(WIFEXITED(st) && WEXITSTATUS(st) == 0, "case %u failed", i);
++    }
++}
++
+ /* ---------------------------------------------------------------- the cases, four at a time */
+ typedef struct { const char *name; uint32_t a, b; } case_t;
+ static void one(const case_t *c)
+@@ -1537,6 +1745,10 @@ static void one(const case_t *c)
+         case_leds();
+     else if (!strcmp(c->name, "fav_sounds"))
+         case_fav_sounds();
++    else if (!strcmp(c->name, "tails"))
++        case_tails();
++    else if (!strcmp(c->name, "budget_user"))
++        case_budget_user();
+     else
+         case_modes();
+ }
+@@ -1571,6 +1783,8 @@ int main(int argc, char **argv)
+     cs[n++] = (case_t){"momentary", 0, 0};
+     cs[n++] = (case_t){"leds", 0, 0};
+     cs[n++] = (case_t){"fav_sounds", 0, 0};
++    cs[n++] = (case_t){"tails", 0, 0};
++    cs[n++] = (case_t){"budget_user", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+         int st;
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 7c75616..e10e474 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -282,7 +282,7 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (2.0) own lengths, overlaps, ties, chains, SONG ONCE; (Vizz) mutes, held MUTE and solo as CC 103" "$OUT/seqmidi_test"
+     # (Vizzbox) the producer and its screens, on the browser emulator's device built natively with VIZZBOX=1
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/producer_test" tests/producer_test.c -lm
+-    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX" "$OUT/producer_test"
++    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX; (1.1) the user's hand, KLANG and MOD, the keys, the layers, LEDs, favourites with sounds, the tails and the voice budget with the user's sounds and playing along" "$OUT/producer_test"
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_golden" tests/vizzbox_golden.c -lm
+     run "(Vizzbox 1.1) the songs of the Vizzbox 1.0 with nobody's hand on them: every subgenre of 1.0, three seeds, every LENGTH, ENDLESS 10 min twice: USB MIDI (bytes and times) and audio as tests/vizzbox_golden10.txt has them" \
+         sh -c "\"$OUT/vizzbox_golden\" > \"$OUT/vizzbox_golden.txt\" && diff tests/vizzbox_golden10.txt \"$OUT/vizzbox_golden.txt\""
+@@ -294,7 +294,7 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "(Vizzbox) the GROOVEBOX with the producer compiled in plays as Vizz 2.0: audio, USB MIDI and screen bit for bit (a song, keys, knobs, MUTE, MIDI in, STOP)" \
+         sh -c "\"$OUT/vizzbox_inactive0\" > \"$OUT/vizzbox_inactive0.txt\" && \"$OUT/vizzbox_inactive1\" > \"$OUT/vizzbox_inactive1.txt\" && diff \"$OUT/vizzbox_inactive0.txt\" \"$OUT/vizzbox_inactive1.txt\" && cat \"$OUT/vizzbox_inactive1.txt\""
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_budget" tests/vizzbox_budget.c -lm
+-    run "(Vizzbox) the heaviest drop (every subgenre, ENERGY and VARIATION 100, three seeds) and with every effect: CPU against Skiff's heavy song, at most 8 voices, none stolen" \
++    run "(Vizzbox) the heaviest drop (every subgenre, ENERGY and VARIATION 100, three seeds) and with every effect: CPU against Skiff's heavy song, at most 8 voices, none stolen; (1.1) the heaviest choice: the dearest sound on every track, in that drop, every effect" \
+         "$OUT/vizzbox_budget"
+     # (Vizzbox) a unit with favourites read by Skiff 2.0.1 (the tag v2.0.1) and Vizz 2.0 (its last patch, by its
+     # subject) and back: their trees from git, their devices built natively against this build/gen
+diff --git a/tests/vizzbox_budget.c b/tests/vizzbox_budget.c
+index ed9965e..df8827f 100644
+--- a/tests/vizzbox_budget.c
++++ b/tests/vizzbox_budget.c
+@@ -9,7 +9,9 @@
+  * thread's. The five heaviest again, each beside the heavy song (in turn, three times each, the least of each: the
+  * host's speed drifts, so a ratio comes from measurements side by side); the heaviest of them then with every effect
+  * at once (each track's DRIVE, CHORUS, DELAY and REVERB sends all the way up, the FX layer's REPEAT 1/32, GATE, DUB
+- * and FLANGE held) beside the heavy song with the same. In every drop at most 8 voices and none stolen.
++ * and FLANGE held) beside the heavy song with the same. In every drop at most 8 voices and none stolen. (Vizzbox 1.1)
++ * the heaviest choice: the dearest sound for its place in the budget on every track (heaviest), the user's, in that
++ * drop with every effect, beside the heavy song with them: at most 8 voices, in the same limit.
+  *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_budget.c -lm
+  *   OUT [LIMIT]       fails if the heaviest drop costs more than LIMIT (default 1.10: the host's timing, as
+  *                     target_budget.py's +10 %) x the heavy song, or with every effect x the heavy song with them */
+@@ -90,7 +92,72 @@ static void all_fx(void)
+     perf_press(PF_FLG, 1);
+ }
+ 
+-typedef struct { int ri, seed, fx; double cost; uint32_t bpm, maxv, found, kills, want; } m_t;
++/* (1.1, BRIEF-VIZZBOX-1.1.md 7: "schwerste Wahl") the heaviest sound a track may play: each factory sound's cost a
++ * voice (eight notes held on T1, POLY, a second, less the same second without them, by the voices sounding; the least
++ * of three) for what a voice of it counts in the producer's budget (producer.c VB_EW: the dearer engines more than one
++ * voice, so this is what fills the budget dearest), the dearest of the engines every track may play
++ * on T1..T4, of those T5 and T6 may (engines.c eng_allowed) on them */
++static uint8_t heavy[NTRK][2];
++static void heaviest(void)
++{
++    static double best[2];
++    uint32_t e, p, k;
++    for (e = 0; e < NENGINES; e++) {
++        if (!eng_ok(e))
++            continue;
++        for (p = 0; p < ENGINES[e]->npresets; p++) {
++            double c = 1e9;
++            int r, fd[2];
++            for (r = 0; r < 3; r++) {
++                double x = 0;
++                if (pipe(fd))
++                    exit(2);
++                if (!fork()) {
++                    uint32_t i, n = 0;
++                    double t0;
++                    boot();
++                    vb_mode_set(0);
++                    run_frames(4410);
++                    sel_set(0);
++                    (void)set_engine_of(&trk[0], e);
++                    apply_preset_to(&trk[0], p);
++                    trk[0].p[P_VOICE] = V_POLY;
++                    run_frames(4410);
++                    t0 = cpu_s();                   /* (the same second without its notes first: what the voices
++                                                     * add, not the rest of the device split among them) */
++                    run_frames(44100);
++                    x = t0 - cpu_s();
++                    for (i = 0; i < 8u; i++)
++                        trk_note_on(&trk[0], 48u + 3u * i, 100);
++                    run_frames(4410);
++                    for (i = 0; i < NVOICE; i++)
++                        n += trk[0].v[i].active;
++                    t0 = cpu_s();
++                    run_frames(44100);
++                    x = (x + cpu_s() - t0) / (n ? n : 1u);
++                    if (write(fd[1], &x, sizeof x) != (ssize_t)sizeof x)
++                        _exit(2);
++                    _exit(0);
++                }
++                close(fd[1]);
++                if (read(fd[0], &x, sizeof x) == (ssize_t)sizeof x && x < c)
++                    c = x;
++                close(fd[0]);
++                wait(NULL);
++            }
++            c /= VB_EW[e];
++            for (k = 0; k < 2u; k++)
++                if ((!k || eng_allowed(NHEAVY, e)) && c > best[k]) {
++                    best[k] = c;
++                    heavy[k][0] = (uint8_t)e;
++                    heavy[k][1] = (uint8_t)p;
++                }
++        }
++    }
++    for (k = NTRK; k-- > 0;)
++        memcpy(heavy[k], heavy[k < NHEAVY ? 0 : 1], 2);
++}
++typedef struct { int ri, seed, fx, choice; double cost; uint32_t bpm, maxv, found, kills, want; } m_t;
+ /* one case: ri < 0 the heavy song in the GROOVEBOX; else subgenre ri's first DROP. cost: CPU s per s of audio */
+ static void one(m_t *m)
+ {
+@@ -116,6 +183,16 @@ static void one(m_t *m)
+         vb.k.bpm = 0;
+         vb_knob_song();
+         press(B_PLAY);
++        if (m->choice) {                            /* (1.1) the heaviest sound on every track, the user's */
++            uint32_t k;
++            for (k = 0; k < NTRK; k++) {
++                sel_set(k);
++                if (trk[k].eng_req != heavy[k][0])
++                    (void)set_engine_of(&trk[k], heavy[k][0]);
++                apply_preset_to(&trk[k], heavy[k][1]);
++            }
++            sel_set(R_L);
++        }
+         for (i = 0, m->want = 2u; i < vb.nplan; i++)  /* (a form without a DROP, ambient's: its first GROOVE) */
+             if (vb.plan[i].type == VS_DROP)
+                 m->want = 4u;
+@@ -181,7 +258,7 @@ int main(int argc, char **argv)
+     static const int SEEDS[] = {0x5EED, 0x0B0B, 0x7A11};
+     static m_t all[108];
+     double limit = argc > 1 ? atof(argv[1]) : 1.10, rtop = 0;
+-    m_t ref = {-1, 0, 0, 0, 0, 0, 0, 0, 0}, refx = ref, top = ref, fx;
++    m_t ref = {-1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, refx = ref, top = ref, fx, ch;
+     int ri, s, i, j, n = 0, bad = 0;
+     refx.fx = 1;
+     measure(&ref, 3);
+@@ -191,7 +268,7 @@ int main(int argc, char **argv)
+     for (ri = 0; ri < 36; ri++)
+         for (s = 0; s < 3; s++) {
+             m_t *m = &all[n++];
+-            *m = (m_t){ri, SEEDS[s], 0, 0, 0, 0, 0, 0, 0};
++            *m = (m_t){ri, SEEDS[s], 0, 0, 0, 0, 0, 0, 0, 0};
+             measure(m, 1);
+             if (!m->found || m->maxv > 8u || m->kills) {
+                 printf("budget: %-11s / %-14s seed %04X: %s  FAIL\n", VB_GNAME[genre_of(ri)], VB_SNAME[ri], m->seed,
+@@ -228,5 +305,16 @@ int main(int argc, char **argv)
+            fx.cost / refx.cost, fx.cost <= limit * refx.cost ? "ok" : "FAIL");
+     bad += rtop > limit;
+     bad += fx.cost > limit * refx.cost;
++    heaviest();                                     /* (1.1) the heaviest choice: in that drop, every effect */
++    ch = top;
++    ch.fx = 1;
++    ch.choice = 1;
++    measure_pair(&ch, &refx);
++    printf("budget: (1.1) the heaviest choice, %s %s on T1..T4, %s %s on T5 and T6, in that DROP with every effect: "
++           "%.2f x the heavy song with them (%u voices, %u given up)  %s\n", ENGINES[heavy[0][0]]->name,
++           ENGINES[heavy[0][0]]->presets[heavy[0][1]].name, ENGINES[heavy[5][0]]->name,
++           ENGINES[heavy[5][0]]->presets[heavy[5][1]].name, ch.cost / refx.cost, ch.maxv, ch.kills,
++           ch.found && ch.maxv <= 8u && ch.cost <= limit * refx.cost ? "ok" : "FAIL");
++    bad += !ch.found || ch.maxv > 8u || ch.cost > limit * refx.cost;
+     return bad ? 1 : 0;
+ }
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+index 91a0099..0f86916 100644
+--- a/tests/vizzbox_mutants.py
++++ b/tests/vizzbox_mutants.py
+@@ -142,6 +142,22 @@ FAULTS = [
+     ("1.1: the favourites of 1.0 lost (a record of its own, VBF2)", UI, [
+         ("#define VB_FMAGIC 0x31464256u", "#define VB_FMAGIC 0x32464256u")],
+      ("compat10",)),
++    ("1.1: the budget plans the producer's tails for the user's sounds", P, [
++        ("vb_q(vb_hand_snd(k) ? vb_tail_ms(k) : 16u * VB_SND", "vb_q(0 ? vb_tail_ms(k) : 16u * VB_SND")],
++     ("producer", "budget_user")),
++    ("1.1: a POLY sound of the user's counted as one voice", P, [
++        ("    if (k == R_D || (!e->oneshot && t->p[P_VOICE] != V_POLY))\n        return 0;",
++         "    if (1)\n        return 0;")],
++     ("producer", "budget_user")),
++    ("1.1: no room for the keys when playing along", P, [
++        ("    vb_room = (uint8_t)(4u * VB_BUDGET - (r < 24u ? r : 24u));", "    vb_room = (uint8_t)(4u * VB_BUDGET);")],
++     ("producer", "budget_user")),
++    ("1.1: the engines' costs not in the budget (a voice of the user's PHYS one, not two)", P, [
++        ("    return (vb_hand.snd >> k) & 1u ? VB_EW[trk[k].eng_req % NENGINES] : 4u;", "    return 4u;")],
++     ("producer", "budget_user")),
++    ("1.1: FM6's tail from the amplitude envelope (not its carriers)", P, [
++        ("    if (t->eng_req == ENGI_FM6) {\n        const uint8_t *p = fm6_eff[k].p;", "    if (0) {\n        const uint8_t *p = fm6_eff[k].p;")],
++     ("producer", "tails")),
+ ]
+ INSTALLER = [
+     ("the installer: a Vizzbox told by its version (v1.0: before 2.0, a backup)",
+-- 
+2.43.0
+

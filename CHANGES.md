@@ -1,11 +1,11 @@
 # Vizzbox 1.1 – Änderungen gegenüber Skiff 2.0.1
 
-> **Stand: Etappe 5 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
+> **Stand: Etappe 6 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
 > ihrer Songs steht; „Hand drauf“ (Abschnitt 2 des Auftrags), die Seiten KLANG und MOD, Fokus-Spur, Tasten, die
-> Layer FX, ARP (PERFORM) und GLO (Busse), MOMENTARY, Zurückgeben, Bildschirm und LEDs (Abschnitt 3.1–3.8) und die
-> Favoriten mit Klängen (3.9) sind gebaut und getestet, alle Tests grün. Es fehlen noch: das Budget mit den Klängen
-> des Nutzers, neue Subgenres, Name/Kennung/Installer, Release, Demos, Emulator, Anleitung; das Paket in `out/` ist
-> bis Etappe 8 das der 1.0.
+> Layer FX, ARP (PERFORM) und GLO (Busse), MOMENTARY, Zurückgeben, Bildschirm und LEDs (Abschnitt 3.1–3.8), die
+> Favoriten mit Klängen (3.9) und das Budget mit den Klängen des Nutzers (Abschnitt 7) sind gebaut und getestet,
+> alle Tests grün. Es fehlen noch: neue Subgenres, Name/Kennung/Installer, Release, Demos, Emulator, Anleitung; das
+> Paket in `out/` ist bis Etappe 8 das der 1.0.
 
 Die Vizzbox ist eine geänderte Fassung von **Skiff 2.0.1** (illuminus5, <https://github.com/illuminus5/skiff>,
 GPL-3.0; Skiff baut auf **Felucca** von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf. Die
@@ -26,6 +26,7 @@ Basis ist der Tag `v2.0.1` (`b03d98a`); die Änderungen sind die Commits in `pat
 | 0018 | **Bedienung**: Seiten KLANG und MOD, Fokus-Spur, Tasten, Layer, Busse, Bildschirm (Abschnitt 5) |
 | 0019 | LEDs der Seiten, Layer und Fokus-Spur; HOME + FX hält den FX-Layer offen (Abschnitt 5) |
 | 0020 | **Favoriten mit Klängen**, lesbar für die Vizzbox 1.0 (Abschnitt 6) |
+| 0021 | **Budget** mit den Klängen des Nutzers: ihr Ausklang, POLY-Klänge, Platz fürs Mitspielen, die Kosten der Engines (Abschnitt 7) |
 
 ---
 
@@ -99,8 +100,9 @@ Der Plan, woher der Platz kommt, in der Reihenfolge des Auftrags, und was er erg
 | Etappe 3: Seiten, Fokus, Tasten, Layer, Busse, Bildschirm | 573 984 | 7 580 | +3 100 |
 | Etappe 4: LEDs, Lock | 573 984 | 7 580 | ±0 |
 | Etappe 5: Favoriten mit Klängen | 574 928 | 6 636 | +944 |
+| Etappe 6: Budget | 576 752 | 4 812 | +1 824 |
 
-RAM `.data` + `.bss` (mit `.vbox` dahinter) 90 172 von 98 304 Bytes, Pool 347 168 von 356 352 (Reserve 9 184, Skiff
+RAM `.data` + `.bss` (mit `.vbox` dahinter) 90 172 von 98 304 Bytes, Pool 347 312 von 356 352 (Reserve 9 040, Skiff
 verlangt 8 192).
 
 Der Flash zwischen App-Bereich (`0x93000`) und den Favoriten (`0x95000`) bleibt liegen: Der Update-Loader schreibt
@@ -221,7 +223,70 @@ die Regler der Seite SONG, alles andere machen Skiffs Seiten, Karten, Grafiken u
 - RAM: 3 136 Bytes für die Einträge (hinter `.bss`, beim Booten aus dem Flash gelesen), 48 im Pool für die Listen der
   letzten Parameter.
 
-## 7. Tests
+## 7. Budget mit den Klängen des Nutzers (Etappe 6)
+
+**Stimmen.** Der Produzent plant jeden Takt so, dass höchstens 8 Stimmen klingen (1.0). Mit einem Klang des Nutzers
+plant er jetzt mit dessen eigenem Ausklang, dessen Stimmenzahl und dessen Kosten:
+
+- **Ausklang aus den Hüllkurven** (`producer.c vb_tail_ms`, `vb_ring_ms`): für einen gewählten Klang (oder wenn
+  RELEASE, ENV SYNC oder der Stimmen-Modus gedreht wurden) – die Release der Amplituden-Hüllkurve bis zum Ende der
+  Stimme (Skiff beendet sie bei −72 dB: 8,3 Zeitkonstanten, die Tabelle nennt 4,6; gerechnet mit 8,5 und 40 ms),
+  ENV SYNC als Notenwert im Tempo; **FM6** nach seinen Trägern (seine eigenen Hüllkurven beenden die Stimme: der Pegel
+  fällt je Block um den Schritt der Rate R4, vom höchsten aus L1–L3 bis zum Boden; L4 über Stille: 12 s);
+  **DRUM-X** je Lane aus DECAY (das lautere Ende von MORPH und der DECAY-Regler darin); **DRUM** aus einer kleinen
+  Tabelle der gemessenen Presets (13 × 8 Lanes, `VB_DRING`), verschoben von DECAY-Regler und Lane-DECAY (gemessen
+  ×1,5 je 16 hinauf, ×1,2 hinab; gerechnet ×2 je 24 hinauf, /2 je 64 hinab), ein anderes KIT nach dem Preset mit
+  diesem Kit, tiefere PITCH oder anderer KICK doppelt; höchstens 12 s.
+  **Geprüft gegen jeden Werks-Sound** (`producer_test tails`: jedes Preset eine Note, jedes Kit jede Lane, dazu
+  DECAY-Regler und Lane-DECAY verschoben): keine Schätzung kürzer als gemessen.
+- **Ein POLY-Klang** (oder einer aus Schlägen) auf einer Rolle, die der Produzent mit einer Stimme spielt (BASS,
+  LEAD, ARP, FX), zählt eine Stimme je Note wie die Akkorde (`vb_ply`), höchstens so viele, wie seine Engine hat.
+  Ein Klang mit einer Stimme auf CHORDS zählt eine.
+- **Mitspielen:** gehaltene und noch klingende weiße Tasten auf der Fokus-Spur (Klang mit einer Stimme: keine
+  zusätzlichen; DRUMS eine Lane je Taste; CHORDS mit Ein-Finger-Akkord drei oder vier je Taste; höchstens sechs)
+  bekommen im übernächsten Takt Platz (`vb_room`).
+- **Die Kosten der Engines** (`VB_EW`, `vb_w`) – der Weg, den der Auftrag nennt, wenn die schwerste Wahl sonst nicht in
+  die Grenze passt (siehe unten): Eine Stimme eines Klangs, den der Nutzer gewählt hat, zählt im Budget so viel, wie
+  die teuerste Werks-Stimme ihrer Engine kostet, in Vierteln der teuersten VOICE-Stimme (MONK CHANT), mindestens eine
+  ganze: **PHYS zwei, GRAIN 1¾, FM6 und DRUM-X 1½**, alle anderen eine. Mit schweren Klängen plant der Produzent also
+  weniger Stimmen. Klingt ein Bass-Klang des Nutzers in den nächsten Takt hinein, darf das Budget als Letztes auch
+  dessen Noten ausdünnen (die Bässe des Produzenten nie). Die Klänge des Produzenten zählen wie in 1.0 je eine Stimme –
+  seine Songs bleiben bitgleich. (Skiffs eigene Tabelle `ENG_VCOST` in `fx.c` gibt es nur im Zweikern-Build, sie
+  nennt Mittelwerte je Engine und für DRUM-X die von DRUM; deshalb 15 eigene Bytes aus der Messung.)
+- **Was bleibt:** Die Takte, die schon geplant waren, als ein Klang gewählt wurde oder das Mitspielen begann, sind
+  für das Alte geplant; dort kann Skiff eine ausklingende Stimme in einem Block ausblenden (seine Stimmenverwaltung
+  hält die 8 immer). Ab dem übernächsten Takt nicht mehr. Die Zusatzstimmen eines UNISON-Klangs nimmt Skiff zurück,
+  wenn andere sie brauchen – wie in der GROOVEBOX. Ein von Hand umgebautes DRUM-X-Kit schätzt die Vizzbox aus seinen
+  eigenen DECAY-Werten, ein User-Kit (Samples) mit 6 s je Lane; ein USER-Klang zählt mit den Kosten seiner Engine.
+
+**Gemessen** (`producer_test budget_user`): die längsten Ausklänge auf allen Rollen (CRISP KIT, SOFT PAD, OCEAN,
+FROZEN, GLASS BELL, CRYPT CHOIR) und zufällige Werks-Sounds auf allen sechs Spuren über drei Drops: höchstens 8
+Stimmen, **keine gestohlen** ab dem Drop; zwei Tasten auf einem POLY-LEAD und ein Ein-Finger-Akkord auf CHORDS über
+acht Takte: keine gestohlen ab dem vierten; DRUM-X DEEP KIT und PHYS BOWED METAL auf allen Spuren: nie mehr als das
+Budget in Vierteln (ohne die Kosten wären es 58 statt höchstens 32).
+
+**CPU – Messfall „schwerste Wahl“** (`tests/vizzbox_budget.c`). Zuerst wird jeder Werks-Sound gemessen: was eine
+Stimme kostet (acht Noten gehalten auf T1, POLY, eine Sekunde, abzüglich derselben Sekunde ohne Noten, geteilt durch
+die klingenden Stimmen; das Geringste aus drei Läufen). Der teuerste je Budget-Viertel, den jede Spur spielen darf,
+kommt auf T1–T4, der teuerste, den T5 und T6 spielen dürfen, auf diese – alle als Klänge des Nutzers, im schwersten
+Drop aus dem Durchlauf aller Subgenres, mit allen Effekten zugleich, Seite an Seite mit Skiffs heavy song mit
+denselben Effekten (Grenze 1,10).
+
+- **Ohne die Kosten der Engines reichte es nicht:** PHYS BOWED METAL auf T1–T4 und VOICE WOW BASS auf T5/T6 kamen
+  auf **1,19 ×** (7 Stimmen). (Ein erster Zwischenstand teilte die ganze Rechenzeit durch die Stimmen; damit sah eine
+  Engine mit einer Stimme am teuersten aus, und die Wahl wechselte von Lauf zu Lauf. Nichts davon war gepusht.)
+- **Mit ihnen:** die schwerste Wahl je Budget-Viertel, VOICE MONK CHANT auf allen sechs: **0,74 ×** (5 Stimmen).
+  Gegenproben mit festen Klängen im selben Messfall: PHYS BOWED METAL / VOICE WOW BASS 0,87 ×, PHYS BOWED METAL überall
+  0,77 ×, PHYS BELL TREE / VOICE CRYPT CHOIR 0,73 ×, GRAIN SHIMMER überall 0,69 ×, FM6 GROWL BASS überall 0,58 ×, DRUM-X
+  DEEP KIT / VOICE CRYPT CHOIR 0,52 ×.
+- Ohne die Klänge des Nutzers wie in 1.0: schwerster Drop 0,68–0,81 ×, mit allen Effekten 0,70–0,77 × (je nach Lauf
+  ein anderer der fünf schwersten). Der Interrupt-Teil des Produzenten bleibt eine Funktion ohne Schleife über die
+  Samples; das Kostenmaß der Interrupts ist unverändert (`fm1_alnk0_irq` 24 922, `fm1_timer5_irq` 27 166).
+
+Platz: `VB_DRING` 104 Bytes, `VB_EW` 15, alles zusammen **+1 824 Bytes** (App 576 752, frei 4 812), Pool +144
+(Reserve 9 040).
+
+## 8. Tests
 
 | Schritt | Ergebnis |
 | --- | --- |
@@ -240,9 +305,11 @@ die Regler der Seite SONG, alles andere machen Skiffs Seiten, Karten, Grafiken u
 | **Etappe 5**, derselbe Lauf | darin `producer_test fav_sounds`: LEAD-Klang auf KLANG gewählt, LIVE-Regler gedreht, CHORDS mit User-Sound, Delay-MIX auf GLO, ARP zehn Parameter gedreht; SAVE + Taste 3: der Rekord der 1.0 unverändert und lesbar, der Eintrag dahinter (ARP: die acht letzten); **ein frisches Gerät in einem eigenen Prozess bootet auf diesem Flash** (`fav_boot`), GLO + Taste 3: das Rezept, die Klänge, der Wert, der Bus, wieder die des Nutzers, ein neuer Stil lässt sie; ein Favorit ohne Übernahmen lässt die Hand, wie sie ist; ein Platz mit anderem Klang spielt den neuen |
 | `tests/vizzbox_compat.c` mit dem Baum der Vizzbox 1.0 (neu) | die 1.0 liest die 16 Rezepte, die 1.1 schrieb, speichert über Favorit 10; zurück auf 1.1: Favorit 6 mit Klängen, Favorit 10 ohne (anderes Lied), eine Änderung schreibt alle Einträge wieder; die Favoriten, die die 1.0 schrieb, liest die 1.1 wie geschrieben, ohne beim Booten etwas zu schreiben, und speichert einen mit Klang. Skiff 2.0.1 und Vizz 2.0 lassen beide Sektoren bytegleich (wie in 1.0; jeder alte Baum jetzt mit seinem eigenen `tests/hostsim.c`) |
 | `tests/vizzbox_mutants.py`, neu | die Klänge im Favoriten werden nicht gespeichert, die Favoriten aus 1.0 gehen verloren (ein eigener Rekord „VBF2“): **jeder erkannt** – alle 12 Fehler der 1.1 bis hier erkannt |
+| **Etappe 6**, `tests/run_tests.sh` auf Patch 0021 | **`ALL HOST TESTS PASSED`**, 148 Schritte, 8 400 Einzelprüfungen „ok“: Golden der 1.0-Songs bitgleich, GROOVEBOX mit/ohne Produzent bitgleich, Kostenmaß `fm1_alnk0_irq` 24 922, `fm1_timer5_irq` 27 166 (unverändert); im selben Lauf die schwerste Wahl VOICE CHOIR AAH auf allen sechs Spuren 0,81 × Skiffs heavy song (8 Stimmen, Grenze 1,10), schwerster Drop 0,79 ×, mit allen Effekten 0,73 × |
+| darin `producer_test`, neu | tails (jedes Werks-Preset, jedes Kit jede Lane, DECAY-Regler und Lane-DECAY verschoben: keine Schätzung kürzer als gemessen), budget_user (die längsten Ausklänge auf allen Rollen, zufällige Werks-Sounds auf allen Spuren über drei Drops; Mitspielen auf POLY-LEAD und mit Ein-Finger-Akkord: höchstens 8 Stimmen, keine gestohlen; DRUM-X DEEP KIT und PHYS BOWED METAL überall: nie mehr als das Budget in Vierteln) |
+| `tests/vizzbox_budget.c`, neu | Messfall „schwerste Wahl“ (Abschnitt 7): die Kosten jeder Werks-Stimme, die teuerste je Budget-Viertel auf allen Spuren als Klänge des Nutzers, schwerster Drop, alle Effekte; dazu die Gegenproben mit festen Klängen (Abschnitt 7, auf ruhiger Maschine) |
+| `tests/vizzbox_mutants.py`, neu | das Budget plant den Ausklang des Produzenten für den Klang des Nutzers, ein POLY-Klang zählt eine Stimme, kein Platz fürs Mitspielen, FM6 nach der Amplituden-Hüllkurve statt nach seinen Trägern, die Kosten der Engines nicht im Budget: **jeder erkannt** – alle 17 Fehler der 1.1 bis hier erkannt |
 
 ## Nächste Schritte
 
-Etappe 6 (Budget mit den Klängen des Nutzers: Ausklang aus den Hüllkurven, POLY-Klänge, Platz fürs Mitspielen, Messfall
-„schwerste Wahl“) ist gebaut und getestet und folgt als Patch 0021; Etappe 7 (die 22 Subgenres der Liste, CC 110) ist
-in Arbeit, dann Etappe 8 nach Abschnitt 10 des Auftrags.
+Etappe 7 (die 22 Subgenres der Liste, CC 110) ist in Arbeit, dann Etappe 8 nach Abschnitt 10 des Auftrags.

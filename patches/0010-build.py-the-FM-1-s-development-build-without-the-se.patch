@@ -1,7 +1,7 @@
 From 7440057175bc97fe58b95416198ea56e52f9f0e5 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 20:41:19 +0000
-Subject: [PATCH 10/20] build.py: the FM-1's development build without the
+Subject: [PATCH 10/21] build.py: the FM-1's development build without the
  serial console too
 
 With the console (about 7.4 KB) the development build no longer fits the app area beside the producer;

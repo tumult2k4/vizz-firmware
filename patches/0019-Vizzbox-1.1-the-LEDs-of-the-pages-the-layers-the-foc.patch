@@ -1,7 +1,7 @@
 From 160aca2b8498ce13737d73730dbab21914de06dd Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 06:51:41 +0000
-Subject: [PATCH 19/20] Vizzbox 1.1: the LEDs of the pages, the layers, the
+Subject: [PATCH 19/21] Vizzbox 1.1: the LEDs of the pages, the layers, the
  focus track; HOME + FX keeps the FX layer open
 
 The page open lit (EDIT: KLANG, LFO: MOD), a layer up its button breathing as Skiff's own (FX's layer is Skiff's

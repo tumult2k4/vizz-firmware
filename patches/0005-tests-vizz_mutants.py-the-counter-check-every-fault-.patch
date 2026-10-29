@@ -1,7 +1,7 @@
 From 36fcdcda95d7f347e6360798abef5fc6bd3c2ebe Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Mon, 26 Oct 2026 03:26:37 +0000
-Subject: [PATCH 05/20] tests/vizz_mutants.py: the counter-check, every fault
+Subject: [PATCH 05/21] tests/vizz_mutants.py: the counter-check, every fault
  caught
 
 Each deliberate fault in SEQ MIDI OUT (seq.c) or in the installer must
