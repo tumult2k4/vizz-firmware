@@ -1,7 +1,7 @@
 From 10d222cf48b4d7c9436ef5a0dc572db1f893f363 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 05:22:25 +0000
-Subject: [PATCH 16/21] Vizzbox 1.1: the user's hand on the producer's tracks
+Subject: [PATCH 16/22] Vizzbox 1.1: the user's hand on the producer's tracks
  (BRIEF-VIZZBOX-1.1.md 2)
 
 What the user takes of the producer's tracks stays theirs until given back: a sound chosen (any load: PRESETS,

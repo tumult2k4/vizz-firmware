@@ -1,11 +1,12 @@
 # Vizzbox 1.1 – Änderungen gegenüber Skiff 2.0.1
 
-> **Stand: Etappe 6 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
+> **Stand: Etappe 7 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
 > ihrer Songs steht; „Hand drauf“ (Abschnitt 2 des Auftrags), die Seiten KLANG und MOD, Fokus-Spur, Tasten, die
 > Layer FX, ARP (PERFORM) und GLO (Busse), MOMENTARY, Zurückgeben, Bildschirm und LEDs (Abschnitt 3.1–3.8), die
-> Favoriten mit Klängen (3.9) und das Budget mit den Klängen des Nutzers (Abschnitt 7) sind gebaut und getestet,
-> alle Tests grün. Es fehlen noch: neue Subgenres, Name/Kennung/Installer, Release, Demos, Emulator, Anleitung; das
-> Paket in `out/` ist bis Etappe 8 das der 1.0.
+> Favoriten mit Klängen (3.9), das Budget mit den Klängen des Nutzers (Abschnitt 7), alle 22 neuen Subgenres mit
+> Demos und CC 110 (Abschnitte 4, 5) sind gebaut und getestet, alle Tests grün. Es fehlen noch (Etappe 8):
+> Name/Kennung/Installer, Release, der Emulator auf 1.1, Anleitung und MIDI-Beschreibung; das Paket in `out/` und
+> `demos/vizzbox-im-browser.html` sind bis dahin die der 1.0.
 
 Die Vizzbox ist eine geänderte Fassung von **Skiff 2.0.1** (illuminus5, <https://github.com/illuminus5/skiff>,
 GPL-3.0; Skiff baut auf **Felucca** von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf. Die
@@ -27,6 +28,7 @@ Basis ist der Tag `v2.0.1` (`b03d98a`); die Änderungen sind die Commits in `pat
 | 0019 | LEDs der Seiten, Layer und Fokus-Spur; HOME + FX hält den FX-Layer offen (Abschnitt 5) |
 | 0020 | **Favoriten mit Klängen**, lesbar für die Vizzbox 1.0 (Abschnitt 6) |
 | 0021 | **Budget** mit den Klängen des Nutzers: ihr Ausklang, POLY-Klänge, Platz fürs Mitspielen, die Kosten der Engines (Abschnitt 7) |
+| 0022 | **22 neue Subgenres**, das Genre AFRO & LATIN, CC 110 (Abschnitt 8) |
 
 ---
 
@@ -101,6 +103,7 @@ Der Plan, woher der Platz kommt, in der Reihenfolge des Auftrags, und was er erg
 | Etappe 4: LEDs, Lock | 573 984 | 7 580 | ±0 |
 | Etappe 5: Favoriten mit Klängen | 574 928 | 6 636 | +944 |
 | Etappe 6: Budget | 576 752 | 4 812 | +1 824 |
+| Etappe 7: 22 Subgenres, CC 110 | 578 032 | 3 532 | +1 280 |
 
 RAM `.data` + `.bss` (mit `.vbox` dahinter) 90 172 von 98 304 Bytes, Pool 347 312 von 356 352 (Reserve 9 040, Skiff
 verlangt 8 192).
@@ -286,7 +289,66 @@ denselben Effekten (Grenze 1,10).
 Platz: `VB_DRING` 104 Bytes, `VB_EW` 15, alles zusammen **+1 824 Bytes** (App 576 752, frei 4 812), Pool +144
 (Reserve 9 040).
 
-## 8. Tests
+## 8. Mehr Subgenres (Etappe 7)
+
+**Alle 22 der Liste** (Abschnitt 4 des Auftrags) passen; keins übersprungen. Zusammen mit CC 110 kosten sie
+**+1 280 Bytes** (App 578 032, frei 3 532: die Reserve von 2 KB bleibt).
+
+| CC 108 · Genre | neu (CC 109) |
+| --- | --- |
+| 0 HOUSE | 6 PROG HOUSE, 7 BASS HOUSE |
+| 1 TECHNO | 6 ACID TECHNO, 7 INDUSTRIAL |
+| 2 ELECTRO / SYNTHWAVE | 3 NU-DISCO, 4 DARKSYNTH |
+| 3 TRANCE | 4 HARD TRANCE |
+| 4 BREAKS / UK GARAGE | 3 BASSLINE, 4 GRIME, 5 JERSEY CLUB |
+| 5 DRUM & BASS | 4 HALFTIME |
+| 6 DUBSTEP | 2 RIDDIM, 3 FUTURE BASS |
+| 7 HIP-HOP / LO-FI / TRAP | 3 DRILL, 4 PHONK |
+| 8 AMBIENT / DOWNTEMPO | 3 TRIP-HOP |
+| 9 HARDSTYLE / HARDCORE | 2 HARDCORE, 3 FRENCHCORE |
+| **10 AFRO & LATIN** (neues Genre nach HARD) | 0 AMAPIANO, 1 AFROBEATS, 2 REGGAETON, 3 BAILE FUNK |
+
+Auf dem Gerät stehen sie im Genre hinter den alten (Regler SUBGENRE), die Demos zählen sie von 37 bis 58.
+
+- **Nummern:** Die 36 aus 1.0 behalten Genre- und Subgenre-Nummer (CC 108/109, Favoriten) und ihren Platz in
+  `VB_SUB`, nach dem ihr Zufallsstrom und ihre Pegel gehen; die neuen stehen dahinter, je Genre nach den alten
+  (`vb_rig`, `vb_gof`). Das Golden der 1.0-Songs ist bitgleich.
+- **Tabellen statt Code:** jede neue Zeile ist eine Zeile `VB_SUB` (Tempo, Swing, Form, Raster, Bass-, Akkord-,
+  Lead-, Arp-Stil und ihre Klanglisten), aus den vorhandenen Generatoren. Neu sind nur sechs Drum-Raster, wo der
+  Charakter sie braucht – Amapiano (Shaker in 16teln, Rim und Holz, Claps neben der Zählzeit), Afrobeats (synkopierte
+  Kick, Congas), **Dembow**, Drill (Halftime, Hats in Dreiergruppen), Jersey Club (die Kick in Dreiergruppen),
+  **Tamborzão** – und ein Schalter für Hat-Rolls wie bei TRAP (Drill, Phonk, Future Bass).
+- **Klänge durch Messen:** zwei neue Listen, gerendert und gemessen wie in 1.0 (`tools/vizzbox_sounds`,
+  `vizzbox_sounds.py`, `vizzbox_pick.py`, das jetzt die vorhandenen Klänge und Listen unverändert übernimmt und nur
+  neue anhängt): **Log Drum** für Amapiano (perkussiv, Tonhöhe fällt: SYN TOM, TOMS, HAND DRUM, PICK BASS; KALIMBA,
+  MARIMBA zu leise, FM MARIMBA zu langer Ausklang) und **Glocken / Cowbell** als Lead für Phonk und Drill (RING BELL,
+  MUSIC BOX, CHIP BELL; BELL TREE und METAL zu hell, GLASS BELL ohne Ende). Sonst die Listen aus 1.0.
+- **Pegel:** `tools/vizzbox_level.py` bringt die neuen auf die gemeinsame Lautheit (drei Seeds, vier Durchgänge, bis
+  sich keine Trimmung mehr ändert: −24,5 bis −22,3 dBFS bei −22,5 als Ziel; fünf stehen an der Obergrenze von +4 dB,
+  die schon in 1.0 galt – mehr Pegel hieße mehr Limiter); die 36 aus 1.0 behalten ihre.
+- **ENDLOS:** Von einem neuen Subgenre geht es zu allen Tempo-Nachbarn, neuen wie alten. Von einem der 36 aus 1.0
+  aus wählt die Vizzbox wie in 1.0 nur unter den 36 – sonst wären deren ENDLOS-Songs nicht mehr dieselben.
+- **Abweichungen vom Richtwert:** HARDCORE und FRENCHCORE ohne eigenen Bass (die verzerrte Kick ist der Bass; der
+  „Hoover“ der Liste spielt als Lead); RIDDIM ohne Triolen (16tel-Raster); Drill-Hats in Dreiergruppen statt echter
+  Triolen; Grime mit Pizzicato als Arp.
+- **Anzeige:** Der große Wert beim Drehen kommt in einer Schrift ohne „&“; ein Name mit einem Zeichen, das ihr fehlt
+  („AFRO & LATIN“, auch „DRUM & BASS“ aus 1.0), steht jetzt in der mittleren Schrift – so macht es Skiff auf seinen
+  Karten (`face_has`).
+- **Demos:** von jedem neuen eine wie in 1.0 (`demos/37-…` bis `58-…`, Tabellen in `demos/README.md`), gerendert mit
+  `tools/vizzbox_demos.py … new`; die 36 aus 1.0 bleiben, wie sie sind (ihre Songs sind bitgleich). Dabei aufgefallen:
+  `tools/vizzbox_render.c` nannte die Stile noch nach der Zählung von 1.0 – korrigiert, bevor eine Demo gespeichert
+  wurde.
+- **CC 110** (optional, gebaut): auf Kanal 16 der gerade gehaltene Effekt des FX-Layers, 1–14 in der Reihenfolge der
+  Tasten (der des Nutzers zuerst, sonst der des Produzenten), 0 keiner; bei Änderung und auf jeder Takt-Eins nach
+  den sechs. Das Golden lässt CC 110 aus, weil die 1.0 ihn nie sendet.
+- **Gefunden beim neuen Test „ENDLOS 30 min ab AMAPIANO“** (ein Verhalten aus Skiff, das es schon in 1.0 gab): Nachdem
+  das Tempo geglitten ist, können die Spuren die Eins eines Takts einen Teilblock der Klangerzeugung (32 Samples,
+  0,7 ms) vor Skiffs Takt-Zähler erreichen; dann kommen die Noten dieser Eins kurz vor CC 104–109. Im Lauf ab LIQUID
+  (nur 1.0-Stile) zeigt es sich genauso, es traf dort nur nie eine Drop-Eins. Nicht geändert, weil der Takt-Zähler
+  Skiffs ist und das Golden der 1.0-Songs (auch ENDLOS) es enthält; der Test zählt die Kick jetzt im selben Block wie
+  CC 104, und `docs/VIZZBOX-MIDI.md` nennt die Ausnahme (mit Etappe 8).
+
+## 9. Tests
 
 | Schritt | Ergebnis |
 | --- | --- |
@@ -309,7 +371,13 @@ Platz: `VB_DRING` 104 Bytes, `VB_EW` 15, alles zusammen **+1 824 Bytes** (App 57
 | darin `producer_test`, neu | tails (jedes Werks-Preset, jedes Kit jede Lane, DECAY-Regler und Lane-DECAY verschoben: keine Schätzung kürzer als gemessen), budget_user (die längsten Ausklänge auf allen Rollen, zufällige Werks-Sounds auf allen Spuren über drei Drops; Mitspielen auf POLY-LEAD und mit Ein-Finger-Akkord: höchstens 8 Stimmen, keine gestohlen; DRUM-X DEEP KIT und PHYS BOWED METAL überall: nie mehr als das Budget in Vierteln) |
 | `tests/vizzbox_budget.c`, neu | Messfall „schwerste Wahl“ (Abschnitt 7): die Kosten jeder Werks-Stimme, die teuerste je Budget-Viertel auf allen Spuren als Klänge des Nutzers, schwerster Drop, alle Effekte; dazu die Gegenproben mit festen Klängen (Abschnitt 7, auf ruhiger Maschine) |
 | `tests/vizzbox_mutants.py`, neu | das Budget plant den Ausklang des Produzenten für den Klang des Nutzers, ein POLY-Klang zählt eine Stimme, kein Platz fürs Mitspielen, FM6 nach der Amplituden-Hüllkurve statt nach seinen Trägern, die Kosten der Engines nicht im Budget: **jeder erkannt** – alle 17 Fehler der 1.1 bis hier erkannt |
+| **Etappe 7**, `tests/run_tests.sh` auf Patch 0022 (der Baum vor einer Ortsangabe in `tests/vizzbox_mutants.py`, sonst derselbe) | **`ALL HOST TESTS PASSED`**, 148 Schritte, 8 400 Einzelprüfungen „ok“: Golden der 1.0-Songs bitgleich (CC 110 ausgenommen), GROOVEBOX mit/ohne Produzent bitgleich, VIZZBOX-Bildschirme wie im Golden, Kostenmaß unverändert (`fm1_alnk0_irq` 24 922, `fm1_timer5_irq` 27 166); schwerster Drop über alle 58: DRUM & BASS / HALFTIME, 0,68 ×, mit allen Effekten 0,87 × (Grenze 1,10); die schwerste Wahl in diesem Lauf 0,49 × (die Auswahl schwankte noch von Lauf zu Lauf: Etappe 8 misst jeden Klang länger) |
+| darin `producer_test`, neu | jedes neue Subgenre in jeder LÄNGE mit den Prüfungen der 1.0 (Form, Tempo, Tonart, Lagen, Stimmen, DROPs, CC 104–109), ENDLOS 30 min ab AMAPIANO (Nachbarn neu und alt, kein Wechsel über 8 BPM, keine Stimme gestohlen), cc110 (GATE gehalten 11, losgelassen nicht mehr, auf jeder Eins nach den sechs, beim Stopp 0) |
+| `tests/vizzbox_fuzz.c`, erweitert | (Abschnitt 9 des Auftrags) dazu EDIT und LFO, SEL + schwarze Taste, FX/ARP/GLO gehalten mit Reglern und Tasten, LFO + Regler, PRESETS und HOME + PRESETS, HOME + schwarze Taste und HOME + EDIT (danach nichts mehr des Nutzers), die GROOVEBOX zwischendurch mit ihren Reglern, die Genres bis AFRO & LATIN: je 1 500 Aktionen mit Seed 11 und 12 unter ASan/UBSan, 0 Fehler |
+| `tests/vizzbox_mutants.py`, neu | ein neues Subgenre verschiebt alte Nummern (HOUSEs neue vor seinem sechsten): **erkannt**; der ganze Lauf auf Patch 0022 (ohne die Fehler im Installer, die Etappe 7 nicht berührt): **jeder Fehler erkannt**, alle 18 der 1.1 und die der 1.0 (eine Ortsangabe der 1.0 nachgeführt, die CC 110 verschoben hatte: „CC 104 beim Stopp nicht 0“) |
 
 ## Nächste Schritte
 
-Etappe 7 (die 22 Subgenres der Liste, CC 110) ist in Arbeit, dann Etappe 8 nach Abschnitt 10 des Auftrags.
+Etappe 8 nach Abschnitt 10 des Auftrags: Version 1.1 mit Kennung `FM-1_851` (Release mit festem Datum), Installer
+und seine Tests 1.0 ↔ 1.1, alle Tests und die Gegenprobe auf dem Endstand, `out/`, der Emulator auf 1.1, Anleitung,
+MIDI-Beschreibung, README und diese Datei in ihrer Endfassung.

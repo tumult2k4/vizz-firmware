@@ -1,7 +1,7 @@
 From 8172c9dc96aafad87baa088802c42db06d1e6279 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 06:52:27 +0000
-Subject: [PATCH 20/21] Vizzbox 1.1: favourites with sounds
+Subject: [PATCH 20/22] Vizzbox 1.1: favourites with sounds
  (BRIEF-VIZZBOX-1.1.md 3.9)
 
 SAVE + a white key keeps, besides the song, what the user took: a track's sound (a factory preset by engine and

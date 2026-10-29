@@ -1,7 +1,7 @@
 From e45258873a1a08ebf450ab37acbbc752eb49c460 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Wed, 28 Oct 2026 16:21:52 +0000
-Subject: [PATCH 06/21] tools/size_report.py: where the app's flash goes, per
+Subject: [PATCH 06/22] tools/size_report.py: where the app's flash goes, per
  source file and symbol
 
 (Vizzbox) One release ELF: the image (.text + .ram_text + .data) by the

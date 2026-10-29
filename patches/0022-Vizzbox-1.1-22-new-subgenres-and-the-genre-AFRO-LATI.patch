@@ -1,0 +1,1268 @@
+From 1d170e437a2c429973f62149a05dcef8bf17eca4 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 10:47:21 +0000
+Subject: [PATCH 22/22] Vizzbox 1.1: 22 new subgenres and the genre AFRO &
+ LATIN, CC 110 (BRIEF-VIZZBOX-1.1.md 4, 5)
+
+Every subgenre of the brief's list, each a row of VB_SUB from the generators there are (tempo, swing, form, raster,
+bass, chord, lead and arp styles and their sound lists): HOUSE PROG HOUSE, BASS HOUSE; TECHNO ACID TECHNO, INDUSTRIAL;
+ELECTRO NU-DISCO, DARKSYNTH; TRANCE HARD TRANCE; BREAKS BASSLINE, GRIME, JERSEY CLUB; DRUM & BASS HALFTIME; DUBSTEP
+RIDDIM, FUTURE BASS; HIP-HOP DRILL, PHONK; AMBIENT TRIP-HOP; HARD HARDCORE, FRENCHCORE; and after HARD the genre
+AFRO & LATIN: AMAPIANO, AFROBEATS, REGGAETON, BAILE FUNK. Six drum rasters where the style needs its own (amapiano,
+afrobeats, dembow, drill, jersey club, tamborzao) and hat rolls as trap's (VF_ROLL: drill, phonk, future bass). Two
+sound lists measured as 1.0's (tools/vizzbox_pick.py now keeps every sound and list there is and appends): a log drum
+for amapiano, bells for phonk and drill. The 36 of 1.0 keep their genre and subgenre numbers (CC 108 / 109, the
+favourites) and their place in VB_SUB (their random streams, their trims): the new come after them (vb_rig, vb_gof),
+their levels by tools/vizzbox_level.py (the new only). ENDLESS: from a new subgenre to every tempo neighbour, from one
+of 1.0's among 1.0's only (their songs). CC 110 on channel 16: the FX layer's effect held (the user's first, else the
+producer's), 1..14 in the keys' order, 0 none; when it changes and on each bar's one after the six. The knobs' big
+value in M when the big face lacks a character ("AFRO & LATIN", 1.0's "DRUM & BASS"), as Skiff's cards set it.
+
+tests/producer_test.c: every new subgenre in every LENGTH as 1.0's, ENDLESS 30 min from AMAPIANO (its neighbours new
+and old; a drop's kick counted from its CC 104's render chunk: after a tempo glide the tracks can step into the bar a
+block before Skiff's launch clock, as in 1.0), cc110; tests/vizzbox_golden.c leaves CC 110 out (1.0 never sends it);
+tests/vizzbox_budget.c over all 58; tests/vizzbox_fuzz.c (1.1) the pages, the focus, the layers held, MOMENTARY,
+PRESETS, given back, the GROOVEBOX between, the genres to AFRO & LATIN; tests/vizzbox_mutants.py: a new subgenre
+moving an old number. tools/vizzbox_demos.py: the firmware's counts, "new" for the new ones, the README's rows of
+those not rendered kept; tools/vizzbox_render.c names a style by vb_rig.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/producer.c        |  23 +++--
+ firmware/src/producer_isr.c    |  14 +++
+ firmware/src/producer_tables.c | 155 ++++++++++++++++++++++++++++++---
+ firmware/src/ui_vizzbox.c      |  25 +++---
+ tests/producer_test.c          |  91 +++++++++++++++----
+ tests/run_tests.sh             |   4 +-
+ tests/vizzbox_budget.c         |  15 ++--
+ tests/vizzbox_fuzz.c           | 138 +++++++++++++++++++++++++++--
+ tests/vizzbox_golden.c         |   2 +
+ tests/vizzbox_mutants.py       |   8 +-
+ tools/vizzbox_demos.py         |  78 ++++++++++++-----
+ tools/vizzbox_level.py         |  28 +++---
+ tools/vizzbox_pick.py          |  32 +++++--
+ tools/vizzbox_render.c         |   8 +-
+ 14 files changed, 508 insertions(+), 113 deletions(-)
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index c70d44b..91c6e09 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -154,8 +154,8 @@ static void vb_hit(uint32_t i, uint32_t lane, uint32_t vel)
+ }
+ 
+ /* -------------------------------------------------------- the song --- */
+-static const vb_sub_t *vb_sub(void) { return &VB_SUB[vb.ri % 36u]; }
+-static uint32_t vb_ri(const vb_song_t *s) { return (vb_sub0(s->genre % 10u) + s->sub) % 36u; }
++static const vb_sub_t *vb_sub(void) { return &VB_SUB[vb.ri % VB_NALL]; }
++static uint32_t vb_ri(const vb_song_t *s) { return vb_rig(s->genre, s->sub); }
+ static uint32_t vb_tempo_of(const vb_song_t *s)     /* a song's tempo: its subgenre's for its seed, or the knob's */
+ {
+     const vb_sub_t *u = &VB_SUB[vb_ri(s)];
+@@ -506,7 +506,7 @@ static void vb_drums(uint32_t e)
+         if (lanes & 1u)
+             vb_hit(0, LN_KICK, 120u);
+     }
+-    if (u->grid == G_TRAP && e >= 45u)               /* trap: hat rolls (a step's ratchet x2 .. x4) */
++    if ((u->grid == G_TRAP || (u->flags & VF_ROLL)) && e >= 45u)   /* trap: hat rolls (a step's ratchet x2 .. x4) */
+         for (i = 0; i < 2u; i++) {
+             uint32_t s = 2u + 4u * vb_below(4u) + (vb_pct(50) ? 1u : 0u);
+             if (vb_o[s].hit == 1u << LN_HATC || (!vb_o[s].hit && vb_pct(60))) {
+@@ -1402,22 +1402,21 @@ static void vb_advance(void)
+  * genre twice as likely. Onto the knobs, as a turn of them would put it */
+ static void vb_related(void)
+ {
+-    uint8_t c[72];
+-    uint32_t i, n = 0, g;
++    uint8_t c[2u * VB_NALL];
++    uint32_t i, n = 0, g, s, all = vb.ri < 36u ? 36u : VB_NALL;   /* ((1.1) from one of 1.0's subgenres 1.0's
++                                                     * neighbours, so its songs stay; from a new one any) */
+     vb_stream(VR_PLAN, vb.nsec, 2u);
+-    for (i = 0; i < 36u; i++)
++    for (i = 0; i < all; i++)
+         if (i != vb.ri && VB_SUB[i].bpm0 <= vb.bpm + 8u && VB_SUB[i].bpm1 + 8u >= vb.bpm) {
+             c[n++] = (uint8_t)i;
+-            if (i >= vb_sub0(vb.s.genre) && i < vb_sub0(vb.s.genre) + VB_NSUB[vb.s.genre % 10u])
++            if (vb_gof(i, &s) == vb.s.genre % VB_NGEN)
+                 c[n++] = (uint8_t)i;
+         }
+     if (!n)
+         return;
+-    i = c[vb_below(n)];
+-    for (g = 0; g < 9u && i >= vb_sub0(g + 1u); g++)
+-        ;
++    g = vb_gof(c[vb_below(n)], &s);
+     vb.k.genre = (uint8_t)g;
+-    vb.k.sub = (uint8_t)(i - vb_sub0(g));
++    vb.k.sub = (uint8_t)s;
+     vb.k.bpm = 0;
+     vb.endl = 1;
+     vb.chg |= 2u;
+@@ -1652,7 +1651,7 @@ static uint32_t vb_pre(uint32_t en, uint32_t pre)   /* a preset index the engine
+ }
+ static uint32_t vb_lvl_of(uint32_t k)               /* track k's level in the song: its sound's, the subgenre's trim */
+ {
+-    return (uint32_t)clamp((int32_t)VB_SND[vb.snd[k] % NELEM(VB_SND)].lvl + VB_TRIM[vb.ri % 36u], 0, 127);
++    return (uint32_t)clamp((int32_t)VB_SND[vb.snd[k] % NELEM(VB_SND)].lvl + VB_TRIM[vb.ri % VB_NALL], 0, 127);
+ }
+ /* (1.1) the hand on track k into p, the producer's values for it: a sound the user chose stays as it is (but the song's
+  * key, for the keys), a parameter they turned too (BRIEF-VIZZBOX-1.1.md 2) */
+diff --git a/firmware/src/producer_isr.c b/firmware/src/producer_isr.c
+index 339d82c..ee4a0b2 100644
+--- a/firmware/src/producer_isr.c
++++ b/firmware/src/producer_isr.c
+@@ -33,6 +33,7 @@ static volatile uint8_t vb_run __attribute__((section(".pool")));
+ static uint8_t vb_mode __attribute__((section(".pool")));                             /* main: 1 the VIZZBOX (its screen, its controls), 0 the GROOVEBOX */
+ static uint8_t vb_pg __attribute__((section(".pool")));      /* main: (1.1) the VIZZBOX's page (ui_vizzbox.c): VP_* */
+ enum { VP_SONG, VP_KLANG, VP_MOD };
++static uint8_t vb_fx110 __attribute__((section(".pool")));   /* (1.1) CC 110 as sent last */
+ static volatile uint8_t vb_resend __attribute__((section(".pool")));                  /* main: 1 the six again; 2 CC 104 0 once (it let go) */
+ static uint32_t vb_seen __attribute__((section(".pool")));   /* launch_steps + 1 of the step put into effect last */
+ static uint8_t vb_out __attribute__((section(".pool")));     /* SEQ MIDI OUT and USB as when the six went last */
+@@ -181,6 +182,16 @@ static __attribute__((noinline)) void vb_isr(void)
+             vb_cc(VB_CC + 1u, e);
+             vb_e = (uint8_t)e;
+         }
++        e = vb_ufx();                               /* ((1.1, BRIEF-VIZZBOX-1.1.md 5) CC 110: the FX layer's effect
++                                                     * held, the user's first, else the producer's: its key 1 .. 14, 0
++                                                     * none; when it changes and on each bar's one) */
++        for (i = 0; e && !(e & 1u); i++)
++            e >>= 1;
++        e = e ? i + 1u : vb_fxon;
++        if (e != vb_fx110 || !s) {
++            vb_cc(110u, e);
++            vb_fx110 = (uint8_t)e;
++        }
+     } else if (vb_out != o || vb_resend) {          /* (SEQ MIDI OUT on, USB up between two steps: all six now) */
+         e = vb_e;
+         for (i = 0; i < 6u; i++)
+@@ -196,6 +207,9 @@ static void vb_isr_stop(void)
+         return;
+     if (song.playing)
+         vb_cc(VB_CC, 0);
++    if (vb_fx110)                                   /* ((1.1) CC 110: none now) */
++        vb_cc(110u, 0);
++    vb_fx110 = 0;
+     vb_hold_fx(PF_N);
+     if (!vb_held(&perf_k[0]))                       /* ((1.1) the user's macros stay theirs) */
+         perf_k[0] = 0;
+diff --git a/firmware/src/producer_tables.c b/firmware/src/producer_tables.c
+index 299e635..f77dfe0 100644
+--- a/firmware/src/producer_tables.c
++++ b/firmware/src/producer_tables.c
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: GPL-3.0-only */
+ /* (Vizzbox) The producer's knowledge (producer.c): 10 genres, 36 subgenres, each a row of numbers, no code of its own
+- * (BRIEF-VIZZBOX.md 4; the brief's text says 37, its table and docs/VIZZBOX.md list 36). What a row names lives in the
++ * (BRIEF-VIZZBOX.md 4; the brief's text says 37, its table and docs/VIZZBOX.md list 36); (1.1) 11 genres, 58
++ * subgenres (BRIEF-VIZZBOX-1.1.md 4), the new after 1.0's. What a row names lives in the
+  * shared tables after it: the drum rasters, the chord progressions, the sounds. Included by producer.c */
+ 
+ /* --------------------------------------------------------- the rasters --- */
+@@ -15,7 +16,9 @@
+ #define D0 0u
+ enum { G_HOUSE, G_TECHH, G_909, G_DISCO, G_AFRO, G_MINIMAL, G_DUBT, G_HARDT, G_ELECTRO, G_SYNTHW, G_TRANCE, G_PSY,
+        G_BREAKS, G_2STEP, G_SPEEDG, G_DNB, G_JUNGLE, G_HALF, G_BOOMBAP, G_TRAP, G_ONEDROP, G_HARDST, G_GABBER,
+-       G_DOWNT, G_AMBIENT, G_LOFI, G_N };
++       G_DOWNT, G_AMBIENT, G_LOFI,
++       G_AMAPI, G_AFROB, G_DEMBOW, G_DRILL, G_JERSEY, G_TAMBOR,   /* ((1.1) after 1.0's: theirs keep their numbers) */
++       G_N };
+ static const uint32_t VB_GRID[G_N][NLANE] = {
+     [G_HOUSE] = {   /* deep house: 4/4, clap 2 + 4, the open hat off the beat, light 16ths */
+         DG(3,0,0,0, 3,0,0,0, 3,0,0,0, 3,0,0,0), D0, DG(0,0,0,0, 3,0,0,0, 0,0,0,0, 3,0,0,1),
+@@ -117,6 +120,31 @@ static const uint32_t VB_GRID[G_N][NLANE] = {
+     [G_LOFI] = {    /* lo-fi: a lazy kick, the snare 2 + 4, swung hats */
+         DG(3,0,0,0, 0,0,0,0, 0,2,0,0, 0,0,0,0), DG(0,0,0,0, 3,0,0,0, 0,0,0,0, 3,0,0,0), D0,
+         DG(2,0,1,0, 2,0,1,0, 2,0,1,0, 2,0,1,1), D0, D0, DG(0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,0), D0},
++    /* (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 4) */
++    [G_AMAPI] = {   /* amapiano: a sparse kick, the shaker in 16ths (HAT CL), rim and wood (RIM, TOM), claps off the
++                     * beat; the log drum carries it (the bass) */
++        DG(3,0,0,0, 0,0,0,0, 3,0,0,0, 0,0,0,1), D0, DG(0,0,0,0, 0,0,0,3, 0,0,0,0, 0,0,0,2),
++        DG(2,1,3,1, 2,1,3,1, 2,1,3,1, 2,1,3,1), D0, DG(0,0,0,0, 0,0,0,0, 0,0,0,1, 0,1,0,0),
++        DG(0,0,0,3, 0,0,2,0, 0,0,0,3, 0,0,2,0), D0},
++    [G_AFROB] = {   /* afrobeats: a syncopated kick, rim and snare off the beat, the shaker, congas (TOM) */
++        DG(3,0,0,2, 0,0,0,0, 3,0,0,2, 0,0,1,0), DG(0,0,0,0, 0,0,0,0, 0,0,0,0, 3,0,0,0), DG(0,0,0,0, 3,0,0,0, 0,0,0,0, 0,0,0,0),
++        DG(2,1,2,1, 2,1,2,1, 2,1,2,1, 2,1,2,1), D0, DG(0,0,2,0, 0,1,0,0, 0,0,2,0, 0,1,0,1),
++        DG(0,0,0,0, 0,0,3,0, 0,0,0,0, 0,0,3,0), D0},
++    [G_DEMBOW] = {  /* reggaeton's dembow: the kick on every beat, the snare on its "a" and the next "and" */
++        DG(3,0,0,0, 3,0,0,0, 3,0,0,0, 3,0,0,0), DG(0,0,0,3, 0,0,3,0, 0,0,0,3, 0,0,3,0), D0,
++        DG(2,0,2,0, 2,0,2,0, 2,0,2,0, 2,0,2,1), D0, DG(0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1), DG(0,0,0,0, 0,0,0,0, 0,1,0,0, 0,0,0,0),
++        D0},
++    [G_DRILL] = {   /* drill: half time, the snare on 3 and the late 4, sliding kicks off the beat, hats in threes
++                     * (rolls: VF_ROLL) */
++        DG(3,0,0,0, 0,0,0,2, 0,0,2,0, 0,0,0,0), DG(0,0,0,0, 0,0,0,0, 3,0,0,0, 0,2,0,0), DG(0,0,0,0, 0,0,0,0, 2,0,0,0, 0,0,0,0),
++        DG(3,0,0,2, 0,0,3,0, 0,2,0,0, 3,0,2,0), D0, D0, DG(0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1), D0},
++    [G_JERSEY] = {  /* jersey club: the kick in threes (the bounce), the clap 2 + 4, a light hat */
++        DG(3,0,0,3, 0,0,3,0, 3,0,0,3, 0,0,3,0), D0, DG(0,0,0,0, 3,0,0,0, 0,0,0,0, 3,0,0,0),
++        DG(2,0,1,0, 2,0,1,0, 2,0,1,0, 2,0,1,0), D0, D0, DG(0,0,0,0, 0,0,0,0, 0,0,0,0, 0,1,0,1), D0},
++    [G_TAMBOR] = {  /* baile funk's tamborzao: kick and conga (TOM) in its stutter, the clap on 2 and 4 */
++        DG(3,0,0,3, 0,0,0,0, 3,0,3,0, 0,0,0,0), D0, DG(0,0,0,0, 3,0,0,0, 0,0,0,0, 3,0,0,0),
++        DG(2,0,1,0, 2,0,1,0, 2,0,1,0, 2,0,1,0), D0, DG(0,0,2,0, 0,0,3,0, 0,0,0,0, 2,0,3,0), DG(0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,1),
++        D0},
+ };
+ 
+ /* ------------------------------------------------------- progressions --- */
+@@ -248,6 +276,12 @@ static const vb_snd_t VB_SND[] = {
+     {11, 1, 100, 19},   /* RAIN (fx) */
+     {5, 3, 93, 78},   /* WHISPER (fx) */
+     {11, 6, 101, 78},   /* PLASMA (fx) */
++    {0, 19, 103, 3},   /* SYN TOM (bass) */
++    {9, 6, 101, 3},   /* TOMS (bass) */
++    {9, 5, 109, 3},   /* HAND DRUM (bass) */
++    {6, 3, 110, 9},   /* RING BELL (lead) */
++    {4, 6, 101, 9},   /* MUSIC BOX (lead) */
++    {3, 7, 101, 3},   /* CHIP BELL (lead) */
+ };
+ /* each drum kit of VB_SND (its index), its lanes' ring in 32 ms (KICK .. BELL) */
+ static const vb_kit_t VB_KIT[] = {
+@@ -311,12 +345,15 @@ static const uint8_t VB_LIST[][4] = {
+     {92, 93, 94, 95},   /* 35 fx: wind */
+     {96, 97, 98, 93},   /* 36 fx: rain, ocean */
+     {99, 92, 94, 255},   /* 37 fx: metal, plasma */
++    {100, 101, 102, 34},   /* 38 bass: log drum: a pitch that falls */
++    {103, 104, 105, 255},   /* 39 lead: bells, cowbell */
+ };
+ /* END GENERATED */
+ /* BEGIN LEVEL by tools/vizzbox_level.py from the demos' loudness: do not edit */
+ /* each subgenre's trim on all six tracks' levels (P_LEVEL steps, 0.5 dB): its demo at the common loudness (BRIEF 3.6) */
+-static const int8_t VB_TRIM[36] = {0, 5, 8, 8, 1, 8, -4, 3, 0, 4, 2, 3, 8, 2, 8, 6, 4, 4, 1, 8, 7, -2, -1, 3, 8, -1,
+-                                   4, 8, 6, 2, -5, -7, 5, 7, -1, 5};
++static const int8_t VB_TRIM[] = {0, 5, 8, 8, 1, 8, -4, 3, 0, 4, 2, 3, 8, 2, 8, 6, 4, 4, 1, 8, 7, -2, -1, 3, 8, -1, 4,
++                                 8, 6, 2, -5, -7, 5, 7, -1, 5, 6, 5, 8, 2, 8, 0, 0, -2, 8, -5, -3, 4, 2, -6, 1, -8, 0,
++                                 0, 8, 8, -7, -6};
+ /* END LEVEL */
+ 
+ /* ----------------------------------------------------------- subgenres --- */
+@@ -337,6 +374,7 @@ enum { AR_NONE, AR_UP, AR_DOWN, AR_UPDN, AR_RND, AR_LOOP };          /* arp mode
+ #define VF_ACIDB 128u         /* the bass is the lead (its filter moves) */
+ #define VF_VINYL 256u         /* VINYL (the FX layer's) all the time */
+ #define VF_FILT 512u          /* the chords' filter moves a lot (filter house) */
++#define VF_ROLL 1024u         /* (1.1) hat rolls, as trap's (drill, phonk, future bass) */
+ typedef struct {
+     uint8_t bpm0, bpm1, swing;      /* tempo range; G_SWING (0 straight .. 60: 62 %) */
+     uint8_t form;                   /* FO_* */
+@@ -365,10 +403,16 @@ static const uint8_t VB_SCALES[][2] = {
+     {1, 2},   /* 7 major, minor */
+     {2, 8},   /* 8 minor, phrygian */
+ };
+-static const char *const VB_GNAME[10] = {"HOUSE", "TECHNO", "ELECTRO", "TRANCE", "BREAKS", "DRUM & BASS", "DUBSTEP",
+-                                         "HIP-HOP", "AMBIENT", "HARD"};
+-static const uint8_t VB_NSUB[10] = {6, 6, 3, 4, 3, 4, 2, 3, 3, 2};
+-static const char *const VB_SNAME[36] = {
++/* (1.1, BRIEF-VIZZBOX-1.1.md 4) the genres and their subgenres: 1.0's numbers as they were (VB_SUB's first 36, genre by
++ * genre: VB_NSUB10), the new ones after them, genre by genre again (a genre's after its 1.0 ones), a new genre after
++ * HARD; a song's stream and its ENDLESS neighbours keyed by the VB_SUB index, so 1.0's songs stay bit for bit */
++static const char *const VB_GNAME[] = {"HOUSE", "TECHNO", "ELECTRO", "TRANCE", "BREAKS", "DRUM & BASS", "DUBSTEP",
++                                       "HIP-HOP", "AMBIENT", "HARD", "AFRO & LATIN"};
++static const uint8_t VB_NSUB10[10] = {6, 6, 3, 4, 3, 4, 2, 3, 3, 2};
++static const uint8_t VB_NSUB[] = {8, 8, 5, 5, 6, 5, 4, 5, 4, 4, 4};
++#define VB_NGEN NELEM(VB_NSUB)
++_Static_assert(NELEM(VB_GNAME) == VB_NGEN, "a name a genre");
++static const char *const VB_SNAME[] = {
+     "DEEP HOUSE", "TECH HOUSE", "ACID HOUSE", "FILTER HOUSE", "AFRO HOUSE", "DISCO HOUSE",
+     "MINIMAL", "PEAK-TIME", "DUB TECHNO", "HARD TECHNO", "DETROIT", "MELODIC TECHNO",
+     "ELECTRO", "SYNTHWAVE", "ITALO DISCO",
+@@ -378,14 +422,18 @@ static const char *const VB_SNAME[36] = {
+     "DEEP DUBSTEP", "BROSTEP",
+     "BOOM BAP", "LO-FI", "TRAP",
+     "AMBIENT", "CHILL", "DUB",
+-    "HARDSTYLE", "GABBER"};
++    "HARDSTYLE", "GABBER",
++    /* (1.1) */
++    "PROG HOUSE", "BASS HOUSE", "ACID TECHNO", "INDUSTRIAL", "NU-DISCO", "DARKSYNTH", "HARD TRANCE", "BASSLINE", "GRIME",
++    "JERSEY CLUB", "HALFTIME", "RIDDIM", "FUTURE BASS", "DRILL", "PHONK", "TRIP-HOP", "HARDCORE", "FRENCHCORE",
++    "AMAPIANO", "AFROBEATS", "REGGAETON", "BAILE FUNK"};
+ #define R_D 0
+ #define R_B 1
+ #define R_C 2
+ #define R_L 3
+ #define R_A 4
+ #define R_F 5
+-static const vb_sub_t VB_SUB[36] = {
++static const vb_sub_t VB_SUB[] = {
+     /* HOUSE */
+     {120, 124, 20, FO_D, VF_4 | VF_KO1, 0, G_HOUSE, 0, BS_ROOT, 9, 12, 10, 2, CR_PAD, 5, 17, LS_SPARSE, 23, AR_NONE, 30, 35,
+      IO(R_D, R_B, R_C, R_F), 0x14},
+@@ -468,12 +516,95 @@ static const vb_sub_t VB_SUB[36] = {
+      30, 37, IO(R_D, R_B, R_C, R_L), 0x12},
+     {170, 190, 0, FO_T, VF_4 | VF_KO1 | VF_TAPE, 1, G_GABBER, 5, BS_NONE, 13, 0, 0, 4, CR_NONE, 1, 20, LS_BIG, 24, AR_NONE,
+      30, 37, IO(R_D, R_L, R_F, R_C), 0x11},
++    /* (1.1, BRIEF-VIZZBOX-1.1.md 4: its table's 22 in its order of the genres; VB_LIST 38 the log drum, 39 bells) */
++    /* HOUSE: PROG HOUSE, BASS HOUSE */
++    {124, 128, 0, FO_D, VF_4 | VF_KO1 | VF_SIL, 0, G_TRANCE, 0, BS_OFF, 13, 1, 12, 2, CR_PAD, 3, 17, LS_NONE, 23, AR_UPDN,
++     34, 35, IO(R_D, R_B, R_A, R_C), 0x13},
++    {124, 128, 10, FO_D, VF_4 | VF_KO2, 1, G_TECHH, 1, BS_SYNC, 12, 0, 0, 4, CR_STAB, 1, 20, LS_STAB, 24, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_L, R_F), 0x12},
++    /* TECHNO: ACID TECHNO, INDUSTRIAL */
++    {135, 145, 0, FO_T, VF_4 | VF_ACIDB | VF_KO2, 1, G_909, 5, BS_ACID, 10, 0, 0, 4, CR_NONE, 1, 20, LS_NONE, 23, AR_NONE,
++     30, 37, IO(R_D, R_B, R_F, R_C), 0x12},
++    {128, 138, 0, FO_T, VF_4 | VF_KO1, 3, G_HARDT, 5, BS_ROLL, 13, 11, 0, 4, CR_NONE, 1, 20, LS_STAB, 29, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_F, R_L), 0x11},
++    /* ELECTRO: NU-DISCO, DARKSYNTH */
++    {115, 122, 20, FO_V, VF_4 | VF_KO1, 7, G_DISCO, 0, BS_OCT, 9, 6, 14, 1, CR_STAB, 4, 20, LS_RIFF, 23, AR_NONE, 30, 35,
++     IO(R_D, R_B, R_C, R_L), 0x13},
++    {100, 125, 0, FO_D, VF_KO1, 6, G_SYNTHW, 5, BS_ROLL, 13, 3, 12, 2, CR_PAD, 3, 21, LS_HOOK, 24, AR_UP, 30, 37,
++     IO(R_D, R_B, R_A, R_L), 0x12},
++    /* TRANCE: HARD TRANCE */
++    {140, 150, 0, FO_H, VF_4 | VF_KO2 | VF_SIL, 6, G_TRANCE, 5, BS_OFF, 13, 3, 5, 2, CR_GATE, 3, 17, LS_BIG, 24, AR_NONE,
++     30, 37, IO(R_D, R_B, R_L, R_C), 0x13},
++    /* BREAKS: BASSLINE, GRIME, JERSEY CLUB */
++    {134, 140, 30, FO_D, VF_4 | VF_KO1, 1, G_SPEEDG, 0, BS_WOB, 16, 0, 9, 4, CR_STAB, 3, 22, LS_STAB, 24, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_C, R_L), 0x12},
++    {138, 142, 0, FO_V, VF_HALF, 1, G_HALF, 6, BS_ROOT, 9, 11, 9, 2, CR_NONE, 1, 20, LS_RIFF, 25, AR_UP | 0x80, 34, 37,
++     IO(R_D, R_B, R_L, R_A), 0x11},
++    {138, 145, 0, FO_V, 0, 1, G_JERSEY, 2, BS_SUB, 11, 1, 12, 2, CR_PLUCK, 3, 18, LS_NONE, 23, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_C, R_F), 0x12},
++    /* DRUM & BASS: HALFTIME */
++    {170, 175, 0, FO_N, VF_HALF | VF_KO1 | VF_SIL, 1, G_HALF, 6, BS_REESE, 12, 0, 9, 4, CR_PAD, 3, 21, LS_SPARSE, 27,
++     AR_NONE, 31, 36, IO(R_F, R_C, R_D, R_B), 0x13},
++    /* DUBSTEP: RIDDIM, FUTURE BASS */
++    {140, 150, 0, FO_S, VF_HALF | VF_SIL, 1, G_HALF, 5, BS_WOB, 16, 0, 0, 4, CR_NONE, 1, 20, LS_NONE, 24, AR_NONE, 30, 37,
++     IO(R_F, R_D, R_B, R_C), 0x11},
++    {140, 160, 0, FO_S, VF_HALF | VF_SIL | VF_ROLL, 7, G_HALF, 2, BS_SUB, 11, 7, 14, 2, CR_GATE, 5, 17, LS_HOOK, 23,
++     AR_NONE, 34, 36, IO(R_C, R_D, R_B, R_L), 0x14},
++    /* HIP-HOP: DRILL, PHONK */
++    {138, 145, 0, FO_V, VF_HALF | VF_SIL | VF_ROLL, 6, G_DRILL, 2, BS_808, 11, 2, 8, 2, CR_PAD, 3, 21, LS_SPARSE, 39,
++     AR_NONE, 31, 37, IO(R_D, R_B, R_C, R_L), 0x12},
++    {130, 145, 0, FO_V, VF_HALF | VF_SIL | VF_ROLL, 8, G_TRAP, 2, BS_808, 13, 11, 11, 2, CR_NONE, 1, 20, LS_HOOK, 39,
++     AR_NONE, 30, 37, IO(R_D, R_L, R_B, R_F), 0x11},
++    /* AMBIENT: TRIP-HOP */
++    {80, 95, 30, FO_V, VF_VINYL, 1, G_DOWNT, 3, BS_SUB, 11, 5, 12, 2, CR_PAD, 4, 17, LS_SPARSE, 26, AR_LOOP, 33, 36,
++     IO(R_C, R_A, R_D, R_B), 0x14},
++    /* HARD: HARDCORE, FRENCHCORE */
++    {165, 180, 0, FO_H, VF_4 | VF_KO1 | VF_SIL, 4, G_GABBER, 5, BS_NONE, 13, 7, 14, 2, CR_PIANO, 3, 19, LS_BIG, 24,
++     AR_NONE, 30, 37, IO(R_D, R_C, R_L, R_F), 0x12},
++    {190, 200, 0, FO_H, VF_4 | VF_KO1 | VF_TAPE, 6, G_GABBER, 5, BS_NONE, 13, 13, 1, 2, CR_PAD, 3, 21, LS_BIG, 23,
++     AR_NONE, 30, 37, IO(R_D, R_C, R_L, R_F), 0x12},
++    /* AFRO & LATIN (a genre of its own): AMAPIANO, AFROBEATS, REGGAETON, BAILE FUNK */
++    {110, 116, 30, FO_V, 0, 7, G_AMAPI, 4, BS_SYNC, 38, 6, 14, 2, CR_PIANO, 5, 19, LS_NONE, 23, AR_UP | 0x80, 34, 35,
++     IO(R_D, R_B, R_C, R_A), 0x14},
++    {100, 112, 25, FO_V, 0, 4, G_AFROB, 4, BS_SYNC, 9, 7, 14, 2, CR_STAB, 4, 18, LS_HOOK, 26, AR_NONE, 34, 35,
++     IO(R_D, R_B, R_C, R_L), 0x13},
++    {88, 100, 0, FO_V, 0, 1, G_DEMBOW, 2, BS_808, 11, 1, 5, 2, CR_PLUCK, 3, 18, LS_HOOK, 23, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_C, R_L), 0x12},
++    {125, 135, 0, FO_V, 0, 1, G_TAMBOR, 2, BS_808, 11, 0, 0, 4, CR_NONE, 1, 20, LS_NONE, 29, AR_NONE, 30, 37,
++     IO(R_D, R_B, R_F, R_L), 0x11},
+ };
+-/* each genre's first subgenre (VB_SUB index) */
++#define VB_NALL NELEM(VB_SUB)
++_Static_assert(NELEM(VB_SNAME) == VB_NALL && NELEM(VB_TRIM) == VB_NALL, "a name and a trim a subgenre");
++/* each genre's first subgenre of 1.0 (VB_SUB index) */
+ static uint32_t vb_sub0(uint32_t g)
+ {
+     uint32_t i, n = 0;
+     for (i = 0; i < g && i < 10u; i++)
+-        n += VB_NSUB[i];
++        n += VB_NSUB10[i];
+     return n;
+ }
++/* (1.1) genre g's subgenre s: its VB_SUB index (1.0's where they were, the new from 36 on) */
++static uint32_t vb_rig(uint32_t g, uint32_t s)
++{
++    uint32_t i, n = 36u, old;
++    g %= VB_NGEN;
++    old = g < 10u ? VB_NSUB10[g] : 0u;
++    if (s < old)
++        return vb_sub0(g) + s;
++    for (i = 0; i < g; i++)
++        n += VB_NSUB[i] - (i < 10u ? VB_NSUB10[i] : 0u);
++    return (n + s - old) % VB_NALL;
++}
++/* .. and back: VB_SUB index ri's genre, *s its subgenre there */
++static uint32_t vb_gof(uint32_t ri, uint32_t *s)
++{
++    uint32_t g, k;
++    for (g = 0; g < VB_NGEN; g++)
++        for (k = 0; k < VB_NSUB[g]; k++)
++            if (vb_rig(g, k) == ri) {
++                *s = k;
++                return g;
++            }
++    *s = 0;
++    return 0;
++}
+diff --git a/firmware/src/ui_vizzbox.c b/firmware/src/ui_vizzbox.c
+index 3444fcf..b612ffd 100644
+--- a/firmware/src/ui_vizzbox.c
++++ b/firmware/src/ui_vizzbox.c
+@@ -110,7 +110,8 @@ typedef struct {
+     int16_t g[VB_NG];
+     uint32_t crc;
+ } vb_xfav_t;
+-_Static_assert(sizeof(vb_favs_t) <= VB_XOFF && VB_XOFF + VB_NFAV * sizeof(vb_xfav_t) <= ST_SECTOR, "a favourites' sector");
++_Static_assert(sizeof(vb_favs_t) <= VB_XOFF && VB_XOFF + VB_NFAV * sizeof(vb_xfav_t) <= 0xF00u,
++               "a favourites' sector, its +0xF00 left alone (where the update loader looks for its record)");
+ static vb_xfav_t vb_xf[VB_NFAV] __attribute__((section(".vbox")));   /* (after .bss: vb_fav_load sets it) */
+ static uint32_t vb_xcrc(const vb_xfav_t *x) { return st_crc32(x, sizeof *x - 4u) ^ 0x31584256u; }
+ static void vb_fav_load(void)
+@@ -239,11 +240,11 @@ static void vb_knob(uint32_t o, int32_t s)
+     int live = vb.own && song.playing;
+     uint32_t chg = 2u;
+     if (o == VO_GENRE) {
+-        w->genre = (uint8_t)clamp((int32_t)w->genre + s, 0, 9);
++        w->genre = (uint8_t)clamp((int32_t)w->genre + s, 0, (int32_t)VB_NGEN - 1);
+         w->sub = 0;
+         w->bpm = 0;                                 /* (the new style's own tempo) */
+     } else if (o == VO_SUB) {
+-        w->sub = (uint8_t)clamp((int32_t)w->sub + s, 0, VB_NSUB[w->genre % 10u] - 1);
++        w->sub = (uint8_t)clamp((int32_t)w->sub + s, 0, VB_NSUB[w->genre % VB_NGEN] - 1);
+         w->bpm = 0;
+     } else if (o == VO_ENERGY || o == VO_VAR) {
+         uint8_t *v = o == VO_ENERGY ? &w->energy : &w->var;
+@@ -329,7 +330,7 @@ static void vb_white(uint32_t pressed)
+             vb_xsave(n);
+             vb_fav_dirty = 1;
+             str_cpy(b, "FAVOURITE    SAVED", sizeof b);
+-        } else if (vb_fav.f[n].genre < 10u) {
++        } else if (vb_fav.f[n].genre < VB_NGEN) {
+             vb.k = vb_fav.f[n];
+             if (vb_xf[n].crc && !vb.own && song.playing)
+                 vb_xwait = (uint8_t)(n + 1u);
+@@ -666,8 +667,8 @@ static void vb_favs(int32_t y)
+         const vb_song_t *f = &vb_fav.f[i];
+         p = vb_num(b, i + 1u);
+         *p++ = vb_xf[i].crc ? '+' : ' ';             /* ((1.1) +: with sounds) */
+-        str_cpy(p, f->genre < 10u ? VB_SNAME[vb_ri(f)] : "-", 18);
+-        cv_text(8 + 116 * (int32_t)(i / 8u), y + 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < 10u ? T_TEXT : T_DIM);
++        str_cpy(p, f->genre < VB_NGEN ? VB_SNAME[vb_ri(f)] : "-", 18);
++        cv_text(8 + 116 * (int32_t)(i / 8u), y + 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < VB_NGEN ? T_TEXT : T_DIM);
+     }
+ }
+ /* (1.1) FX, ARP tapped (ui_layer.c layer_tap, on the release): DROP NOW, BREAK NOW */
+@@ -701,7 +702,7 @@ static int vb_draw(void)
+         vb_ov = VO_NONE;
+     /* above */
+     cv_begin(240, 120, T_BG);
+-    cv_text(8, 4, &AF_S, VB_GNAME[w->genre % 10u], T_MID);
++    cv_text(8, 4, &AF_S, VB_GNAME[w->genre % VB_NGEN], T_MID);
+     cv_text_r(232, 4, &AF_S, VB_LEN[w->len % 3u], T_MID, T_BG);
+     cv_text(8, 18, &AF_V, VB_SNAME[vb_ri(w)], T_TEXT);
+     p = vb_num(b, vb.bpm);
+@@ -739,7 +740,7 @@ static int vb_draw(void)
+         cv_text(8, 4, &AF_M, NAME[vb_ov % 8u], T_MID);
+         b[0] = 0;
+         if (vb_ov == VO_GENRE)
+-            str_cpy(b, VB_GNAME[vb.k.genre % 10u], sizeof b);
++            str_cpy(b, VB_GNAME[vb.k.genre % VB_NGEN], sizeof b);
+         else if (vb_ov == VO_SUB)
+             str_cpy(b, VB_SNAME[vb_ri(&vb.k)], sizeof b);
+         else if (vb_ov == VO_LEN)
+@@ -748,7 +749,11 @@ static int vb_draw(void)
+             vb_hex(b, vb.k.seed);
+         else
+             vb_num(b, vb_ov == VO_ENERGY ? vb.k.energy : vb_ov == VO_VAR ? vb.k.var : vb.k.bpm ? vb.k.bpm : vb.bpm);
+-        cv_text(8, 28, &AF_V, b, T_ACCENT);
++        if (face_has(&AF_V, b))                     /* ((1.1) a character the big face lacks ("AFRO & LATIN", "DRUM &
++                                                     * BASS"): in M, as Skiff's cards set such a value) */
++            cv_text(8, 28, &AF_V, b, T_ACCENT);
++        else
++            cv_text(8, 34, &AF_M, b, T_ACCENT);
+         if (vb.own && song.playing && vb_ov != VO_TEMPO)
+             cv_text(8, 64, &AF_S, "FROM THE NEXT SECTION", T_MID);
+     } else                                          /* the six tracks */
+@@ -789,7 +794,7 @@ static void vb_leds(void)
+         if (key_black(k)) {                         /* (sounding: lit; (1.1) the focus track's: breathing, muted mid) */
+             int on = p < NTRK && !trk[p].p[P_MUTE] && !((perf_cut >> p) & 1u) && (!perf_solo || ((perf_solo >> p) & 1u));
+             led_put(p != song.sel ? nl : on ? nb : nm, LED_KEY0 + k, p != song.sel ? on : 1);
+-        } else if (p < VB_NFAV && vb_fav.f[p].genre < 10u)
++        } else if (p < VB_NFAV && vb_fav.f[p].genre < VB_NGEN)
+             led_put(list ? nl : nd, LED_KEY0 + k, 1);
+     }
+     if (song.playing)
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index 1e9671a..0c8d811 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -12,13 +12,15 @@
+  *   - PLAY: Start, Vizz' six CC 103, then the six; stop: CC 104 0; SEQ MIDI OUT OFF: none of it; the GROOVEBOX: none
+  *   - the knobs while playing: ENERGY and GENRE from the next section on; DROP NOW, BREAK NOW, HOLD
+  *   - the user's MUTE and SOLO: they silence, CC 103 says them, and only them (never the arrangement's pauses)
+- *   - ENDLESS for 60 minutes: related subgenres come, 8 BPM at most each time, the plan does not grow, no voice stolen
++ *   - ENDLESS for 60 minutes: related subgenres come, 8 BPM at most each time, the plan does not grow, no voice stolen;
++ *     (1.1) from one of 1.0's only 1.0's (its songs), from a new one (AMAPIANO) 30 minutes, its neighbours new and old
+  *   - favourites: stored, the unit off and on again (its flash kept), loaded, played: the same song, bit for bit
+  *   - VIZZBOX <-> GROOVEBOX, playing too: the song goes on; stopped in the GROOVEBOX, its music comes back
+  *   (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 9) the user's hand (hand_sound, hand_trip, hand_param, hand_perf, hand_notes);
+  *   the controls (pages, browse, keys, layers, momentary, leds); favourites with sounds (fav_sounds, its other half a
+  *   device booting in a process of its own: fav_boot); the budget with the user's sounds (tails, budget_user: their
+- *   tails, POLY, the keys, the engines' costs)
++ *   tails, POLY, the keys, the engines' costs); CC 110 (cc110); the new subgenres as 1.0's in song, ENDLESS from a new
++ *   one
+  *   producer_test [CASE]      (no CASE: all; prints "producer: all passed" or the failures) */
+ #define VIZZBOX 1
+ #include "../web/emu/felucca_web.c"
+@@ -162,9 +164,7 @@ static void case_song(uint32_t ri, uint32_t len)
+     const vb_sub_t *u = &VB_SUB[ri];
+     double secs;
+     int slice;
+-    for (g = 0; g < 9u && ri >= vb_sub0(g + 1u); g++)
+-        ;
+-    s = ri - vb_sub0(g);
++    g = vb_gof(ri, &s);                             /* ((1.1) its genre and number: producer_tables.c vb_rig) */
+     snprintf(tag, sizeof tag, "%s / %s %s", VB_GNAME[g], VB_SNAME[ri], len == 0 ? "SHORT" : len == 1 ? "NORMAL" : "ENDLESS");
+     boot();
+     knobs(g, s, 0x5EEDu + ri * 7u, 70, 40, len);
+@@ -527,23 +527,30 @@ static void case_mute(void)
+     ok(!perf_solo, "SOLO stayed");
+ }
+ 
+-/* ENDLESS for 60 minutes */
+-static void case_endless(void)
++/* ENDLESS for 60 minutes ((1.1) and from a new subgenre) */
++/* (1.1) from a subgenre of 1.0, 60 minutes: only 1.0's (its songs bit for bit); from AMAPIANO, 30: its tempo neighbours,
++ * the new and 1.0's */
++static void case_endless(uint32_t from_new)
+ {
+-    uint32_t b, changes = 0, maxplan = 0, last_ri, jump_ok = 1, t, bpm = 0;
+-    snprintf(tag, sizeof tag, "ENDLESS 60 min");
++    uint32_t b, changes = 0, maxplan = 0, last_ri, jump_ok = 1, t, bpm = 0, olds = 0, news = 0, mins = from_new ? 30u : 60u;
++    snprintf(tag, sizeof tag, "ENDLESS %u min from %s", mins, from_new ? "AMAPIANO" : "LIQUID");
+     boot();
+-    knobs(5, 0, 0xC0DEu, 70, 50, 2);
++    knobs(from_new ? 10 : 5, 0, 0xC0DEu, 70, 50, 2);
+     press(1u << B_PLAY);
+     last_ri = vb.ri;
+     bpm = vb.bpm;
+-    for (t = 0; t < 3600u; t++) {
++    for (t = 0; t < mins * 60u; t++) {
+         run_s(1.0);
+         if (vb.nplan > maxplan)
+             maxplan = vb.nplan;
+         if (vb.ri != last_ri && vb.sbar == 0u) {
+             changes++;
+             jump_ok &= vb.bpm + 8u >= bpm && vb.bpm <= bpm + 8u;
++            if (!from_new)
++                ok(vb.ri < 36u, "from a subgenre of 1.0 into a new one (%s)", VB_SNAME[vb.ri]);
++            olds += vb.ri < 36u;
++            news += vb.ri >= 36u;
++            from_new = vb.ri >= 36u ? from_new : 0;   /* (once in 1.0's: 1.0's neighbours) */
+             last_ri = vb.ri;
+             bpm = vb.bpm;
+         }
+@@ -553,7 +560,7 @@ static void case_endless(void)
+             break;
+     }
+     ok(song.playing, "ENDLESS stopped after %u s", t);
+-    ok(changes >= 5u, "%u subgenre changes in 60 minutes", changes);
++    ok(changes >= mins / 12u, "%u subgenre changes in %u minutes (1.0's %u, new %u)", changes, mins, olds, news);
+     ok(jump_ok, "a change glided more than 8 BPM");
+     ok(maxplan <= VB_PLAN, "the plan grew to %u", maxplan);
+     ok(voice_kills == 0, "%u voices stolen", voice_kills);
+@@ -565,7 +572,11 @@ static void case_endless(void)
+             if (bars[b].cc[0] == 4u && !bars[b].cc[2]) {   /* every DROP's one, after a new style too: the kick */
+                 uint32_t k = 0;
+                 drops++;
+-                for (i = bars[b].i; i < nev && ev[i].t <= ev[bars[b].i].t + 128u; i++)
++                for (i = bars[b].i; i && ev[i - 1u].t == ev[bars[b].i].t; i--)
++                    ;                               /* (from the render chunk of its CC 104: after a tempo glide the
++                                                     * tracks can step into the bar a block before the launch clock,
++                                                     * as in Skiff, their notes then before CC 104 in that chunk) */
++                for (; i < nev && ev[i].t <= ev[bars[b].i].t + 128u; i++)
+                     k |= ev[i].st == 0x90u && ev[i].d1 == 36u && ev[i].d2;
+                 kicks += k;
+                 if (!k)
+@@ -573,7 +584,7 @@ static void case_endless(void)
+                        bars[b].cc[5]);
+             }
+         }
+-        ok(drops > 10u, "%u DROPs in 60 minutes", drops);
++        ok(drops > mins / 6u, "%u DROPs in %u minutes", drops, mins);
+     }
+     press(1u << B_PLAY);
+ }
+@@ -1699,12 +1710,54 @@ static void case_budget_user(void)
+     }
+ }
+ 
++/* (1.1, BRIEF-VIZZBOX-1.1.md 5) CC 110 on channel 16: the FX layer's effect held (the user's: a white key, 1 .. 14
++ * in their order; else the producer's own, 0 none), when it changes and on each bar's one after the six */
++static int last_cc(uint32_t n, uint32_t *v)          /* the last CC n on channel 16 sent: 1, its value in *v */
++{
++    uint32_t i;
++    for (i = nev; i-- > 0;)
++        if (ev[i].st == 0xBFu && ev[i].d1 == n) {
++            *v = ev[i].d2;
++            return 1;
++        }
++    return 0;
++}
++static void case_cc110(void)
++{
++    uint32_t v = 99, i, ones = 0, with = 0;
++    snprintf(tag, sizeof tag, "CC 110: the effect held");
++    boot();
++    knobs(0, 1, 0x1100u, 70, 40, 1);
++    press(1u << B_PLAY);
++    run_s(4.0);
++    web_buttons(1u << B_FX);
++    run_s(0.8);
++    web_keys(1u << key_at(0, PF_GATE));             /* (the eleventh white key: GATE) */
++    run_s(0.3);
++    ok(last_cc(110, &v) && v == PF_GATE + 1u, "GATE held: CC 110 %u", v);
++    web_keys(0);
++    run_s(0.3);
++    ok(last_cc(110, &v) && v != PF_GATE + 1u, "GATE let go: CC 110 still %u", v);
++    web_buttons(0);
++    run_s(8.0);
++    for (i = 0; i + 6u < nev; i++)                  /* (each bar's one: the six, then CC 110) */
++        if (ev[i].st == 0xBFu && ev[i].d1 == 109u) {
++            ones++;
++            with += ev[i + 1u].st == 0xBFu && ev[i + 1u].d1 == 110u;
++        }
++    ok(ones > 4u && with == ones, "CC 110 after the six on %u of %u bars' ones", with, ones);
++    press(1u << B_PLAY);
++    ok(last_cc(110, &v) && v == 0u, "stopped: CC 110 %u", v);
++}
++
+ /* ---------------------------------------------------------------- the cases, four at a time */
+ typedef struct { const char *name; uint32_t a, b; } case_t;
+ static void one(const case_t *c)
+ {
+     if (!strcmp(c->name, "song"))
+         case_song(c->a, c->b);
++    else if (!strcmp(c->name, "endless"))
++        case_endless(c->a);
+     else if (!strcmp(c->name, "determinism"))
+         case_determinism();
+     else if (!strcmp(c->name, "transport"))
+@@ -1715,8 +1768,6 @@ static void one(const case_t *c)
+         case_live();
+     else if (!strcmp(c->name, "mute"))
+         case_mute();
+-    else if (!strcmp(c->name, "endless"))
+-        case_endless();
+     else if (!strcmp(c->name, "favourites"))
+         case_favourites();
+     else if (!strcmp(c->name, "projects"))
+@@ -1747,6 +1798,8 @@ static void one(const case_t *c)
+         case_fav_sounds();
+     else if (!strcmp(c->name, "tails"))
+         case_tails();
++    else if (!strcmp(c->name, "cc110"))
++        case_cc110();
+     else if (!strcmp(c->name, "budget_user"))
+         case_budget_user();
+     else
+@@ -1754,13 +1807,14 @@ static void one(const case_t *c)
+ }
+ int main(int argc, char **argv)
+ {
+-    static case_t cs[200];
++    static case_t cs[256];
+     uint32_t n = 0, i, ri, len, running = 0, failed = 0;
+     const char *only = argc > 1 ? argv[1] : NULL;
+     if (only && argc > 2 && !strcmp(only, "fav_boot"))
+         return fav_boot(argv[2]);
+     cs[n++] = (case_t){"endless", 0, 0};
+-    for (ri = 0; ri < 36u; ri++)
++    cs[n++] = (case_t){"endless", 1, 0};
++    for (ri = 0; ri < VB_NALL; ri++)
+         for (len = 0; len < 3u; len++)
+             cs[n++] = (case_t){"song", ri, len};
+     cs[n++] = (case_t){"determinism", 0, 0};
+@@ -1784,6 +1838,7 @@ int main(int argc, char **argv)
+     cs[n++] = (case_t){"leds", 0, 0};
+     cs[n++] = (case_t){"fav_sounds", 0, 0};
+     cs[n++] = (case_t){"tails", 0, 0};
++    cs[n++] = (case_t){"cc110", 0, 0};
+     cs[n++] = (case_t){"budget_user", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index e10e474..804e3f6 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -282,7 +282,7 @@ if [ -f build/gen/felucca_tables.h ]; then
+     run "SEQ MIDI OUT: the sequencer's notes, step CC, clock, start / stop on USB MIDI; the MENU row; (2.0) own lengths, overlaps, ties, chains, SONG ONCE; (Vizz) mutes, held MUTE and solo as CC 103" "$OUT/seqmidi_test"
+     # (Vizzbox) the producer and its screens, on the browser emulator's device built natively with VIZZBOX=1
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/producer_test" tests/producer_test.c -lm
+-    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX; (1.1) the user's hand, KLANG and MOD, the keys, the layers, LEDs, favourites with sounds, the tails and the voice budget with the user's sounds and playing along" "$OUT/producer_test"
++    run "(Vizzbox) the producer: every subgenre in every LENGTH (form, tempo, key, registers, voices, DROPs, CC 104..109), determinism, PLAY / stop / SEQ MIDI OUT OFF and on / USB up / into the GROOVEBOX, live moves, MUTE and SOLO as CC 103, ENDLESS 60 min, favourites over a power cycle, VIZZBOX <-> GROOVEBOX; (1.1) the user's hand, KLANG and MOD, the keys, the layers, LEDs, favourites with sounds, the tails and the voice budget with the user's sounds and playing along, the 22 new subgenres as 1.0's (ENDLESS from AMAPIANO 30 min), CC 110" "$OUT/producer_test"
+     $CC -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o "$OUT/vizzbox_golden" tests/vizzbox_golden.c -lm
+     run "(Vizzbox 1.1) the songs of the Vizzbox 1.0 with nobody's hand on them: every subgenre of 1.0, three seeds, every LENGTH, ENDLESS 10 min twice: USB MIDI (bytes and times) and audio as tests/vizzbox_golden10.txt has them" \
+         sh -c "\"$OUT/vizzbox_golden\" > \"$OUT/vizzbox_golden.txt\" && diff tests/vizzbox_golden10.txt \"$OUT/vizzbox_golden.txt\""
+@@ -533,7 +533,7 @@ else
+     $SCC -o "$A/fuzz_smp" tests/fuzz_smp.c -lm
+     run "ASan/UBSan fuzz: user sample slot headers -> scan -> SAMPLE / GRAIN / SLICE (1000, seed 17)" "$A/fuzz_smp" 1000 17
+     $SCC -o "$A/vizzbox_fuzz" tests/vizzbox_fuzz.c -lm
+-    run "(Vizzbox) ASan/UBSan fuzz: the VIZZBOX's knobs, buttons, keys, favourites, modes, MENU, MIDI in, power cycles (1500 actions, seed 11)" \
++    run "(Vizzbox) ASan/UBSan fuzz: the VIZZBOX's knobs, buttons, keys, favourites, modes, MENU, MIDI in, power cycles; (1.1) KLANG and MOD, the focus, FX ARP GLO held, MOMENTARY, PRESETS, given back, the GROOVEBOX between (1500 actions, seed 11)" \
+         "$A/vizzbox_fuzz" 1500 11
+     run "(Vizzbox) ASan/UBSan fuzz: the same (1500 actions, seed 12)" "$A/vizzbox_fuzz" 1500 12
+ fi
+diff --git a/tests/vizzbox_budget.c b/tests/vizzbox_budget.c
+index df8827f..fafdf5f 100644
+--- a/tests/vizzbox_budget.c
++++ b/tests/vizzbox_budget.c
+@@ -23,12 +23,10 @@
+ #include <unistd.h>
+ 
+ static uint32_t last104, maxv;
+-static uint32_t genre_of(int ri)                    /* subgenre ri (VB_SUB's order) -> its genre */
++static uint32_t genre_of(int ri)                    /* subgenre ri (VB_SUB's order) -> its genre ((1.1) vb_gof) */
+ {
+-    uint32_t g = 0;
+-    while (g < 9u && (uint32_t)ri >= vb_sub0(g + 1u))
+-        g++;
+-    return g;
++    uint32_t s;
++    return vb_gof((uint32_t)ri, &s);
+ }
+ static double cpu_s(void)
+ {
+@@ -175,7 +173,8 @@ static void one(m_t *m)
+             all_fx();
+     } else {
+         vb.k.genre = (uint8_t)genre_of(m->ri);
+-        vb.k.sub = (uint8_t)((uint32_t)m->ri - vb_sub0(vb.k.genre));
++        (void)vb_gof((uint32_t)m->ri, &i);
++        vb.k.sub = (uint8_t)i;
+         vb.k.seed = (uint16_t)m->seed;
+         vb.k.energy = 100;
+         vb.k.var = 100;
+@@ -256,7 +255,7 @@ static void measure(m_t *m, int reps)               /* reps times, each on a fre
+ int main(int argc, char **argv)
+ {
+     static const int SEEDS[] = {0x5EED, 0x0B0B, 0x7A11};
+-    static m_t all[108];
++    static m_t all[3u * VB_NALL];
+     double limit = argc > 1 ? atof(argv[1]) : 1.10, rtop = 0;
+     m_t ref = {-1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, refx = ref, top = ref, fx, ch;
+     int ri, s, i, j, n = 0, bad = 0;
+@@ -265,7 +264,7 @@ int main(int argc, char **argv)
+     measure(&refx, 3);
+     printf("budget: Skiff's heavy song (GROOVEBOX): %.4f s CPU per s of audio (%u voices); with every effect %.4f\n",
+            ref.cost, ref.maxv, refx.cost);
+-    for (ri = 0; ri < 36; ri++)
++    for (ri = 0; ri < (int)VB_NALL; ri++)
+         for (s = 0; s < 3; s++) {
+             m_t *m = &all[n++];
+             *m = (m_t){ri, SEEDS[s], 0, 0, 0, 0, 0, 0, 0, 0};
+diff --git a/tests/vizzbox_fuzz.c b/tests/vizzbox_fuzz.c
+index 7c8cb10..fdb31c8 100644
+--- a/tests/vizzbox_fuzz.c
++++ b/tests/vizzbox_fuzz.c
+@@ -4,8 +4,12 @@
+  * random 20 .. 800 ms: a knob turned (K1..K4, SELECT, ALGO, PRESET, by 1 .. 12 either way), a button (PLAY, REC,
+  * FX, ARP, SEQ, OCT-, OCT+), HOME + PLAY (VIZZBOX <-> GROOVEBOX), SAVE or GLO held with a white key (a favourite), GLO
+  * with a black key (SOLO), black keys tapped or held (MUTE, cut), white keys played, MIDI in, the MENU opened and a
+- * knob turned there, a power cycle on the same flash. After each: the knobs' song in range (genre, subgenre, energy,
+- * variation, length), the plan within its ring, the tempo in range, the mode 0 or 1. At the end: stopped, every key
++ * knob turned there, a power cycle on the same flash; (1.1, BRIEF-VIZZBOX-1.1.md 9) EDIT and LFO (KLANG, MOD, back to
++ * SONG), SEL + a black key (the focus), FX, ARP or GLO held with knobs and keys, LFO held with a knob (MOMENTARY),
++ * PRESETS and HOME + PRESETS, HOME + a black key and HOME + EDIT (given back: then nothing the user's), the GROOVEBOX in
++ * between with its knobs turned. After each: the knobs' song in range (genre, subgenre, energy, variation, length), the
++ * plan within its ring, the tempo in range, the mode 0 or 1, (1.1) the focus and the page in range, the hand's last
++ * parameters each once and real. At the end: stopped, every key
+  * let go, 12 s later every voice free and no note left on on USB MIDI (each note-on its note-off); a fresh device on
+  * that flash boots and plays (with a clock from outside where the fuzzing left MENU > MIDI > CLOCK on USB or TRS).
+  *   cc -O1 -g -fsanitize=address,undefined ... -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_fuzz.c -lm
+@@ -16,6 +20,7 @@
+ 
+ static uint32_t fz, fails, held_keys, held_btn;
+ static uint32_t st_play, st_switch, st_boot, st_secs, st_style;   /* what it went through */
++static uint32_t st_pages, st_layers, st_back, st_took;   /* ((1.1) the pages opened, layers held, given back, taken) */
+ static uint8_t on[16][128];                         /* USB MIDI: notes on (channel, pitch) */
+ static uint32_t rnd(uint32_t n)
+ {
+@@ -81,7 +86,7 @@ static void invariants(uint32_t i)
+         st_style++;
+     sec = vb.sec;
+     style = vb.s.genre * 8u + vb.s.sub;
+-    if (vb.k.genre >= 10u || vb.k.sub >= VB_NSUB[vb.k.genre % 10u])
++    if (vb.k.genre >= VB_NGEN || vb.k.sub >= VB_NSUB[vb.k.genre % VB_NGEN])
+         fail("the knobs' style out of range", vb.k.genre, vb.k.sub);
+     if (vb.k.energy > 100u || vb.k.var > 100u || vb.k.len > VL_ENDLESS)
+         fail("the knobs' energy, variation or length out of range", i, vb.k.energy);
+@@ -91,6 +96,45 @@ static void invariants(uint32_t i)
+         fail("the tempo out of range", i, (uint32_t)song.g[G_BPM]);
+     if (vb_mode > 1u)
+         fail("the mode", i, vb_mode);
++    if (song.sel >= NTRK || vb_pg > VP_MOD)        /* ((1.1) the focus, the page) */
++        fail("the focus or the page out of range", song.sel, vb_pg);
++    {
++        uint32_t k, a, b;
++        for (k = 0; k < NTRK; k++)
++            for (a = 0; a < 8u; a++)
++                for (b = 0; vb_hand.last[k][a] && b < 8u; b++)
++                    if (vb_hand.last[k][a] > P_COUNT || (b != a && vb_hand.last[k][b] == vb_hand.last[k][a]))
++                        fail("the hand's last parameters (track, parameter + 1)", k, vb_hand.last[k][a]);
++    }
++    st_took += vb_hand.snd != 0u;
++}
++static void tap(uint32_t b)                         /* (1.1) a button tapped */
++{
++    web_buttons(1u << b);
++    ms(40);
++    web_buttons(0);
++    ms(30);
++}
++static void with_black(uint32_t b, uint32_t place)  /* (1.1) a button held + a black key */
++{
++    uint32_t k = key_of(1, place);
++    web_buttons(1u << b);
++    ms(60);
++    web_keys(1u << k);
++    ms(60);
++    web_keys(0);
++    ms(40);
++    web_buttons(0);
++    ms(50);
++}
++static void groovebox(void)                         /* (1.1) HOME + PLAY: the other mode */
++{
++    web_buttons(1u << B_HOME);
++    ms(60);
++    web_buttons(1u << B_HOME | 1u << B_PLAY);
++    ms(60);
++    web_buttons(0);
++    st_switch++;
+ }
+ static void boot(void)
+ {
+@@ -106,12 +150,13 @@ int main(int argc, char **argv)
+ {
+     static const uint32_t ENCS[] = {EN_K1, EN_K2, EN_K3, EN_K4, EN_SELECT, EN_ALGO, EN_PRESET};
+     static const uint32_t BTNS[] = {B_PLAY, B_REC, B_FX, B_ARP, B_SEQ, B_OCTDN, B_OCTUP};
++    static const uint32_t LAYERS[] = {B_FX, B_ARP, B_GLO};
+     uint32_t n = argc > 1 ? (uint32_t)atoi(argv[1]) : 2000u, i, a, k, v, ch;
+     fz = argc > 2 ? (uint32_t)atoi(argv[2]) : 1u;
+     web_nor_erase();
+     boot();
+     for (i = 0; i < n; i++) {
+-        a = rnd(100);
++        a = rnd(130);
+         if (a < 30)
+             web_enc(ENCS[rnd(7)], (int32_t)(rnd(12) + 1u) * (rnd(2) ? 1 : -1));
+         else if (a < 45) {
+@@ -179,8 +224,85 @@ int main(int argc, char **argv)
+         } else if (a < 95) {                        /* a power cycle, the flash kept */
+             boot();
+             st_boot++;
+-        } else
++        } else if (a < 100)
+             ms(2000 + rnd(20000));                  /* (a while: sections go by) */
++        else if (a < 106) {                         /* (1.1) a page: EDIT KLANG, LFO MOD, again or HOME SONG */
++            tap(rnd(3) == 0 ? B_HOME : rnd(2) ? B_EDIT : B_LFO);
++            st_pages += vb_pg != 0u;
++        } else if (a < 109)                         /* (1.1) SEL + a black key: the focus */
++            with_black(B_SCL, rnd(6));
++        else if (a < 116) {                         /* (1.1) FX, ARP or GLO held: knobs, a white key, SELECT */
++            held_keys = 0;
++            web_keys(0);
++            held_btn = 1u << LAYERS[rnd(3)];
++            web_buttons(held_btn);
++            ms(250 + rnd(400));
++            st_layers++;
++            for (k = rnd(4); k; k--) {
++                if (rnd(2))
++                    web_enc(ENCS[rnd(2) ? rnd(4) : 4u], (int32_t)(rnd(12) + 1u) * (rnd(2) ? 1 : -1));
++                else {
++                    v = key_of(0, rnd(16));
++                    web_keys(1u << v);
++                    ms(30 + rnd(300));
++                    web_keys(0);
++                }
++                ms(40 + rnd(300));
++            }
++            if (rnd(3)) {
++                held_btn = 0;
++                web_buttons(0);
++            }
++        } else if (a < 119) {                       /* (1.1) LFO held, a knob (MOMENTARY), let go */
++            if (!vb_pg)
++                tap(B_EDIT);
++            web_buttons(1u << B_LFO);
++            ms(80);
++            web_enc(ENCS[rnd(4)], (int32_t)(rnd(12) + 1u) * (rnd(2) ? 1 : -1));
++            ms(100 + rnd(500));
++            web_buttons(0);
++        } else if (a < 123) {                       /* (1.1) given back: HOME + a black key, HOME + EDIT */
++            int all = rnd(3) == 0, vbox = vb_mode && !ui.menu && !held_btn && !held_keys;
++            if (all) {
++                web_buttons(1u << B_HOME);
++                ms(60);
++                web_buttons(1u << B_HOME | 1u << B_EDIT);
++                ms(60);
++                web_buttons(0);
++                ms(50);
++            } else
++                with_black(B_HOME, rnd(6));
++            st_back++;
++            if (all && vbox) {                      /* (all of it back: nothing the user's) */
++                for (k = 0, v = vb_hand.snd | vb_hand.glo; k < NTRK; k++)
++                    for (ch = 0; ch < VB_PB; ch++)
++                        v |= vb_hand.par[k][ch];
++                if (v)
++                    fail("HOME + EDIT: something still the user's (sounds, globals)", vb_hand.snd, vb_hand.glo);
++            }
++        } else if (a < 127) {                       /* (1.1) PRESETS on KLANG, or HOME + PRESETS */
++            if (!vb_pg && rnd(2))
++                tap(B_EDIT);
++            if (rnd(4) == 0) {
++                web_buttons(1u << B_HOME);
++                ms(60);
++                web_enc(EN_PRESET, (int32_t)(rnd(6) + 1u) * (rnd(2) ? 1 : -1));
++                ms(100);
++                web_buttons(0);
++            } else
++                web_enc(EN_PRESET, (int32_t)(rnd(6) + 1u) * (rnd(2) ? 1 : -1));
++        } else {                                    /* (1.1) into the GROOVEBOX, its knobs, back */
++            held_btn = 0;
++            web_buttons(0);
++            groovebox();
++            ms(200);
++            for (k = 1u + rnd(5); k; k--) {
++                web_enc(ENCS[rnd(7)], (int32_t)(rnd(12) + 1u) * (rnd(2) ? 1 : -1));
++                ms(60 + rnd(400));
++            }
++            if (rnd(4))
++                groovebox();
++        }
+         ms(20 + rnd(780));
+         invariants(i);
+     }
+@@ -223,7 +345,9 @@ int main(int argc, char **argv)
+     if (!song.playing || !vb.own)
+         fail("a fresh device on that flash: the VIZZBOX does not play", song.playing, vb.own);
+     printf("vizzbox_fuzz: %u actions (seed %u): the producer playing %u s, %u sections, %u styles, %u mode switches, "
+-           "%u power cycles, favourites written %u times; %u failed\n", n, argc > 2 ? (uint32_t)atoi(argv[2]) : 1u,
+-           st_play * 128u / 44100u, st_secs, st_style, st_switch, st_boot, vb_fav.magic == VB_FMAGIC ? vb_fav.seq : 0u, fails);
++           "%u power cycles, favourites written %u times; (1.1) %u pages, %u layers held, %u given back, a sound the "
++           "user's after %u; %u failed\n", n, argc > 2 ? (uint32_t)atoi(argv[2]) : 1u,
++           st_play * 128u / 44100u, st_secs, st_style, st_switch, st_boot, vb_fav.magic == VB_FMAGIC ? vb_fav.seq : 0u,
++           st_pages, st_layers, st_back, st_took, fails);
+     return fails ? 1 : 0;
+ }
+diff --git a/tests/vizzbox_golden.c b/tests/vizzbox_golden.c
+index db5d2c7..74bd39a 100644
+--- a/tests/vizzbox_golden.c
++++ b/tests/vizzbox_golden.c
+@@ -23,6 +23,8 @@ static void drain(void)
+         uint32_t pkt = midi_out_q[mo_r % MQ], i;
+         uint64_t t = frames;
+         mo_r++;
++        if (((pkt >> 8) & 0xFFu) == 0xBFu && ((pkt >> 16) & 0x7Fu) == 110u)
++            continue;                               /* (CC 110, the effect held: new in 1.1, not a part of 1.0's songs) */
+         for (i = 0; i < 4u; i++)
+             mhash = (mhash ^ ((pkt >> (8u * i)) & 0xFFu)) * 16777619u;
+         for (i = 0; i < 4u; i++)
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+index 0f86916..4b90825 100644
+--- a/tests/vizzbox_mutants.py
++++ b/tests/vizzbox_mutants.py
+@@ -21,7 +21,7 @@ import sys
+ import tempfile
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+-P, ISR, UI, PRJ = "producer.c", "producer_isr.c", "ui_vizzbox.c", "project.c"
++P, ISR, UI, PRJ, TB = "producer.c", "producer_isr.c", "ui_vizzbox.c", "project.c", "producer_tables.c"
+ # (what, file, [(old, new), ...], test): test ("producer", CASE[, SUBGENRE]), ("inactive",), ("ui",), ("golden", N) or
+ # ("compat10",)
+ FAULTS = [
+@@ -46,7 +46,7 @@ FAULTS = [
+          "            vb_out = (uint8_t)o;\n            vb_resend = 0;\n            vb_e = (uint8_t)e;")],
+      ("producer", "song", "0")),
+     ("CC 104 not 0 at the stop", ISR, [
+-        ("    if (song.playing)\n        vb_cc(VB_CC, 0);\n    vb_hold_fx(PF_N);", "    vb_hold_fx(PF_N);")],
++        ("    if (song.playing)\n        vb_cc(VB_CC, 0);\n    if (vb_fx110)", "    if (vb_fx110)")],
+      ("producer", "transport")),
+     ("CC 104 .. 109 on channel 15", ISR, [("#define VB_CH 15u", "#define VB_CH 14u")], ("producer", "song", "0")),
+     ("CC 104 .. 109 with SEQ MIDI OUT OFF", ISR, [
+@@ -155,6 +155,10 @@ FAULTS = [
+     ("1.1: the engines' costs not in the budget (a voice of the user's PHYS one, not two)", P, [
+         ("    return (vb_hand.snd >> k) & 1u ? VB_EW[trk[k].eng_req % NENGINES] : 4u;", "    return 4u;")],
+      ("producer", "budget_user")),
++    ("1.1: a new subgenre moves an old number (HOUSE's new ones before its sixth)", TB, [
++        ("static const uint8_t VB_NSUB10[10] = {6, 6, 3, 4, 3, 4, 2, 3, 3, 2};",
++         "static const uint8_t VB_NSUB10[10] = {5, 6, 3, 4, 3, 4, 2, 3, 3, 2};")],
++     ("golden", "45")),
+     ("1.1: FM6's tail from the amplitude envelope (not its carriers)", P, [
+         ("    if (t->eng_req == ENGI_FM6) {\n        const uint8_t *p = fm6_eff[k].p;", "    if (0) {\n        const uint8_t *p = fm6_eff[k].p;")],
+      ("producer", "tails")),
+diff --git a/tools/vizzbox_demos.py b/tools/vizzbox_demos.py
+index 5c5d8b9..8737e80 100644
+--- a/tools/vizzbox_demos.py
++++ b/tools/vizzbox_demos.py
+@@ -4,10 +4,11 @@
+ LENGTH NORMAL), a part of about 60 s from a BUILD into its DROP as MP3 (128 kbps, ffmpeg), the whole song's MIDI file,
+ and what can be measured checked on each: no clipping, the loudness, the notes outside the key, the sections, kick and
+ bass not on top of each other all the time, the jump into the DROP, the silence before it, the riser in the BUILD.
+-  vizzbox_demos.py RENDER OUT [SEED] [ENERGY] [VARIATION] [G S ...]
++  vizzbox_demos.py RENDER OUT [SEED] [ENERGY] [VARIATION] [G S ... | new]
+ RENDER: build/host/vizzbox_render; OUT: the demos' directory (OUT/README.md, OUT/NN-genre-subgenre.mp3 / .mid; the
+-renders in OUT/.work, removed unless KEEP=1). SEED (hex, default 5EED), ENERGY 70, VARIATION 40; G S: only those.
+-The table it prints (and writes into OUT/README.md between its GENERATED markers) is the demos' list."""
++renders in OUT/.work, removed unless KEEP=1). SEED (hex, default 5EED), ENERGY 70, VARIATION 40; G S: only those
++((1.1) new: the subgenres new in 1.1). The table it prints (and writes into OUT/README.md between its GENERATED
++markers, keeping the rows of those it did not render) is the demos' list."""
+ import os
+ import re
+ import shutil
+@@ -20,7 +21,23 @@ from pathlib import Path
+ 
+ import numpy as np
+ 
+-NSUB = [6, 6, 3, 4, 3, 4, 2, 3, 3, 2]
++TABLES = Path(__file__).resolve().parents[1] / "firmware" / "src" / "producer_tables.c"
++
++
++def _counts(name):                                 # (the firmware's own counts: producer_tables.c)
++    m = re.search(name + r"\[\d*\] = \{([0-9, ]+)\};", TABLES.read_text())
++    return [int(x) for x in m.group(1).split(",")]
++
++
++NSUB10, NSUB = _counts("VB_NSUB10"), _counts("VB_NSUB")
++
++
++def ri(g, s):                                      # ((1.1) producer_tables.c vb_rig: 1.0's numbers, the new after 36)
++    if g < 10 and s < NSUB10[g]:
++        return sum(NSUB10[:g]) + s
++    return 36 + sum(NSUB[i] - (NSUB10[i] if i < 10 else 0) for i in range(g)) + s - (NSUB10[g] if g < 10 else 0)
++
++
+ SEC = {"INTRO": 1, "GROOVE": 2, "BUILD": 3, "DROP": 4, "BREAK": 5, "OUTRO": 6}
+ NAME = {v: k for k, v in SEC.items()}
+ KICK, FS = 36, 44100
+@@ -184,15 +201,17 @@ def main(argv):
+     e = int(argv[3]) if len(argv) > 3 else 70
+     v = int(argv[4]) if len(argv) > 4 else 40
+     pick = [(int(argv[i]), int(argv[i + 1])) for i in range(5, len(argv) - 1, 2)]
++    if argv[5:] == ["new"]:                        # ((1.1) the new ones: after 1.0's in their genre, the new genre)
++        pick = [(g, s) for g in range(len(NSUB)) for s in range(NSUB10[g] if g < len(NSUB10) else 0, NSUB[g])]
+     work = out / ".work"
+     work.mkdir(parents=True, exist_ok=True)
+-    jobs = [(exe, work, g, s, seed, e, v) for g in range(10) for s in range(NSUB[g]) if not pick or (g, s) in pick]
++    jobs = [(exe, work, g, s, seed, e, v) for g in range(len(NSUB)) for s in range(NSUB[g]) if not pick or (g, s) in pick]
+     with ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+         done = list(pool.map(render, jobs))
+     rows, fail = [], 0
+     for g, s, base, txt in done:
+         info = parse(txt)
+-        n = sum(NSUB[:g]) + s + 1
++        n = ri(g, s) + 1
+         name = f"{n:02d}-{slug(info['genre'])}-{slug(info['sub'])}"
+         c = checks(info, base.with_suffix(".wav"), base.with_suffix(".mid"))
+         tag = f"Vizzbox - {info['genre']} / {info['sub']} (seed {seed})"
+@@ -214,34 +233,49 @@ def main(argv):
+               f"{c['kickbass'][0]}/{c['kickbass'][1]}; jump {c.get('jump', 0):+.1f} dB, gap {c.get('gap', 0):+.1f} dB, "
+               f"riser {c.get('riser', 0)} ({c.get('into', '-')})" + (f"  !! {', '.join(bad)}" if bad else ""))
+     rows.sort()
+-    rm_all = [r[7] for r in rows]
+-    med = float(np.median(rm_all))
++    readme = out / "README.md"
++    txt = readme.read_text() if readme.exists() else "# Vizzbox – Demos\n\n<!-- BEGIN GENERATED -->\n<!-- END GENERATED -->\n"
++    # ((1.1) the rows of what this run did not render stay as they are: a demo is made again only for what changed)
++    gen = re.search(r"<!-- BEGIN GENERATED.*?<!-- END GENERATED -->", txt, flags=re.S)
++    keep1, keep2 = {}, {}
++    if gen:
++        halves = gen.group(0).split("Geprüft am ganzen Song") + [""]
++        for src, keep in ((halves[0], keep1), (halves[1], keep2)):
++            for ln in src.splitlines():
++                m = re.match(r"\| (\d+) \|", ln)
++                if m:
++                    keep[int(m.group(1))] = ln
++    t1, t2, rm_all = dict(keep1), dict(keep2), {}
++    for n, name, info, c, a, b, pk, rm in rows:
++        t1[n] = (f"| {n} | {info['genre']} | {info['sub']} | `{seed}` | {info['bpm']} | {info['key']} | {pk:.1f} | "
++                 f"{rm:.1f} | {mmss(a, 1)} – {mmss(b, 1)} | {c.get('into', '–')} | "
++                 f"{mmss(info['length'])} | [MP3]({name}.mp3) · [MIDI]({name}.mid) |")
++        k, kn = c["kickbass"]
++        o, on = c["outside"]
++        sec = " ".join(f"{'?IGBDRO'[t]}{bars}" for _, t, bars in info["secs"])
++        t2[n] = (f"| {n} | {info['sub']} | {info['peak']:.1f} | {info['stolen']} | {o} von {on} | "
++                 f"{k} von {kn} | {c.get('jump', 0):+.1f} dB | {c.get('gap', 0):+.1f} dB | {c.get('riser', 0)} | "
++                 f"{sec} |")
++    for n, ln in t1.items():
++        rm_all[n] = float(ln.split("|")[8])
++    rms = list(rm_all.values())
++    med = float(np.median(rms))
+     lines = ["<!-- BEGIN GENERATED by tools/vizzbox_demos.py: do not edit -->",
+              f"Seed `{seed}`, ENERGIE {e}, VARIATION {v}, LÄNGE NORMAL. Spitze und RMS: der MP3-Ausschnitt (vor der "
+-             f"Kodierung), dBFS. RMS über alle: {min(rm_all):.1f} bis {max(rm_all):.1f} dBFS, Median {med:.1f}.", "",
++             f"Kodierung), dBFS. RMS über alle: {min(rms):.1f} bis {max(rms):.1f} dBFS, Median {med:.1f}.", "",
+              "| # | Genre | Subgenre | Seed | BPM | Tonart | Spitze | RMS | Ausschnitt | in | Song | Dateien |",
+              "| ---: | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- | ---: | --- |"]
+-    for n, name, info, c, a, b, pk, rm in rows:
+-        lines.append(f"| {n} | {info['genre']} | {info['sub']} | `{seed}` | {info['bpm']} | {info['key']} | {pk:.1f} | "
+-                     f"{rm:.1f} | {mmss(a, 1)} – {mmss(b, 1)} | {c.get('into', '–')} | "
+-                     f"{mmss(info['length'])} | [MP3]({name}.mp3) · [MIDI]({name}.mid) |")
++    lines += [t1[n] for n in sorted(t1)]
+     lines += ["", "Geprüft am ganzen Song (Render und MIDI-Datei):", "",
+               "| # | Subgenre | Spitze Song | Stimmen gestohlen | Noten außerhalb der Tonart | Kick mit Bass | "
+               "Sprung hinein | leiseste 1/16 im letzten Beat | FX-Noten davor (Riser) | Abschnitte |",
+               "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"]
+-    for n, name, info, c, a, b, pk, rm in rows:
+-        k, kn = c["kickbass"]
+-        o, on = c["outside"]
+-        sec = " ".join(f"{'?IGBDRO'[t]}{bars}" for _, t, bars in info["secs"])
+-        lines.append(f"| {n} | {info['sub']} | {info['peak']:.1f} | {info['stolen']} | {o} von {on} | "
+-                     f"{k} von {kn} | {c.get('jump', 0):+.1f} dB | {c.get('gap', 0):+.1f} dB | {c.get('riser', 0)} | "
+-                     f"{sec} |")
++    lines += [t2[n] for n in sorted(t2)]
+     lines.append("<!-- END GENERATED -->")
++    rm_all = rms
+     with open(out / "levels.tsv", "w") as f:       # (tools/vizzbox_level.py reads it)
+         for n, name, info, c, a, b, pk, rm in rows:
+             f.write(f"{n - 1}\t{rm:.2f}\t{pk:.2f}\n")
+-    readme = out / "README.md"
+-    txt = readme.read_text() if readme.exists() else "# Vizzbox – Demos\n\n<!-- BEGIN GENERATED -->\n<!-- END GENERATED -->\n"
+     txt = re.sub(r"<!-- BEGIN GENERATED.*?<!-- END GENERATED -->", lambda m: "\n".join(lines), txt, flags=re.S)
+     readme.write_text(txt)
+     print(f"RMS {min(rm_all):.1f} .. {max(rm_all):.1f} dBFS, median {med:.1f}")
+diff --git a/tools/vizzbox_level.py b/tools/vizzbox_level.py
+index db0887f..0e62aed 100644
+--- a/tools/vizzbox_level.py
++++ b/tools/vizzbox_level.py
+@@ -3,7 +3,8 @@
+ """(Vizzbox) The subgenres at one loudness (BRIEF-VIZZBOX.md 3.6: RMS within +-3 dB over all demos): each subgenre's
+ demo part (tools/vizzbox_demos.py) measured for some seeds, the mean RMS (dB) brought to TARGET by a trim on all six
+ tracks' levels (P_LEVEL steps of 0.5 dB, added to what is there; up by at most MAXUP), written into firmware/src/producer_tables.c between
+-its LEVEL markers. Build build/host/vizzbox_render again after it and repeat until the trims stay.
++its LEVEL markers. Build build/host/vizzbox_render again after it and repeat until the trims stay. (Vizzbox 1.1) The
++36 subgenres of 1.0 keep theirs (their songs bit for bit); the new ones after them get theirs (only they are rendered).
+   vizzbox_level.py RENDER [SEED ...]        (default seeds 5EED 1234 BEEF)"""
+ import re
+ import subprocess
+@@ -24,28 +25,33 @@ def main(argv):
+     rms = {}
+     for sd in seeds:
+         with tempfile.TemporaryDirectory() as d:
+-            subprocess.run([sys.executable, str(ROOT / "tools" / "vizzbox_demos.py"), exe, d, sd], check=False,
+-                           stdout=subprocess.DEVNULL)
++            subprocess.run([sys.executable, str(ROOT / "tools" / "vizzbox_demos.py"), exe, d, sd, "70", "40", "new"],
++                           check=False, stdout=subprocess.DEVNULL)   # ((1.1) the new ones only)
+             for line in open(Path(d) / "levels.tsv"):
+                 i, r, _ = line.split("\t")
+                 rms.setdefault(int(i), []).append(float(r))
+     src = TABLES.read_text()
+-    m = re.search(r"VB_TRIM\[36\] = \{(.*?)\};", src, re.S)
++    m = re.search(r"VB_TRIM\[\] = \{(.*?)\};", src, re.S)
+     old = [int(x) for x in m.group(1).replace("\n", " ").split(",")]
++    n = max(rms) + 1
+     new = []
+-    for i in range(36):
++    for i in range(n):
++        was = old[i] if i < len(old) else 0
++        if i < 36:                                 # ((1.1) 1.0's subgenres keep their trims: their songs bit for bit)
++            new.append(was)
++            continue
+         mean = sum(rms[i]) / len(rms[i])
+-        new.append(max(-40, min(MAXUP, old[i] + round(2.0 * (TARGET - mean)))))
+-        print(f"{i:2d} RMS {mean:6.2f} ({' '.join(f'{x:.1f}' for x in rms[i])})  trim {old[i]:+d} -> {new[i]:+d}")
+-    body, line = [], "static const int8_t VB_TRIM[36] = {"
++        new.append(max(-40, min(MAXUP, was + round(2.0 * (TARGET - mean)))))
++        print(f"{i:2d} RMS {mean:6.2f} ({' '.join(f'{x:.1f}' for x in rms[i])})  trim {was:+d} -> {new[i]:+d}")
++    body, line = [], "static const int8_t VB_TRIM[] = {"
+     for i, v in enumerate(new):
+-        piece = f"{v}" + (", " if i < 35 else "};")
++        piece = f"{v}" + (", " if i < n - 1 else "};")
+         if len(line) + len(piece) > 119:
+             body.append(line.rstrip())
+-            line = " " * 35
++            line = " " * 33
+         line += piece
+     body.append(line)
+-    src = re.sub(r"static const int8_t VB_TRIM\[36\] = \{.*?\};", "\n".join(body), src, flags=re.S)
++    src = re.sub(r"static const int8_t VB_TRIM\[\] = \{.*?\};", lambda _: "\n".join(body), src, flags=re.S)
+     TABLES.write_text(src)
+     all_rms = [sum(v) / len(v) for v in rms.values()]
+     print(f"mean RMS {min(all_rms):.1f} .. {max(all_rms):.1f} dBFS (target {TARGET})")
+diff --git a/tools/vizzbox_pick.py b/tools/vizzbox_pick.py
+index 928a4dc..201bf63 100644
+--- a/tools/vizzbox_pick.py
++++ b/tools/vizzbox_pick.py
+@@ -71,6 +71,11 @@ LISTS = [
+     ("fx", "wind", ["WIND SWEEP", "WIND", "QUANTA", "CAVE WIND"]),
+     ("fx", "rain, ocean", ["OCEAN", "RAIN", "WHISPER", "WIND"]),
+     ("fx", "metal, plasma", ["PLASMA", "WIND SWEEP", "QUANTA", "METAL"]),
++    # (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 4: after 1.0's, which stay as they are)
++    ("bass", "log drum: a pitch that falls", ["SYN TOM", "TOMS", "HAND DRUM", "KALIMBA", "MARIMBA", "FM MARIMBA",
++                                               "PICK BASS"]),
++    ("lead", "bells, cowbell", ["RING BELL", "BELL TREE", "MUSIC BOX", "CHIP BELL", "METAL", "MARIMBA", "FM MARIMBA",
++                                "GLASS BELL"]),
+ ]
+ 
+ 
+@@ -83,7 +88,21 @@ def main(d, lanes_path=None):
+             if len(p) >= 10 and p[0].isdigit():
+                 lanes[(int(p[0]), int(p[1]))] = [int(x) for x in p[-8:]]
+     snd, lists, report, fail = [], [], [], 0
+-    for role, colour, names in LISTS:
++    # (Vizzbox 1.1) what is there stays as it is, sound for sound and list for list (the songs of 1.0 bit for bit): its
++    # VB_SND rows and lists are taken over, only the lists after them are chosen, their sounds added after the rest
++    src = TABLES.read_text()
++    old = re.search(r"static const vb_snd_t VB_SND\[\] = \{(.*?)\};.*?static const uint8_t VB_LIST\[\]\[4\] = \{(.*?)\};",
++                    src, flags=re.S)
++    keep = 0
++    if old:
++        for m in re.finditer(r"\{(\d+), (\d+), (\d+), (\d+)\},   /\* (.*?) \((\w+)\) \*/", old.group(1)):
++            e, p, lvl, tq, n, mrole = m.groups()
++            snd.append(((int(e), int(p)), int(lvl), int(tq) * 16, n, mrole))
++        for m in re.finditer(r"\{([0-9, ]+)\},   /\* (\d+) (\w+): (.*?) \*/", old.group(2)):
++            ids = [int(x) for x in m.group(1).split(",") if int(x) != 0xFF]
++            lists.append((m.group(3), m.group(4), ids))
++        keep = len(lists)
++    for role, colour, names in LISTS[keep:]:
+         mrole, tmax, (c0, c1), low = RULE[role]
+         cand = []
+         for n in names:
+@@ -128,12 +147,16 @@ def main(d, lanes_path=None):
+     out = ["/* BEGIN GENERATED by tools/vizzbox_pick.py from tools/vizzbox_sounds' measurements: do not edit */",
+            "static const vb_snd_t VB_SND[] = {"]
+     for (e, p), lvl, tail, n, mrole in snd:
+-        out.append(f"    {{{e}, {p}, {lvl}, {min(255, (tail + 15) // 16)}}},   /* {n} ({mrole}) */")
++        out.append(f"    {{{e}, {p}, {lvl}, {min(255, (tail + 15) // 16)}}},   /* {n} ({mrole}) */")   # (a kept row:
++        # tail is its 16 ms x 16, written back as it was)
+     out.append("};")
+     out.append("/* each drum kit of VB_SND (its index), its lanes' ring in 32 ms (KICK .. BELL) */")
+     out.append("static const vb_kit_t VB_KIT[] = {")
++    kits = re.findall(r"    \{\d+, \{[0-9, ]+\}\},   /\* .*? \*/", src.split("static const vb_kit_t VB_KIT[] = {")[1].split("};")[0]) \
++        if old else []
++    out += kits                                     # ((1.1) kept as they were)
+     for i, ((e, p), lvl, tail, n, mrole) in enumerate(snd):
+-        if mrole == "drums":
++        if mrole == "drums" and i >= len(kits) and not any(k.startswith(f"    {{{i}, ") for k in kits):
+             ln = lanes.get((e, p), [1000] * 8)
+             out.append(f"    {{{i}, {{{', '.join(str(min(255, (x + 31) // 32)) for x in ln)}}}}},   /* {n} */")
+     out.append("};")
+@@ -143,8 +166,7 @@ def main(d, lanes_path=None):
+         out.append(f"    {{{', '.join(str(x) for x in ids)}}},   /* {i} {role}: {colour} */")
+     out.append("};")
+     out.append("/* END GENERATED */")
+-    src = TABLES.read_text()
+-    src = re.sub(r"/\* BEGIN GENERATED.*?/\* END GENERATED \*/", "\n".join(out), src, flags=re.S)
++    src = re.sub(r"/\* BEGIN GENERATED.*?/\* END GENERATED \*/", lambda m: "\n".join(out), src, flags=re.S)
+     TABLES.write_text(src)
+     print("\n".join(out))
+     if report:
+diff --git a/tools/vizzbox_render.c b/tools/vizzbox_render.c
+index e94e929..be5fd60 100644
+--- a/tools/vizzbox_render.c
++++ b/tools/vizzbox_render.c
+@@ -80,8 +80,8 @@ static void drain(void)                           /* the unit's MIDI OUT since t
+         if (st == 0xBFu && d[1] >= 104u && d[1] <= 109u) {
+             if (d[1] == 109u && cc_last[5] != (cc_last[4] << 8 | d[2]) + 1u)   /* (a style: at PLAY; ENDLESS, a
+                                                                                    * knob: another) */
+-                printf("  %6.1f s  %s / %s, %d BPM, key %s %s\n", (double)frames / FS, VB_GNAME[cc_last[4] % 10u],
+-                       VB_SNAME[(vb_sub0(cc_last[4] % 10u) + d[2]) % 36u], vb.bpm, N_NOTE[vb.root % 12u],
++                printf("  %6.1f s  %s / %s, %d BPM, key %s %s\n", (double)frames / FS, VB_GNAME[cc_last[4] % VB_NGEN],
++                       VB_SNAME[vb_rig(cc_last[4], d[2])], vb.bpm, N_NOTE[vb.root % 12u],
+                        N_SCALE[vb.scale % 16u]);
+             cc_last[d[1] - 104u] = d[1] == 109u ? (cc_last[4] << 8 | d[2]) + 1u : d[2];
+             if (d[1] == 107u && !cc_last[2])        /* (a section's first bar) */
+@@ -186,8 +186,8 @@ int main(int argc, char **argv)
+     tick_acc = 0;
+     mev_n = mev_tick = 0;
+     cur_q = 0;
+-    printf("vizzbox_render: %s / %s, seed %04X, energy %s, variation %s, %s\n", VB_GNAME[vb.k.genre % 10u],
+-           VB_SNAME[(vb_sub0(vb.k.genre % 10u) + vb.k.sub) % 36u], vb.k.seed, argv[4], argv[5],
++    printf("vizzbox_render: %s / %s, seed %04X, energy %s, variation %s, %s\n", VB_GNAME[vb.k.genre % VB_NGEN],
++           VB_SNAME[vb_rig(vb.k.genre, vb.k.sub)], vb.k.seed, argv[4], argv[5],
+            vb.k.len == 0 ? "SHORT" : vb.k.len == 1 ? "NORMAL" : "ENDLESS");
+     web_buttons(1u << B_PLAY);
+     render(FS / 20u);
+-- 
+2.43.0
+

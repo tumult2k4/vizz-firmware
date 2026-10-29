@@ -1,7 +1,7 @@
 From 78fd959c5f20af5f58b1764348886ef10bd1fd49 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 07:43:03 +0000
-Subject: [PATCH 21/21] Vizzbox 1.1: the voice budget with the user's sounds
+Subject: [PATCH 21/22] Vizzbox 1.1: the voice budget with the user's sounds
  and playing along (BRIEF-VIZZBOX-1.1.md 7)
 
 A sound the user chose (or its release, ENV SYNC, voice mode turned) is planned with its own tail, estimated from its

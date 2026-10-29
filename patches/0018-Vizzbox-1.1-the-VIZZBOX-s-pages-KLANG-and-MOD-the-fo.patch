@@ -1,7 +1,7 @@
 From bef6b18aeb4a385c8a8ff3db61dcced82c79cdfa Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 06:19:51 +0000
-Subject: [PATCH 18/21] Vizzbox 1.1: the VIZZBOX's pages KLANG and MOD, the
+Subject: [PATCH 18/22] Vizzbox 1.1: the VIZZBOX's pages KLANG and MOD, the
  focus track, its keys, the layers, the buses
 
 BRIEF-VIZZBOX-1.1.md 3: the VIZZBOX becomes a switch in front of Skiff's own interface (ui_vizzbox.c vb_input
