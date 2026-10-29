@@ -1,11 +1,11 @@
 # Vizzbox 1.1 – Änderungen gegenüber Skiff 2.0.1
 
-> **Stand: Etappe 4 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
+> **Stand: Etappe 5 von 8** (BRIEF-VIZZBOX-1.1.md, Abschnitt 10). Die Vizzbox 1.0 ist bytegleich nachgebaut, das Golden
 > ihrer Songs steht; „Hand drauf“ (Abschnitt 2 des Auftrags), die Seiten KLANG und MOD, Fokus-Spur, Tasten, die
-> Layer FX, ARP (PERFORM) und GLO (Busse), MOMENTARY, Zurückgeben, Bildschirm und LEDs (Abschnitt 3.1–3.8) sind
-> gebaut und getestet, alle Tests grün. Es fehlen noch: Favoriten mit Klängen (3.9), das Budget mit den Klängen des
-> Nutzers, neue Subgenres, Name/Kennung/Installer, Release, Demos, Emulator, Anleitung; das Paket in `out/` ist bis
-> Etappe 8 das der 1.0.
+> Layer FX, ARP (PERFORM) und GLO (Busse), MOMENTARY, Zurückgeben, Bildschirm und LEDs (Abschnitt 3.1–3.8) und die
+> Favoriten mit Klängen (3.9) sind gebaut und getestet, alle Tests grün. Es fehlen noch: das Budget mit den Klängen
+> des Nutzers, neue Subgenres, Name/Kennung/Installer, Release, Demos, Emulator, Anleitung; das Paket in `out/` ist
+> bis Etappe 8 das der 1.0.
 
 Die Vizzbox ist eine geänderte Fassung von **Skiff 2.0.1** (illuminus5, <https://github.com/illuminus5/skiff>,
 GPL-3.0; Skiff baut auf **Felucca** von Leo Kuroshita / Hügelton Instruments auf) und baut auf **Vizz 2.0** auf. Die
@@ -25,6 +25,7 @@ Basis ist der Tag `v2.0.1` (`b03d98a`); die Änderungen sind die Commits in `pat
 | 0017 | Platz: QUARKs eigene Optik (Zierwerk des Themes) weggelassen, die Palette bleibt (Abschnitt 3) |
 | 0018 | **Bedienung**: Seiten KLANG und MOD, Fokus-Spur, Tasten, Layer, Busse, Bildschirm (Abschnitt 5) |
 | 0019 | LEDs der Seiten, Layer und Fokus-Spur; HOME + FX hält den FX-Layer offen (Abschnitt 5) |
+| 0020 | **Favoriten mit Klängen**, lesbar für die Vizzbox 1.0 (Abschnitt 6) |
 
 ---
 
@@ -97,8 +98,10 @@ Der Plan, woher der Platz kommt, in der Reihenfolge des Auftrags, und was er erg
 | QUARKs Optik weg (0017) | 570 884 | 10 680 | −6 684 |
 | Etappe 3: Seiten, Fokus, Tasten, Layer, Busse, Bildschirm | 573 984 | 7 580 | +3 100 |
 | Etappe 4: LEDs, Lock | 573 984 | 7 580 | ±0 |
+| Etappe 5: Favoriten mit Klängen | 574 928 | 6 636 | +944 |
 
-RAM `.data` + `.bss` 87 036 von 98 304 Bytes, Pool 347 120 von 356 352 (Reserve 9 232, Skiff verlangt 8 192).
+RAM `.data` + `.bss` (mit `.vbox` dahinter) 90 172 von 98 304 Bytes, Pool 347 168 von 356 352 (Reserve 9 184, Skiff
+verlangt 8 192).
 
 Der Flash zwischen App-Bereich (`0x93000`) und den Favoriten (`0x95000`) bleibt liegen: Der Update-Loader schreibt
 nur den App-Bereich, sein Paketformat hat eine feste App-Größe, und Skiffs Flash-Karte hat dort keinen Eintrag – das
@@ -195,7 +198,30 @@ die Regler der Seite SONG, alles andere machen Skiffs Seiten, Karten, Grafiken u
   PERFORM-Layer, HOME-Karte) in allen sechs Paletten im Golden `tests/vizzbox_ui_golden.txt`; der Rahmen der
   Fokus-Spur ändert die SONG-Bilder der 1.0 (gewollt).
 
-## 6. Tests
+## 6. Favoriten mit Klängen (Etappe 5)
+
+- **SAVE + weiße Taste** speichert zum Rezept (Genre, Subgenre, Seed, Energie, Variation, Länge, Tempo – wie 1.0) je
+  Spur, was der Nutzer übernommen hat: den **Klang** (ein Werks-Preset als Engine und Preset, ein User-Sound als sein
+  Platz), die **zuletzt gedrehten Parameter**, bis zu acht je Spur (bei mehr die acht letzten: der Produzent führt je
+  Spur eine Liste in der Reihenfolge des Drehens), und die **Bus-Werte**, die der Nutzer gedreht hat (bis zu zwölf).
+- **Laden** (GLO + weiße Taste) stellt sie als Übernahmen wieder her: Eine Spur, die der Favorit hält, bekommt seinen
+  Klang und seine Werte an Stelle dessen, was der Nutzer dort gerade hatte; die anderen Spuren bleiben, wie sie sind.
+  Im Stillstand übernimmt der Produzent dafür die Spuren (wie beim Öffnen von KLANG); geladen, während die GROOVEBOX
+  spielt, kommen die Klänge beim nächsten PLAY der VIZZBOX. Ein Favorit **ohne Übernahmen** verhält sich wie in 1.0.
+- Ein Favorit, der auf einen **User-Sound-Platz** zeigt, spielt, was jetzt dort liegt; ein leerer Platz lässt die
+  Spur beim Klang des Produzenten.
+- In der Liste des GLO-Layers steht bei einem Favoriten mit Klängen ein `+`.
+- **Format:** die beiden Sektoren der 1.0 (A `0x95000`, B `0x96000`) bleiben, ihr Rekord „VBF1“ am Anfang
+  unverändert – die Vizzbox 1.0 liest ihn wie bisher und liest nicht weiter. Dahinter, ab `+0x100`, je Favorit ein
+  Eintrag von 196 Bytes: das Rezept, zu dem er gehört, die Klänge, Parameter, Busse und eine eigene CRC. Er zählt,
+  solange sein Favorit genau dieses Rezept hat, in welcher der beiden Kopien auch immer (die neuere gewinnt). Speichert
+  die 1.0 über einen Favoriten, verliert nur dieser seine Klänge; die anderen behalten sie, auch wenn die 1.0 die
+  neuere Kopie ohne Einträge geschrieben hat. Skiff 2.0.1 und Vizz 2.0 fassen die Sektoren weiter nicht an.
+  Geschrieben wird mit dem Rekord, nur im Stillstand, wie in 1.0.
+- RAM: 3 136 Bytes für die Einträge (hinter `.bss`, beim Booten aus dem Flash gelesen), 48 im Pool für die Listen der
+  letzten Parameter.
+
+## 7. Tests
 
 | Schritt | Ergebnis |
 | --- | --- |
@@ -211,9 +237,12 @@ die Regler der Seite SONG, alles andere machen Skiffs Seiten, Karten, Grafiken u
 | darin `producer_test`, neu | pages (EDIT KLANG, LFO MOD, SELECT durch die Familien, ALGORITHM und SEL + schwarz als Fokus, LIVE gedreht = Übernahme, HOME → SONG), browse (PRESETS je Rolle: die Klänge des Stils zuerst und markiert, dann die passenden Typen; HOME + PRESETS alle), keys (LEAD in der Skala, DRUMS je Taste eine Lane, CHORDS je Taste ein Akkord in der Tonart, schwarze Tasten nie eine Note, MIDI auf dem Kanal der Fokus-Spur), layers (FX antippen: DROP beim Loslassen; halten: Layer, kein DROP; ARP: BREAK / PERFORM, eine weiße Taste spielt die Fokus-Spur; SEQ HOLD; GLO + K1 Delay-MIX als Übernahme, SELECT die DELAY-Seite, das Tempo bleibt), momentary (LFO + K1: der Wert, zurück über RETURN, keine Übernahme), leds (Seiten, Layer atmet, Fokus-Taste atmet / stumm mittel; HOME + FX hält offen ohne DROP, FX schließt) |
 | `tests/vizzbox_ui.c` | zehn neue Szenen × sechs Paletten im Golden |
 | `tests/vizzbox_mutants.py`, neu | FX antippen öffnet nichts (kein DROP), FX halten löst DROP aus (wie 1.0 beim Drücken), DRUMS-Tasten nach GM statt Lanes, PRESETS ohne Markierung des Stils: **jeder erkannt** |
+| **Etappe 5**, derselbe Lauf | darin `producer_test fav_sounds`: LEAD-Klang auf KLANG gewählt, LIVE-Regler gedreht, CHORDS mit User-Sound, Delay-MIX auf GLO, ARP zehn Parameter gedreht; SAVE + Taste 3: der Rekord der 1.0 unverändert und lesbar, der Eintrag dahinter (ARP: die acht letzten); **ein frisches Gerät in einem eigenen Prozess bootet auf diesem Flash** (`fav_boot`), GLO + Taste 3: das Rezept, die Klänge, der Wert, der Bus, wieder die des Nutzers, ein neuer Stil lässt sie; ein Favorit ohne Übernahmen lässt die Hand, wie sie ist; ein Platz mit anderem Klang spielt den neuen |
+| `tests/vizzbox_compat.c` mit dem Baum der Vizzbox 1.0 (neu) | die 1.0 liest die 16 Rezepte, die 1.1 schrieb, speichert über Favorit 10; zurück auf 1.1: Favorit 6 mit Klängen, Favorit 10 ohne (anderes Lied), eine Änderung schreibt alle Einträge wieder; die Favoriten, die die 1.0 schrieb, liest die 1.1 wie geschrieben, ohne beim Booten etwas zu schreiben, und speichert einen mit Klang. Skiff 2.0.1 und Vizz 2.0 lassen beide Sektoren bytegleich (wie in 1.0; jeder alte Baum jetzt mit seinem eigenen `tests/hostsim.c`) |
+| `tests/vizzbox_mutants.py`, neu | die Klänge im Favoriten werden nicht gespeichert, die Favoriten aus 1.0 gehen verloren (ein eigener Rekord „VBF2“): **jeder erkannt** – alle 12 Fehler der 1.1 bis hier erkannt |
 
 ## Nächste Schritte
 
-Etappe 5 (Favoriten mit Klängen) und 6 (Budget mit den Klängen des Nutzers) sind gebaut und getestet und folgen als
-Patches 0020 und 0021; Etappe 7 (die 22 Subgenres der Liste) ist in Arbeit, dann Etappe 8 nach Abschnitt 10 des
-Auftrags.
+Etappe 6 (Budget mit den Klängen des Nutzers: Ausklang aus den Hüllkurven, POLY-Klänge, Platz fürs Mitspielen, Messfall
+„schwerste Wahl“) ist gebaut und getestet und folgt als Patch 0021; Etappe 7 (die 22 Subgenres der Liste, CC 110) ist
+in Arbeit, dann Etappe 8 nach Abschnitt 10 des Auftrags.

@@ -1,0 +1,855 @@
+From 8172c9dc96aafad87baa088802c42db06d1e6279 Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 06:52:27 +0000
+Subject: [PATCH 20/20] Vizzbox 1.1: favourites with sounds
+ (BRIEF-VIZZBOX-1.1.md 3.9)
+
+SAVE + a white key keeps, besides the song, what the user took: a track's sound (a factory preset by engine and
+preset, a user sound by its slot: what lies there when loaded plays), its eight parameters turned last, the buses.
+Loading puts them back as the user's (a track the favourite holds gets its sound and values in place of what the
+user had there; the others stay). A favourite with nothing taken is as in 1.0. In the favourites' own sectors after
+the record the Vizzbox 1.0 reads (VB_XOFF 0x100): an entry each with the song it goes with and a CRC of its own, so
+the 1.0 reads its songs as before, and a favourite it saves over loses only its own sounds. Written with the record,
+while stopped. The GLO layer's list marks them with a +.
+
+Tests: producer_test fav_sounds (saved, a fresh device booting on that flash in a process of its own, loaded, over a
+new style; the eight latest; a favourite with nothing taken; a slot with another sound now), vizzbox_compat with the
+Vizzbox 1.0's tree both ways (each old tree now with its own tests/hostsim.c), two faults more in the counter-check.
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/producer.c     |   2 +
+ firmware/src/producer_isr.c |  14 +++-
+ firmware/src/ui_vizzbox.c   | 109 ++++++++++++++++++++++++-
+ tests/producer_test.c       | 156 ++++++++++++++++++++++++++++++++++++
+ tests/run_tests.sh          |  21 +++--
+ tests/vizzbox_compat.c      | 120 ++++++++++++++++++++++++++-
+ tests/vizzbox_mutants.py    |  41 ++++++++--
+ tests/vizzbox_ui.c          |   9 ++-
+ tests/vizzbox_ui_golden.txt |  36 ++++-----
+ 9 files changed, 471 insertions(+), 37 deletions(-)
+
+diff --git a/firmware/src/producer.c b/firmware/src/producer.c
+index 7f4eef7..66a134e 100644
+--- a/firmware/src/producer.c
++++ b/firmware/src/producer.c
+@@ -1338,6 +1338,7 @@ static void vb_next(void)
+ static project_store_t vb_keep __attribute__((section(".vbox")));   /* the GROOVEBOX's music, packed (SKF4); after
+                                                                      * .bss (app.ld: the pool keeps its 8 KiB spare) */
+ static int vb_owns(void) { return vb.own; }
++static void vb_xtake(void);
+ /* (1.1) the user's hand over a stay in the GROOVEBOX, stopped (its music in the tracks meanwhile): what they took kept at
+  * vb_give, back at vb_take. After .bss, not zeroed: vb_hs_ok says it holds something */
+ static struct {
+@@ -1413,6 +1414,7 @@ static int vb_take(void)
+     vb.own = 1;
+     sel_set(R_L);                                   /* ((1.1) the focus track: the lead to begin with) */
+     vb_hs_get();                                    /* ((1.1) what the user took before the GROOVEBOX had them) */
++    vb_xtake();                                     /* ((1.1) a favourite's, loaded meanwhile: ui_vizzbox.c) */
+     return 1;
+ }
+ /* back to the GROOVEBOX, stopped: its music as it was */
+diff --git a/firmware/src/producer_isr.c b/firmware/src/producer_isr.c
+index 89c590a..339d82c 100644
+--- a/firmware/src/producer_isr.c
++++ b/firmware/src/producer_isr.c
+@@ -58,6 +58,8 @@ static struct {
+     uint8_t snd;                                    /* bit k: track k's sound is the user's */
+     uint8_t par[NTRK][VB_PB];                       /* track k's parameter i the user's */
+     uint32_t glo;                                   /* bit g: the global g the user's (the buses) */
++    uint8_t last[NTRK][8];                          /* track k's parameters the user turned, + 1, the latest first
++                                                     * (a favourite keeps eight: ui_vizzbox.c vb_xsave) */
+ } vb_hand __attribute__((section(".pool")));
+ static int vb_mine(uint32_t k, uint32_t id) { return (vb_hand.par[k % NTRK][id / 8u] >> (id & 7u)) & 1u; }
+ static uint8_t vb_gl[2u + VB_NRAMP] __attribute__((section(".pool")));   /* a control the user held let go: the steps
+@@ -94,8 +96,16 @@ static int vb_owns(void);
+ /* (1.1) track k's parameter id turned by the user (motion.c motion_capture): theirs, while the producer has the tracks */
+ static void vb_grab(uint32_t k, uint32_t id)
+ {
+-    if (vb_owns() && k < NTRK && id < P_COUNT)
+-        vb_hand.par[k][id / 8u] |= (uint8_t)(1u << (id & 7u));
++    uint8_t *l = vb_hand.last[k % NTRK];
++    uint32_t i;
++    if (!vb_owns() || k >= NTRK || id >= P_COUNT)
++        return;
++    vb_hand.par[k][id / 8u] |= (uint8_t)(1u << (id & 7u));
++    for (i = 0; i < 7u && l[i] != id + 1u; i++)
++        ;
++    for (; i; i--)
++        l[i] = l[i - 1u];
++    l[0] = (uint8_t)(id + 1u);
+ }
+ /* (1.1) the producer's value v into *vp, but not while the user's hand is on it (held: g's way set); let go, a beat's
+  * way from where it is to v, no jump (BRIEF-VIZZBOX-1.1.md 2) */
+diff --git a/firmware/src/ui_vizzbox.c b/firmware/src/ui_vizzbox.c
+index d05e295..3444fcf 100644
+--- a/firmware/src/ui_vizzbox.c
++++ b/firmware/src/ui_vizzbox.c
+@@ -27,6 +27,7 @@
+ static uint8_t vb_gpg[3] __attribute__((section(".pool")));   /* (1.1) the GROOVEBOX's page, HOME, track meanwhile */
+ static void vb_fav_load(void);
+ static void vb_knob_song(void);
++static int vb_ready(void);
+ static void vb_mode_boot(void)
+ {
+     vb_mode = !(CPU2_BYTE & VB_MODE_BIT);
+@@ -91,17 +92,114 @@ static vb_favs_t vb_fav __attribute__((section(".pool")));
+ static uint8_t vb_fav_dirty __attribute__((section(".pool")));   /* changed: to be written once stopped */
+ static uint8_t vb_fav_at __attribute__((section(".pool")));      /* the copy that holds the newest */
+ static uint32_t vb_fav_crc(const vb_favs_t *f) { return st_crc32(f, (uint32_t)((const uint8_t *)&f->crc - (const uint8_t *)f)); }
++/* (1.1, BRIEF-VIZZBOX-1.1.md 3.9) what of the song the user had taken, kept with a favourite: a track's sound (a factory
++ * preset: its engine and preset; a user sound: its slot, so what lies there now plays), the eight of its parameters
++ * turned last, the buses. After the record in the same sectors (VB_XOFF), which the Vizzbox 1.0 never reads (it reads
++ * its record alone; Skiff 2.0.1 and Vizz 2.0 not even that): an entry a favourite with the song it goes with and a CRC
++ * of its own, so it counts while its favourite is that song, in either copy (one the 1.0 saved over has none). All
++ * zero: nothing taken, the favourite as in 1.0. Written with the record, while stopped */
++#define VB_XOFF 0x100u
++#define VB_NG 12u
++typedef struct {
++    vb_song_t r;                                    /* the favourite's song */
++    uint8_t eng[NTRK], pre[NTRK];                   /* the sound: engine + 1 and its preset; 0x80 the user sound in
++                                                     * slot pre; 0 none */
++    uint8_t id[NTRK][8];                            /* the parameters + 1, the latest first; 0 none */
++    int16_t v[NTRK][8];
++    uint32_t glo;                                   /* the buses: the globals of these bits, their values in g */
++    int16_t g[VB_NG];
++    uint32_t crc;
++} vb_xfav_t;
++_Static_assert(sizeof(vb_favs_t) <= VB_XOFF && VB_XOFF + VB_NFAV * sizeof(vb_xfav_t) <= ST_SECTOR, "a favourites' sector");
++static vb_xfav_t vb_xf[VB_NFAV] __attribute__((section(".vbox")));   /* (after .bss: vb_fav_load sets it) */
++static uint32_t vb_xcrc(const vb_xfav_t *x) { return st_crc32(x, sizeof *x - 4u) ^ 0x31584256u; }
+ static void vb_fav_load(void)
+ {
+     vb_favs_t b;
+-    uint32_t c;
++    vb_xfav_t x;
++    uint32_t c, i;
+     memset(&vb_fav, 0xFF, sizeof vb_fav);
++    memset(vb_xf, 0, sizeof vb_xf);
+     for (c = 0; c < 2u; c++)
+         if (!st_read(VB_FAV_OFF + c * ST_SECTOR, &b, sizeof b) && b.magic == VB_FMAGIC && b.crc == vb_fav_crc(&b) &&
+             (vb_fav.magic != VB_FMAGIC || b.seq - vb_fav.seq < 0x80000000u)) {
+             vb_fav = b;
+             vb_fav_at = (uint8_t)c;
+         }
++    for (c = 0; c < 2u; c++)                        /* (the newer copy's last: it counts) */
++        for (i = 0; i < VB_NFAV; i++)
++            if (!st_read(VB_FAV_OFF + (c ^ vb_fav_at ^ 1u) * ST_SECTOR + VB_XOFF + i * sizeof x, &x, sizeof x) &&
++                x.crc == vb_xcrc(&x) && !memcmp(&x.r, &vb_fav.f[i], sizeof x.r))
++                vb_xf[i] = x;
++}
++/* favourite n: what the user has taken now, with its song */
++static void vb_xsave(uint32_t n)
++{
++    vb_xfav_t *x = &vb_xf[n];
++    const track_t *t;
++    uint32_t k, i, j, c, any = 0;
++    memset(x, 0, sizeof *x);
++    for (k = 0, t = trk; vb.own && k < NTRK; k++, t++) {
++        if ((vb_hand.snd >> k) & 1u) {
++            x->eng[k] = (uint8_t)(t->user ? 0x80u : t->eng_req + 1u);
++            x->pre[k] = (uint8_t)(t->user ? t->user - 1u : t->preset);
++        }
++        for (i = j = 0; i < 8u; i++)
++            if ((c = vb_hand.last[k][i]) != 0u && vb_mine(k, c - 1u)) {
++                x->id[k][j] = (uint8_t)c;
++                x->v[k][j++] = t->p[c - 1u];
++            }
++    }
++    for (i = j = 0; vb.own && i < G_COUNT && j < VB_NG; i++)
++        if ((vb_hand.glo >> i) & 1u) {
++            x->glo |= 1u << i;
++            x->g[j++] = song.g[i];
++        }
++    for (i = 0; i < sizeof *x - 4u; i++)
++        any |= ((const uint8_t *)x)[i];
++    if (any) {                                      /* (nothing taken: none, crc 0) */
++        x->r = vb_fav.f[n];
++        x->crc = vb_xcrc(x);
++    }
++}
++/* favourite n's: on the tracks it took, its sound and parameters in place of what the user had there, theirs again (a
++ * user sound's slot now empty: the producer's sound); its buses */
++static void vb_xload(uint32_t n)
++{
++    const vb_xfav_t *x = &vb_xf[n];
++    track_t *t;
++    uint32_t k, i, j, sel = song.sel;
++    for (k = 0, t = trk; k < NTRK; k++, t++) {
++        if (!x->eng[k] && !x->id[k][0])
++            continue;
++        vb_back(1u << k);
++        sel_set(k);
++        if (x->eng[k] == 0x80u)
++            (void)up_load(x->pre[k]);
++        else if (x->eng[k] && (x->eng[k] - 1u == t->eng_req || !select_engine(x->eng[k] - 1u)))
++            apply_preset(x->pre[k]);
++        sel_set(sel);
++        for (j = 8u; j--;)                          /* (the oldest first: the list as it was) */
++            if ((i = x->id[k][j]) != 0u) {
++                const param_desc_t *d = track_desc(t, i - 1u);
++                t->p[i - 1u] = (int16_t)clamp(x->v[k][j], d->min, d->max);
++                vb_grab(k, i - 1u);
++            }
++    }
++    for (i = j = 0; i < G_COUNT; i++)
++        if ((x->glo >> i) & 1u) {
++            song.g[i] = x->g[j++];
++            vb_hand.glo |= 1u << i;
++        }
++    sync_reload = 1;
++}
++/* (vb_take) favourite + 1 loaded while the GROOVEBOX played: what it took, once the tracks are the producer's */
++static uint8_t vb_xwait __attribute__((section(".pool")));
++static void vb_xtake(void)
++{
++    if (vb_xwait && vb_xf[vb_xwait - 1u].crc)
++        vb_xload(vb_xwait - 1u);
++    vb_xwait = 0;
+ }
+ static void vb_fav_poll(void)
+ {
+@@ -113,7 +211,7 @@ static void vb_fav_poll(void)
+     vb_fav.magic = VB_FMAGIC;
+     vb_fav.crc = vb_fav_crc(&vb_fav);
+     off = VB_FAV_OFF + (vb_fav_at ^ 1u) * ST_SECTOR;
+-    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav))
++    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav) || st_prog(off + VB_XOFF, vb_xf, sizeof vb_xf))
+         ui_message("SAVE ERROR");
+     else
+         vb_fav_at ^= 1u;
+@@ -228,10 +326,15 @@ static void vb_white(uint32_t pressed)
+             continue;
+         if (save) {
+             vb_fav.f[n] = vb.own && song.playing ? vb.s : vb.k;
++            vb_xsave(n);
+             vb_fav_dirty = 1;
+             str_cpy(b, "FAVOURITE    SAVED", sizeof b);
+         } else if (vb_fav.f[n].genre < 10u) {
+             vb.k = vb_fav.f[n];
++            if (vb_xf[n].crc && !vb.own && song.playing)
++                vb_xwait = (uint8_t)(n + 1u);
++            else if (vb_xf[n].crc && vb_ready())
++                vb_xload(n);
+             if (vb.own && song.playing)
+                 vb.chg |= 7u;
+             else
+@@ -562,7 +665,7 @@ static void vb_favs(int32_t y)
+     for (i = 0; i < VB_NFAV; i++) {
+         const vb_song_t *f = &vb_fav.f[i];
+         p = vb_num(b, i + 1u);
+-        *p++ = ' ';
++        *p++ = vb_xf[i].crc ? '+' : ' ';             /* ((1.1) +: with sounds) */
+         str_cpy(p, f->genre < 10u ? VB_SNAME[vb_ri(f)] : "-", 18);
+         cv_text(8 + 116 * (int32_t)(i / 8u), y + 14 + 12 * (int32_t)(i % 8u), &AF_S, b, f->genre < 10u ? T_TEXT : T_DIM);
+     }
+diff --git a/tests/producer_test.c b/tests/producer_test.c
+index 6b37289..e1a6822 100644
+--- a/tests/producer_test.c
++++ b/tests/producer_test.c
+@@ -1339,6 +1339,157 @@ static void case_leds(void)
+     ok(!ui.layer && !ui.lock, "FX again: the FX layer still open");
+     ok(!(vb.req & VQ_DROP), "FX closing the kept layer: DROP NOW");
+ }
++static void sv_key(uint32_t held, uint32_t place)   /* a button held + the white key of a place */
++{
++    web_buttons(held);
++    run_s(0.1);
++    tap_key(key_at(0, place));
++    web_buttons(0);
++    run_s(0.3);
++}
++typedef struct { vb_song_t want; uint32_t e, pr, id, ue; int16_t v, mix; } fb_t;
++static fb_t fb;
++/* case_fav_sounds's other half, a process of its own: the device booting on the flash in file f (fb after it) */
++static int fav_boot(const char *f)
++{
++    static const uint8_t ARP_P[10] = {P_ATK, P_DEC, P_SUS, P_REL, P_DIST, P_CHOR, P_DLY, P_REV, P_GLIDE, P_PAN};
++    FILE *fp = fopen(f, "rb");
++    uint32_t i, e, pr, id, ue;
++    int16_t v, mix;
++    vb_song_t want;
++    snprintf(tag, sizeof tag, "favourites with sounds: off and on");
++    if (!fp || fread(nor, 1, sizeof nor, fp) != sizeof nor || fread(&fb, 1, sizeof fb, fp) != sizeof fb)
++        return 2;
++    fclose(fp);
++    want = fb.want, e = fb.e, pr = fb.pr, id = fb.id, ue = fb.ue, v = fb.v, mix = fb.mix;
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    run_s(0.6);
++    knobs(0, 0, 0x1111u, 90, 90, 1);
++    ok(!vb_hand.snd && !vb_hand.glo, "a fresh device: a hand");
++    sv_key(1u << B_GLO, 2);
++    ok(!memcmp(&vb.k, &want, sizeof want), "GLO + white key 3: not the song");
++    ok(vb.own && trk[R_L].eng_req == e && trk[R_L].preset == pr && ((vb_hand.snd >> R_L) & 1u),
++       "LEAD: not the favourite's sound, the user's (%u %u, was %u %u)", trk[R_L].eng_req, trk[R_L].preset, e, pr);
++    ok(trk[R_L].p[id] == v && vb_mine(R_L, id), "LEAD: LIVE KNOB 1 %d, kept %d", trk[R_L].p[id], v);
++    ok(trk[R_C].user == 6u && trk[R_C].eng_req == ue && ((vb_hand.snd >> R_C) & 1u), "CHORDS: not slot 6");
++    ok(song.g[G_DMIX] == mix && ((vb_hand.glo >> G_DMIX) & 1u), "the delay's MIX %d, kept %d", song.g[G_DMIX], mix);
++    for (i = 2u; i < 10u; i++)
++        ok(vb_mine(R_A, ARP_P[i]), "ARP %u: not the user's", ARP_P[i]);
++    ok(!vb_mine(R_A, ARP_P[0]) && !vb_mine(R_A, ARP_P[1]), "ARP: more than eight");
++    for (i = 0; i < NTRK; i++)
++        if (i != R_L && i != R_C)
++            ok(!((vb_hand.snd >> i) & 1u), "T%u's sound the user's", i + 1u);
++    press(1u << B_PLAY);
++    run_s(2.0);
++    web_enc(EN_K1, 1);                              /* a new style */
++    run_s(0.1);
++    ok(new_style(200.0), "no new style came");
++    ok(trk[R_L].eng_req == e && trk[R_L].preset == pr && trk[R_L].p[id] == v && trk[R_C].user == 6u &&
++       song.g[G_DMIX] == mix, "a new style over the favourite's");
++    printf("producer: %-40s %u checks, %d failed\n", tag, nchecks, fails);
++    return fails ? 1 : 0;
++}
++/* (1.1, 3.9) favourites with sounds: LEAD's sound chosen on KLANG (PRESETS), its LIVE KNOB 1 turned; CHORDS a user
++ * sound (slot 6, as PRESETS loads it); the delay's MIX on GLO; ARP ten parameters turned. SAVE + white key 3 keeps
++ * them with the song: the 1.0's record as it was, an entry after it (ARP: its eight latest). Off and on, a fresh
++ * device on that flash: GLO + white key 3 puts the song on the knobs and those sounds, values and the bus on the
++ * tracks, the user's (a new style leaves them). Then: a favourite with nothing taken leaves the hand as it is (as in
++ * 1.0); slot 6 holding another sound now: the favourite plays that one */
++static void case_fav_sounds(void)
++{
++    static const uint8_t ARP_P[10] = {P_ATK, P_DEC, P_SUS, P_REL, P_DIST, P_CHOR, P_DLY, P_REV, P_GLIDE, P_PAN};
++    uint32_t e, pr, id, i, ue, sel;
++    int16_t v, mix;
++    vb_song_t want;
++    snprintf(tag, sizeof tag, "favourites with sounds");
++    boot();
++    sel = song.sel;
++    sel_set(R_C);                                   /* (slot 6: the GROOVEBOX's T3 sound) */
++    ok(up_store(5, "PADX") == 0, "slot 6 not stored");
++    ue = trk[R_C].eng_req;
++    sel_set(sel);
++    knobs(2, 1, 0x7777u, 60, 40, 1);
++    press(1u << B_PLAY);
++    run_s(4.0);
++    press(1u << B_EDIT);                            /* KLANG, LEAD */
++    web_enc(EN_PRESET, 2);
++    run_s(0.3);
++    e = trk[R_L].eng_req;
++    pr = trk[R_L].preset;
++    id = vb_live.id[0];
++    web_enc(EN_K1, 5);
++    run_s(0.2);
++    v = trk[R_L].p[id];
++    sel_set(R_C);                                   /* CHORDS: the user sound (PRESETS: ui.c preset_go) */
++    ok(up_load(5) == 0, "slot 6 not loaded");
++    sel_set(R_L);
++    web_buttons(1u << B_GLO);                       /* the delay's MIX */
++    run_s(0.8);
++    web_enc(EN_K1, 6);
++    run_s(0.1);
++    web_buttons(0);
++    run_s(0.1);
++    mix = song.g[G_DMIX];
++    for (i = 0; i < 10u; i++) {                     /* ARP: ten turned (motion.c's way), the latest eight kept */
++        trk[R_A].p[ARP_P[i]] = (int16_t)(trk[R_A].p[ARP_P[i]] + (trk[R_A].p[ARP_P[i]] > 10 ? -3 : 3));
++        motion_capture(&trk[R_A], ARP_P[i], trk[R_A].p[ARP_P[i]]);
++    }
++    ok(vb_hand.snd == (1u << R_L | 1u << R_C) && ((vb_hand.glo >> G_DMIX) & 1u) && vb_mine(R_L, id),
++       "the hand before: %02x %08x", vb_hand.snd, vb_hand.glo);
++    sv_key(1u << B_SAVE, 2);
++    want = vb_fav.f[2];
++    ok(vb_xf[2].eng[R_L] == e + 1u && vb_xf[2].pre[R_L] == pr && vb_xf[2].eng[R_C] == 0x80u && vb_xf[2].pre[R_C] == 5u &&
++       !vb_xf[2].eng[R_B], "the sounds not kept: LEAD %02x %u, CHORDS %02x %u", vb_xf[2].eng[R_L], vb_xf[2].pre[R_L],
++       vb_xf[2].eng[R_C], vb_xf[2].pre[R_C]);
++    for (i = 0; i < 8u; i++)
++        ok(vb_xf[2].id[R_A][i] == ARP_P[9u - i] + 1u, "ARP's eight: %u. %u", i, vb_xf[2].id[R_A][i]);
++    press(1u << B_PLAY);                            /* STOP: written */
++    run_s(0.5);
++    {   /* the 1.0's reading: its record, its CRC, the song in it */
++        vb_favs_t r;
++        memcpy(&r, nor + 0x95000u + vb_fav_at * 0x1000u, sizeof r);
++        ok(r.magic == VB_FMAGIC && r.crc == vb_fav_crc(&r) && !memcmp(&r.f[2], &want, sizeof want),
++           "the 1.0's record: not as it was");
++    }
++    {   /* off and on: a new process, a device booting on that flash (tests: fav_boot) */
++        char path[] = "/tmp/vbfavXXXXXX";
++        int fd = mkstemp(path), st = 1;
++        pid_t pid;
++        fb = (fb_t){want, e, pr, id, ue, v, mix};
++        if (fd < 0 || write(fd, nor, sizeof nor) != (ssize_t)sizeof nor || write(fd, &fb, sizeof fb) != (ssize_t)sizeof fb)
++            ok(0, "no file for the flash");
++        if (fd >= 0)
++            close(fd);
++        fflush(stdout);
++        if (!(pid = fork())) {
++            execl("/proc/self/exe", "producer_test", "fav_boot", path, (char *)0);
++            _exit(2);
++        }
++        waitpid(pid, &st, 0);
++        unlink(path);
++        ok(WIFEXITED(st) && WEXITSTATUS(st) == 0, "off and on, loaded: not the favourite's (fav_boot)");
++    }
++    combo(1u << B_HOME, 1u << B_EDIT);              /* all back; nothing taken: favourite 4 as in 1.0 */
++    ok(!vb_hand.snd && !vb_hand.glo, "HOME + EDIT: a hand");
++    sv_key(1u << B_SAVE, 3);
++    ok(!vb_xf[3].crc, "nothing taken: kept as taken");
++    web_enc(EN_PRESET, 1);                          /* KLANG: LEAD's sound chosen */
++    run_s(0.3);
++    e = trk[R_L].eng_req;
++    pr = trk[R_L].preset;
++    sv_key(1u << B_GLO, 3);
++    ok(vb_hand.snd == 1u << R_L && trk[R_L].eng_req == e && trk[R_L].preset == pr,
++       "a favourite with nothing taken: the hand changed (%02x)", vb_hand.snd);
++    sel_set(R_B);                                   /* slot 6: another sound (T2's) */
++    ok(up_store(5, "PADY") == 0, "slot 6 not stored again");
++    ue = trk[R_B].eng_req;
++    sel_set(R_L);
++    sv_key(1u << B_GLO, 2);
++    ok(trk[R_C].user == 6u && trk[R_C].eng_req == ue, "slot 6's new sound not on CHORDS (%u, %u)", trk[R_C].eng_req, ue);
++    ok(voice_kills == 0, "%u voices stolen", voice_kills);
++}
+ 
+ /* ---------------------------------------------------------------- the cases, four at a time */
+ typedef struct { const char *name; uint32_t a, b; } case_t;
+@@ -1384,6 +1535,8 @@ static void one(const case_t *c)
+         case_momentary();
+     else if (!strcmp(c->name, "leds"))
+         case_leds();
++    else if (!strcmp(c->name, "fav_sounds"))
++        case_fav_sounds();
+     else
+         case_modes();
+ }
+@@ -1392,6 +1545,8 @@ int main(int argc, char **argv)
+     static case_t cs[200];
+     uint32_t n = 0, i, ri, len, running = 0, failed = 0;
+     const char *only = argc > 1 ? argv[1] : NULL;
++    if (only && argc > 2 && !strcmp(only, "fav_boot"))
++        return fav_boot(argv[2]);
+     cs[n++] = (case_t){"endless", 0, 0};
+     for (ri = 0; ri < 36u; ri++)
+         for (len = 0; len < 3u; len++)
+@@ -1415,6 +1570,7 @@ int main(int argc, char **argv)
+     cs[n++] = (case_t){"layers", 0, 0};
+     cs[n++] = (case_t){"momentary", 0, 0};
+     cs[n++] = (case_t){"leds", 0, 0};
++    cs[n++] = (case_t){"fav_sounds", 0, 0};
+     fflush(stdout);
+     for (i = 0; i < n; i++) {
+         int st;
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 5207041..7c75616 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -96,7 +96,8 @@
+ #                   tests/vizzbox_fuzz.c (ASan / UBSan); with emcc the one-file Vizzbox in Chromium
+ #                   (web/emu/test_vizzbox_emu.mjs). The counter-check: tests/vizzbox_mutants.py (build-vizzbox.sh).
+ #                   (Vizzbox 1.1) tests/vizzbox_golden.c: the songs of 1.0 (every subgenre, three seeds, every LENGTH,
+-#                   ENDLESS) as tests/vizzbox_golden10.txt has them from 1.0's tree: USB MIDI and audio bit for bit
++#                   ENDLESS) as tests/vizzbox_golden10.txt has them from 1.0's tree: USB MIDI and audio bit for bit;
++#                   tests/vizzbox_compat.c also with the Vizzbox 1.0's tree: favourites with sounds both ways
+ # Browser emulator (web/emu, when emcc is there): the firmware in WebAssembly (build/emu) boots, plays keys and MIDI,
+ #                   draws, lights its LEDs, keeps a save across instances, plays a song bit for bit as the same file
+ #                   built with cc (web/emu/native_check.c); the cost of 1 s of a heavy song against real time.
+@@ -297,22 +298,32 @@ if [ -f build/gen/felucca_tables.h ]; then
+         "$OUT/vizzbox_budget"
+     # (Vizzbox) a unit with favourites read by Skiff 2.0.1 (the tag v2.0.1) and Vizz 2.0 (its last patch, by its
+     # subject) and back: their trees from git, their devices built natively against this build/gen
++    # ((Vizzbox 1.1) and the Vizzbox 1.0, its last commit by its subject, VB10=1: favourites with sounds. Each tree with
++    # its own tests/hostsim.c, so its whole device is its own)
+     VZ=$(git log --format=%H --fixed-strings --grep="tests/vizz_mutants.py: the counter-check" v2.0.1..HEAD 2>/dev/null | tail -1)
+-    if [ -n "$VZ" ] && git rev-parse -q --verify v2.0.1 >/dev/null; then
++    V10=$(git log --format=%H --fixed-strings --grep="tools/vizzbox_demos.py: a time rounded" v2.0.1..HEAD 2>/dev/null | tail -1)
++    if [ -n "$VZ" ] && [ -n "$V10" ] && git rev-parse -q --verify v2.0.1 >/dev/null; then
+         rm -rf "${OUT:?}/compat"
+         CT="$PWD/$OUT/compat"                      # (absolute: the #include of FELUCCA_WEB is resolved from tests/)
+-        mkdir -p "$CT/skiff" "$CT/vizz"
+-        git archive v2.0.1 firmware web/emu | tar -x -C "$CT/skiff"
+-        git archive "$VZ" firmware web/emu | tar -x -C "$CT/vizz"
++        mkdir -p "$CT/skiff" "$CT/vizz" "$CT/vb10"
++        git archive v2.0.1 firmware web/emu tests/hostsim.c | tar -x -C "$CT/skiff"
++        git archive "$VZ" firmware web/emu tests/hostsim.c | tar -x -C "$CT/vizz"
++        git archive "$V10" firmware web/emu tests/hostsim.c | tar -x -C "$CT/vb10"
+         $CC -O2 -ffp-contract=off -w -DVIZZBOX=1 -Ibuild/gen -Ifirmware/src -o "$CT/vizzbox" tests/vizzbox_compat.c -lm
+         for t in skiff vizz; do
+             $CC -O2 -ffp-contract=off -w "-DFELUCCA_WEB=\"$CT/$t/web/emu/felucca_web.c\"" -Ibuild/gen -I"$CT/$t/firmware/src" \
+                 -o "$CT/$t/compat" tests/vizzbox_compat.c -lm
+         done
++        $CC -O2 -ffp-contract=off -w -DVIZZBOX=1 -DVB10=1 "-DFELUCCA_WEB=\"$CT/vb10/web/emu/felucca_web.c\"" -Ibuild/gen \
++            -I"$CT/vb10/firmware/src" -o "$CT/vb10/compat" tests/vizzbox_compat.c -lm
+         run "(Vizzbox) a unit with favourites: Skiff 2.0.1 boots it, loads, saves, autosaves, the favourites untouched; back on the Vizzbox all there" \
+             sh -c "\"$CT/vizzbox\" make \"$CT/a.nor\" && \"$CT/skiff/compat\" old \"$CT/a.nor\" \"$CT/b.nor\" && \"$CT/vizzbox\" back \"$CT/b.nor\""
+         run "(Vizzbox) the same with Vizz 2.0" \
+             sh -c "\"$CT/vizzbox\" make \"$CT/a.nor\" && \"$CT/vizz/compat\" old \"$CT/a.nor\" \"$CT/c.nor\" && \"$CT/vizzbox\" back \"$CT/c.nor\""
++        run "(Vizzbox 1.1) favourites with sounds on the Vizzbox 1.0: it reads their songs, saves one over; back on 1.1 the sounds of the others there" \
++            sh -c "\"$CT/vizzbox\" make \"$CT/a.nor\" && \"$CT/vb10/compat\" old10 \"$CT/a.nor\" \"$CT/d.nor\" && \"$CT/vizzbox\" back10 \"$CT/d.nor\""
++        run "(Vizzbox 1.1) the Vizzbox 1.0's favourites read by 1.1 as written, one saved with a sound" \
++            sh -c "\"$CT/vb10/compat\" make10 \"$CT/e.nor\" && \"$CT/vizzbox\" read \"$CT/e.nor\""
+     else
+         echo "== skip (Vizzbox) favourites read by Skiff 2.0.1 and Vizz 2.0 (no git history with v2.0.1 and Vizz 2.0's patches)"
+     fi
+diff --git a/tests/vizzbox_compat.c b/tests/vizzbox_compat.c
+index 28d4cd3..ec5818a 100644
+--- a/tests/vizzbox_compat.c
++++ b/tests/vizzbox_compat.c
+@@ -9,8 +9,21 @@
+  *                saved; the favourites' two sectors byte for byte as before
+  *   back IN      (this tree) that flash: the sixteen favourites as written, slots 1 and 2 by their names, each as
+  *                saved (slot 2 as the old firmware saved it)
++ * (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 3.9) favourites with sounds and the Vizzbox 1.0 (its tree, built with VB10=1):
++ *   make OUT     favourites 6 and 10 keep sounds too (LEAD's sound, BASS's DIST): their entries after the record
++ *   old10 IN OUT (the 1.0) that flash: the sixteen songs read as written; favourite 10 another song now, written (its
++ *                record alone, sequence 3, into the other copy)
++ *   back10 IN    (this tree) that flash: the songs as the 1.0 left them; favourite 6's sounds there (its song the
++ *                same), favourite 10's gone; a change written with every entry again
++ *   make10 OUT   (the 1.0) a new unit's sixteen favourites
++ *   read IN      (this tree) that flash: the 1.0's favourites as it wrote them, without sounds, none written at boot;
++ *                one saved with a sound: the record and its entry
+  *   cc -O2 -ffp-contract=off -w -DVIZZBOX=1 -Ibuild/gen -Ifirmware/src -o OUT tests/vizzbox_compat.c -lm
+- *   cc -O2 -ffp-contract=off -w '-DFELUCCA_WEB="TREE/web/emu/felucca_web.c"' -Ibuild/gen -ITREE/firmware/src ... */
++ *   cc -O2 -ffp-contract=off -w '-DFELUCCA_WEB="TREE/web/emu/felucca_web.c"' -Ibuild/gen -ITREE/firmware/src ...
++ *   (the 1.0's: -DVIZZBOX=1 -DVB10=1 too) */
++#ifndef VB10
++#define VB10 0
++#endif
+ #ifdef FELUCCA_WEB
+ #include FELUCCA_WEB
+ #else
+@@ -76,6 +89,23 @@ static void favs_want(vb_song_t *f)
+                            (uint8_t)(i & 1u ? 0u : 100u + i), (uint16_t)(0x1000u + i)};
+     f[3].seed = 0xBEEFu;
+ }
++#if !VB10
++static int xfav_is(uint32_t n)                      /* (1.1) favourite n with make's sounds */
++{
++    const vb_xfav_t *x = &vb_xf[n];
++    return x->crc == vb_xcrc(x) && x->eng[R_L] != 0u && !x->eng[R_B] && x->id[R_B][0] == P_DIST + 1u &&
++           !memcmp(&x->r, &vb_fav.f[n], sizeof x->r);
++}
++#endif
++#endif
++static uint32_t read_hash;
++#if VIZZBOX
++static uint32_t fav_seq(uint32_t c)                 /* copy c's sequence number as the flash has it (0: none) */
++{
++    vb_favs_t r;
++    memcpy(&r, nor + 0x95000u + c * 0x1000u, sizeof r);
++    return r.magic == VB_FMAGIC && r.crc == vb_fav_crc(&r) ? r.seq : 0u;
++}
+ #endif
+ 
+ int main(int argc, char **argv)
+@@ -87,12 +117,18 @@ int main(int argc, char **argv)
+             printf("compat: no flash image %s\n", argc > 2 ? argv[2] : "");
+             return 2;
+         }
++    if (!strcmp(mode, "read") || !strcmp(mode, "back10") || !strcmp(mode, "old10"))
++        if (argc < 3 || nor_io(argv[2], 0)) {
++            printf("compat: no flash image %s\n", argc > 2 ? argv[2] : "");
++            return 2;
++        }
++    read_hash = fav_hash();
+     web_boot();
+     usb.config = 1;
+     web_master(1023);
+     ms(1500);
+ #if VIZZBOX
+-    if (!strcmp(mode, "make") && argc > 2) {
++    if ((!strcmp(mode, "make") || (VB10 && !strcmp(mode, "make10"))) && argc > 2) {
+         vb_song_t want[VB_NFAV];
+         favs_want(want);
+         vb_mode_set(0);                             /* the GROOVEBOX: the music saved, the autosave */
+@@ -103,6 +139,14 @@ int main(int argc, char **argv)
+         vb_mode_set(1);
+         ms(300);
+         memcpy(vb_fav.f, want, sizeof vb_fav.f);
++#if !VB10
++        check("make: the producer's tracks (stopped)", vb_ready());
++        vb_grab_snd(R_L);                           /* (1.1) LEAD's sound and BASS's DIST the user's: favourites 6, 10 */
++        vb_grab(R_B, P_DIST);
++        vb_xsave(5);
++        vb_xsave(9);
++        check("make: favourites 6 and 10 with sounds", xfav_is(5) && xfav_is(9) && !vb_xf[0].crc);
++#endif
+         vb_fav.f[3].seed = 0x1003u;
+         vb_fav_dirty = 1;                           /* (the first copy, A) */
+         ms(300);
+@@ -121,6 +165,9 @@ int main(int argc, char **argv)
+         favs_want(want);
+         check("back: the sixteen favourites as written (the newer copy, sequence 2)",
+               vb_fav.magic == VB_FMAGIC && !memcmp(vb_fav.f, want, sizeof want) && vb_fav.seq == 2u);
++#if !VB10
++        check("back: favourites 6 and 10 with their sounds", xfav_is(5) && xfav_is(9));
++#endif
+         check("back: slot 1 COMPAT ONE and slot 2 OLD SAVE by their names", name_is(0, "COMPAT ONE") && name_is(1, "OLD SAVE"));
+         project_load(1);
+         ms(300);
+@@ -130,6 +177,73 @@ int main(int argc, char **argv)
+         check("back: slot 1 as the Vizzbox saved it (120 BPM)", music_is(120));
+         return fails ? 1 : 0;
+     }
++#if !VB10
++    if (!strcmp(mode, "back10")) {
++        vb_song_t want[VB_NFAV];
++        vb_xfav_t x;
++        favs_want(want);
++        want[9].seed = 0x9999u;
++        check("back10: the sixteen songs as the Vizzbox 1.0 left them (sequence 3)",
++              vb_fav.magic == VB_FMAGIC && !memcmp(vb_fav.f, want, sizeof want) && vb_fav.seq == 3u);
++        check("back10: favourite 6's sounds there (its song the same), favourite 10's gone (another song now)",
++              xfav_is(5) && !vb_xf[9].crc);
++        vb_mode_set(1);
++        ms(300);
++        vb_fav.f[1].seed = 0x2222u;
++        vb_fav_dirty = 1;
++        ms(300);
++        memcpy(&x, nor + 0x95000u + vb_fav_at * 0x1000u + VB_XOFF + 5u * sizeof x, sizeof x);
++        check("back10: a change written (sequence 4, the copy the 1.0 left) with favourite 6's entry",
++              fav_seq(vb_fav_at) == 4u && fav_seq(vb_fav_at ^ 1u) == 3u && !memcmp(&x, &vb_xf[5], sizeof x));
++        return fails ? 1 : 0;
++    }
++    if (!strcmp(mode, "read") && argc > 2) {
++        vb_song_t want[VB_NFAV];
++        uint32_t i, any = 0;
++        vb_xfav_t x;
++        favs_want(want);
++        for (i = 0; i < VB_NFAV; i++)
++            any |= vb_xf[i].crc;
++        check("read: the Vizzbox 1.0's sixteen favourites as it wrote them (sequence 2), without sounds",
++              vb_fav.magic == VB_FMAGIC && !memcmp(vb_fav.f, want, sizeof want) && vb_fav.seq == 2u && !any);
++        check("read: the favourites' sectors as the 1.0 left them (nothing written at boot)", fav_hash() == read_hash);
++        vb_mode_set(1);
++        ms(300);
++        check("read: the producer's tracks (stopped)", vb_ready());
++        vb_grab_snd(R_L);
++        web_buttons(1u << B_SAVE);                  /* SAVE + white key 3 */
++        ms(100);
++        for (i = 0; i < 27u && !(!key_black(i) && key_place(i) == 2u); i++)
++            ;
++        web_keys(1u << i);
++        ms(80);
++        web_keys(0);
++        web_buttons(0);
++        ms(400);
++        memcpy(&x, nor + 0x95000u + vb_fav_at * 0x1000u + VB_XOFF + 2u * sizeof x, sizeof x);
++        check("read: favourite 3 saved with LEAD's sound: the record (sequence 3) and its entry",
++              fav_seq(vb_fav_at) == 3u && x.crc == vb_xcrc(&x) && x.eng[R_L] != 0u &&
++              !memcmp(&x.r, &vb_fav.f[2], sizeof x.r));
++        return fails ? 1 : 0;
++    }
++#else
++    if (!strcmp(mode, "old10") && argc > 3) {
++        vb_song_t want[VB_NFAV];
++        favs_want(want);
++        check("old10: the Vizzbox 1.0 reads the sixteen songs 1.1 wrote (the newer copy, sequence 2)",
++              vb_fav.magic == VB_FMAGIC && !memcmp(vb_fav.f, want, sizeof want) && vb_fav.seq == 2u);
++        vb_mode_set(1);
++        ms(300);
++        vb_fav.f[9].seed = 0x9999u;
++        vb_fav_dirty = 1;
++        ms(300);
++        check("old10: favourite 10 another song, written (sequence 3, the other copy)",
++              fav_seq(vb_fav_at) == 3u && fav_seq(vb_fav_at ^ 1u) == 2u);
++        vb_mode_set(0);
++        ms(500);
++        return nor_io(argv[3], 1) || fails;
++    }
++#endif
+ #else
+     if (!strcmp(mode, "old") && argc > 3) {
+         uint8_t fav[0x2000];
+@@ -156,6 +270,6 @@ int main(int argc, char **argv)
+         return nor_io(argv[3], 1) || fails;
+     }
+ #endif
+-    printf("usage: vizzbox_compat make OUT | old IN OUT | back IN\n");
++    printf("usage: vizzbox_compat make OUT | old IN OUT | back IN | old10 IN OUT | back10 IN | make10 OUT | read IN\n");
+     return 2;
+ }
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+index d000625..91a0099 100644
+--- a/tests/vizzbox_mutants.py
++++ b/tests/vizzbox_mutants.py
+@@ -10,8 +10,9 @@ build/conv/conv.wasm):
+ 
+ Each fault is put into a copy of the sources in a scratch folder, the test that should see it built from that copy
+ and run (tests/producer_test.c with the case named, tests/vizzbox_inactive.c both ways, tests/vizzbox_ui.c against
+-its golden; (1.1) tests/vizzbox_golden.c's song against tests/vizzbox_golden10.txt); the report lists the checks that
+-failed. A fault none fails is a hole in the tests: the run fails."""
++its golden; (1.1) tests/vizzbox_golden.c's song against tests/vizzbox_golden10.txt, tests/vizzbox_compat.c reading
++the favourites the Vizzbox 1.0 wrote, its tree from git); the report lists the checks that failed. A fault none
++fails is a hole in the tests: the run fails."""
+ import os
+ import re
+ import shutil
+@@ -21,7 +22,8 @@ import tempfile
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ P, ISR, UI, PRJ = "producer.c", "producer_isr.c", "ui_vizzbox.c", "project.c"
+-# (what, file, [(old, new), ...], test): test ("producer", CASE[, SUBGENRE]), ("inactive",), ("ui",) or ("golden", N)
++# (what, file, [(old, new), ...], test): test ("producer", CASE[, SUBGENRE]), ("inactive",), ("ui",), ("golden", N) or
++# ("compat10",)
+ FAULTS = [
+     ("determinism: a song depends on the songs played before it", P, [
+         ("static void vb_stream(uint32_t what, uint32_t a, uint32_t b)\n{\n"
+@@ -86,7 +88,7 @@ FAULTS = [
+          "        (void)0;                                    /* (ENDLESS: after a DROP (ambient: a BREAK), now and then a")],
+      ("producer", "endless")),
+     ("a favourite stored but not written", UI, [
+-        ("    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav))", "    if (st_erase(off))")],
++        ("    if (st_erase(off) || st_prog(off, &vb_fav, sizeof vb_fav) ||", "    if (st_erase(off) ||")],
+      ("producer", "favourites")),
+     ("a favourite written while playing (an erase stops the audio)", UI, [
+         ("    if (!vb_fav_dirty || song.playing || !flash_ok)", "    if (!vb_fav_dirty || !flash_ok)")],
+@@ -134,6 +136,12 @@ FAULTS = [
+     ("1.1: the songs of 1.0 changed (a velocity a little more human)", P, [
+         ("    int32_t x = (int32_t)v + (int32_t)vb_below(11u) - 5;", "    int32_t x = (int32_t)v + (int32_t)vb_below(13u) - 6;")],
+      ("golden", "1")),
++    ("1.1: a favourite's sounds not kept (its record alone written)", UI, [
++        (" || st_prog(off + VB_XOFF, vb_xf, sizeof vb_xf))", ")")],
++     ("producer", "fav_sounds")),
++    ("1.1: the favourites of 1.0 lost (a record of its own, VBF2)", UI, [
++        ("#define VB_FMAGIC 0x31464256u", "#define VB_FMAGIC 0x32464256u")],
++     ("compat10",)),
+ ]
+ INSTALLER = [
+     ("the installer: a Vizzbox told by its version (v1.0: before 2.0, a backup)",
+@@ -173,6 +181,29 @@ def check(work, test):
+                 if ln.split()[0] == test[1]]
+         got = run([exe, test[1]]).stdout.splitlines()
+         return True, [f"song {test[1]}: not the song of 1.0"] if got != want else []
++    if test[0] == "compat10":                      # (1.1) the Vizzbox 1.0's favourites (its tree from git) read
++        v10 = os.path.join(work, "vb10")
++        nor = os.path.join(v10, "e.nor")
++        if not os.path.exists(nor):
++            h = run(["git", "-C", ROOT, "log", "--format=%H", "--fixed-strings",
++                     "--grep=tools/vizzbox_demos.py: a time rounded", "v2.0.1..HEAD"]).stdout.split()
++            if not h:
++                return False, "no Vizzbox 1.0 in the git history"
++            os.makedirs(v10, exist_ok=True)
++            a = subprocess.run(["git", "-C", ROOT, "archive", h[-1], "firmware", "web/emu", "tests/hostsim.c"],
++                               capture_output=True, check=True).stdout
++            subprocess.run(["tar", "-x", "-C", v10], input=a, check=True)
++            r = run(["cc", *CFLAGS, "-DVIZZBOX=1", "-DVB10=1", f'-DFELUCCA_WEB="{v10}/web/emu/felucca_web.c"',
++                     "-I" + os.path.join(ROOT, "build", "gen"), "-I" + os.path.join(v10, "firmware", "src"),
++                     "-o", os.path.join(v10, "compat"), os.path.join(ROOT, "tests", "vizzbox_compat.c"), "-lm"])
++            if r.returncode or run([os.path.join(v10, "compat"), "make10", nor]).returncode:
++                return False, "the Vizzbox 1.0's unit not made"
++        exe = os.path.join(work, "vizzbox_compat")
++        r = build(work, "vizzbox_compat.c", exe, ["-DVIZZBOX=1"])
++        if r.returncode:
++            return False, r.stderr[-400:]
++        out = run([exe, "read", nor]).stdout
++        return True, [ln[8:].rsplit(" FAIL", 1)[0].strip() for ln in out.splitlines() if ln.endswith("FAIL")]
+     if test[0] == "inactive":
+         res = []
+         for v in "01":
+@@ -198,7 +229,7 @@ def main():
+     try:
+         for d in ("firmware", "tests", "web"):
+             shutil.copytree(os.path.join(ROOT, d), os.path.join(work, d))
+-        for t in [("producer", "song", "0"), ("producer", "transport"), ("inactive",), ("ui",)]:
++        for t in [("producer", "song", "0"), ("producer", "transport"), ("inactive",), ("ui",), ("compat10",)]:
+             ok, failed = check(work, t)
+             if not ok or failed:
+                 sys.exit(f"vizzbox_mutants: {t} fails without a fault: {failed if ok else 'does not build'}")
+diff --git a/tests/vizzbox_ui.c b/tests/vizzbox_ui.c
+index eb958ca..8a19735 100644
+--- a/tests/vizzbox_ui.c
++++ b/tests/vizzbox_ui.c
+@@ -140,9 +140,16 @@ static void scenes(uint32_t pal)
+     shot("vb11_fx_layer");
+     web_buttons(0);
+     ms(300);
++    web_buttons(1u << B_SAVE);                      /* SAVE + white key 5: favourite 5 with LEAD's sound (+) */
++    ms(100);
++    web_keys(1u << key_of(0, 4));
++    ms(80);
++    web_keys(0);
++    web_buttons(0);
++    ms(2500);
+     web_buttons(1u << B_GLO);
+     ms(900);
+-    shot("vb11_glo_layer");                         /* GLO held: the buses, the favourites */
++    shot("vb11_glo_layer");                         /* GLO held: the buses, the favourites (5: +, with sounds) */
+     web_buttons(0);
+     ms(300);
+     web_buttons(1u << B_ARP);
+diff --git a/tests/vizzbox_ui_golden.txt b/tests/vizzbox_ui_golden.txt
+index 3611236..6cbfde8 100644
+--- a/tests/vizzbox_ui_golden.txt
++++ b/tests/vizzbox_ui_golden.txt
+@@ -16,9 +16,9 @@ SKIFF_vb11_klang_preset      73ac94e0
+ SKIFF_vb11_mod               45af6d33
+ SKIFF_vb11_song_hand         6f508c63
+ SKIFF_vb11_fx_layer          5648e23a
+-SKIFF_vb11_glo_layer         bdca45fc
+-SKIFF_vb11_perform           677b51f3
+-SKIFF_vb11_home_map          e5933542
++SKIFF_vb11_glo_layer         2adcaea3
++SKIFF_vb11_perform           fedafb0b
++SKIFF_vb11_home_map          5e78a8c6
+ SKIFF_vb_groovebox           3e5927f0
+ HI-CON_vb_ready               6bcdfb80
+ HI-CON_vb_knob_genre          e520bb6c
+@@ -38,9 +38,9 @@ HI-CON_vb11_klang_preset      aab35f28
+ HI-CON_vb11_mod               46ff18d8
+ HI-CON_vb11_song_hand         a3ac43ab
+ HI-CON_vb11_fx_layer          090feaaa
+-HI-CON_vb11_glo_layer         249707e7
+-HI-CON_vb11_perform           d97b2a35
+-HI-CON_vb11_home_map          52010cb9
++HI-CON_vb11_glo_layer         95466485
++HI-CON_vb11_perform           8cebb19c
++HI-CON_vb11_home_map          aa3a580c
+ HI-CON_vb_groovebox           0fcbe209
+ PAPER_vb_ready               db04dc29
+ PAPER_vb_knob_genre          aecc7918
+@@ -60,9 +60,9 @@ PAPER_vb11_klang_preset      eccde14e
+ PAPER_vb11_mod               124d35bc
+ PAPER_vb11_song_hand         94e0cc95
+ PAPER_vb11_fx_layer          3b474cd7
+-PAPER_vb11_glo_layer         4e47273c
+-PAPER_vb11_perform           3601421f
+-PAPER_vb11_home_map          62e33f6d
++PAPER_vb11_glo_layer         6bc6b2c6
++PAPER_vb11_perform           b23acc15
++PAPER_vb11_home_map          9dbdb087
+ PAPER_vb_groovebox           21263ca3
+ CRYPT_vb_ready               fb393bef
+ CRYPT_vb_knob_genre          436def34
+@@ -82,9 +82,9 @@ CRYPT_vb11_klang_preset      2b7b93a0
+ CRYPT_vb11_mod               7c785bcc
+ CRYPT_vb11_song_hand         2e3660e2
+ CRYPT_vb11_fx_layer          7d9fed7d
+-CRYPT_vb11_glo_layer         f721bef6
+-CRYPT_vb11_perform           1ed57c34
+-CRYPT_vb11_home_map          8d5b4a71
++CRYPT_vb11_glo_layer         fe77b8b2
++CRYPT_vb11_perform           da955bb1
++CRYPT_vb11_home_map          63115900
+ CRYPT_vb_groovebox           96ec59f6
+ NEON_vb_ready               d447c60a
+ NEON_vb_knob_genre          7fb3acd8
+@@ -104,9 +104,9 @@ NEON_vb11_klang_preset      66917d76
+ NEON_vb11_mod               7d6f68cc
+ NEON_vb11_song_hand         4040dd4d
+ NEON_vb11_fx_layer          0a34ea8d
+-NEON_vb11_glo_layer         8cf6f8b0
+-NEON_vb11_perform           ce2bcb9f
+-NEON_vb11_home_map          ecc5755d
++NEON_vb11_glo_layer         75f884c0
++NEON_vb11_perform           a79ceb44
++NEON_vb11_home_map          54e0c836
+ NEON_vb_groovebox           516eead4
+ QUARK_vb_ready               19460ea6
+ QUARK_vb_knob_genre          12fe58ec
+@@ -126,7 +126,7 @@ QUARK_vb11_klang_preset      7475bf23
+ QUARK_vb11_mod               cb1f0896
+ QUARK_vb11_song_hand         27239d35
+ QUARK_vb11_fx_layer          e2d2873c
+-QUARK_vb11_glo_layer         546b88f7
+-QUARK_vb11_perform           16fe9ece
+-QUARK_vb11_home_map          dce9be35
++QUARK_vb11_glo_layer         7d21928c
++QUARK_vb11_perform           b0e7a04b
++QUARK_vb11_home_map          cebf8624
+ QUARK_vb_groovebox           7a1a97e8
+-- 
+2.43.0
+

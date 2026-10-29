@@ -1,7 +1,7 @@
 From 95647b60e1d04fec16ec9fdf14a907be31fd175e Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 07:36:36 +0000
-Subject: [PATCH 17/19] Vizzbox 1.1: room for the live control: QUARK's own
+Subject: [PATCH 17/20] Vizzbox 1.1: room for the live control: QUARK's own
  look left out (6 684 bytes)
 
 BRIEF-VIZZBOX-1.1.md 7: the live control (its part A) does not fit in the 3 612 bytes above the 2 KB reserve. Skiff's
