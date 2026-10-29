@@ -15,3 +15,4 @@ für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ:
 | Vizz 1.0 | Skiff 1.4 | [BRIEF.md](BRIEF.md) | Branch `vizz-1.0`, `out/vizz-1.0.fwsc` |
 | Vizz 2.0 | Skiff 2.0.1 | [BRIEF-2.0.md](BRIEF-2.0.md) | Branch `vizz-2.0`, `out/vizz-2.0.fwsc` |
 | Vizzbox 1.0 | Vizz 2.0 | [BRIEF-VIZZBOX.md](BRIEF-VIZZBOX.md), Konzept [docs/VIZZBOX.md](docs/VIZZBOX.md) | Branch `vizzbox-1.0`, `out/vizzbox-1.0.fwsc` |
+| Vizzbox 1.1 | Vizzbox 1.0 | [BRIEF-VIZZBOX-1.1.md](BRIEF-VIZZBOX-1.1.md): Live-Kontrolle, mehr Genres | Branch `vizzbox-1.1`, `out/vizzbox-1.1.fwsc` |
