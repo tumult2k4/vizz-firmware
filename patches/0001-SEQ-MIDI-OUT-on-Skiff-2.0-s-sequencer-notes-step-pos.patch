@@ -1,7 +1,7 @@
 From 771be21dbf02c08eefd32d8b6eb3e209f84db1f3 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Mon, 26 Oct 2026 02:57:19 +0000
-Subject: [PATCH 01/22] SEQ MIDI OUT on Skiff 2.0's sequencer: notes, step
+Subject: [PATCH 01/24] SEQ MIDI OUT on Skiff 2.0's sequencer: notes, step
  position, clock, start/stop over USB MIDI
 
 Vizz 1.0's SEQ MIDI OUT (patches 0001, 0002 on Skiff 1.4) ported to the

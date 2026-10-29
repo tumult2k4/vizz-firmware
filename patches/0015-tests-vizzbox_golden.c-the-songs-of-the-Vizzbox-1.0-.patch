@@ -1,7 +1,7 @@
 From 95f70512784cb381d55f14ac5f1acac801534617 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 05:03:04 +0000
-Subject: [PATCH 15/22] tests/vizzbox_golden.c: the songs of the Vizzbox 1.0,
+Subject: [PATCH 15/24] tests/vizzbox_golden.c: the songs of the Vizzbox 1.0,
  bit for bit (the 1.1 golden)
 
 With nobody's hand on the controls the Vizzbox 1.1 must make the songs 1.0 made (BRIEF-VIZZBOX-1.1.md 1, 9):

@@ -8,6 +8,20 @@ Browser: **[`vizzbox-im-browser.html`](vizzbox-im-browser.html)** – mit allem,
 Vizzbox 1.0, unverändert: Ihre Songs spielt die 1.1 bitgleich (das Golden `tests/vizzbox_golden10.txt` im Skiff-Baum
 belegt es, Note für Note und im Klang), deshalb sind sie nicht neu gerendert.
 
+**Live-Demo (1.1): [`live-1.1.mp3`](live-1.1.mp3)** – 60 Sekunden TECH HOUSE (Seed `5EED`, ENERGIE 80, VARIATION 50),
+in die jemand eingreift, wie man es an der FM-1 täte, über ihre eigenen Bedienelemente (`tools/vizzbox_live.c`):
+
+| Zeit | Takt | Was der Nutzer tut |
+| ---: | ---: | --- |
+| 0:00 | 16 | – der GROOVE, wie die Vizzbox ihn spielt |
+| 0:08 | 20 | SEL + schwarze Taste 2 (Fokus BASS), EDIT, PRESETS eine Raste: ein anderer Bass (ANALOG NIGHT BASS) |
+| 0:16 | 24 | SEL + schwarze Taste 3 (Fokus CHORDS), EDIT, LIVE-Regler 1 (CUTOFF) über zwei Takte zu und zwei wieder auf |
+| 0:44 | 39 | im letzten Takt des Aufbaus FX gehalten und die weiße Taste 2: REPEAT 1/16 in den Drop |
+| 0:45 | 40 | der Drop; SEL + schwarze Taste 4 (Fokus LEAD), acht Takte auf den weißen Tasten mitgespielt |
+
+Die Vizzbox komponiert dabei weiter – Aufbau und Drop kommen, wie sie kämen –, behält aber den Bass und den Filter,
+die der Nutzer gewählt hat.
+
 **Wie sie entstehen.** `tools/vizzbox_render` ist das Gerät, wie der Browser-Emulator es nachbildet
 (`web/emu/felucca_web.c`: Skiffs Firmware-Quellen samt Produzent, für den Computer übersetzt – dieselbe
 Klangerzeugung, dieselben Zahlen wie auf der FM-1): die Regler der VIZZBOX gestellt, PLAY gedrückt, gerendert bis der

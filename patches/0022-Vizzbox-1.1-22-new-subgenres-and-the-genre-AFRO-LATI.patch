@@ -1,7 +1,7 @@
 From 1d170e437a2c429973f62149a05dcef8bf17eca4 Mon Sep 17 00:00:00 2001
 From: Stefan <kloterstefan@gmail.com>
 Date: Thu, 29 Oct 2026 10:47:21 +0000
-Subject: [PATCH 22/22] Vizzbox 1.1: 22 new subgenres and the genre AFRO &
+Subject: [PATCH 22/24] Vizzbox 1.1: 22 new subgenres and the genre AFRO &
  LATIN, CC 110 (BRIEF-VIZZBOX-1.1.md 4, 5)
 
 Every subgenre of the brief's list, each a row of VB_SUB from the generators there are (tempo, swing, form, raster,

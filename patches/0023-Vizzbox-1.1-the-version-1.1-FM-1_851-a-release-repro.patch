@@ -1,0 +1,684 @@
+From 5394d35dd68fa590e30917a42ddd611fcf141eed Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 11:23:29 +0000
+Subject: [PATCH 23/24] Vizzbox 1.1: the version 1.1 (FM-1_851), a release
+ reproducible to the byte, the installer's way from and to 1.0, the browser
+ version's new controls (BRIEF-VIZZBOX-1.1.md 6, 8, 9)
+
+FELUCCA_VERSION v1.1 (the splash, ABOUT, the editor; a release X.Y is FM-1_8(X+4)Y: 1.1 FM-1_851, as build.py makes
+it). tools/build.py: with SOURCE_DATE_EPOCH, ABOUT's build date (__DATE__) that day, so the release is the same bytes on
+every build (build-vizzbox.sh fixes it). The installer: its texts for 1.x; web/test_vizzbox_installer.mjs also the
+Vizzbox 1.0's installer as it shipped over a 1.1 (no backup, installed; with this one over a 1.0 already there: 1.0 to
+1.1 and back). The browser version: its key overview with the mouse's way to hold a button (a right-click), and
+web/emu/test_vizzbox_emu.mjs the new controls from the keyboard and the mouse (EDIT, SEL + a black key, FX held, a
+latched button). tests/run_tests.sh: the version from felucca.c for the installer too. tests/ui_golden.txt: the 42
+pictures that show the version (ABOUT, ABOUT while recording, the splash, every palette and style) now v1.1, nothing
+else. tests/vizzbox_budget.c: each sound timed over 4 s (one was too short to tell the engines apart).
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ firmware/src/felucca.c         |  2 +-
+ tests/run_tests.sh             |  8 ++--
+ tests/ui_golden.txt            | 84 +++++++++++++++++-----------------
+ tests/vizzbox_budget.c         | 13 +++---
+ tests/vizzbox_mutants.py       |  4 +-
+ tools/build.py                 | 11 ++++-
+ web/emu/make_vizzbox_emu.py    | 41 ++++++++++++++++-
+ web/emu/test_vizzbox_emu.mjs   | 36 ++++++++++++++-
+ web/make_vizzbox_installer.py  | 12 ++---
+ web/test_vizzbox_installer.mjs | 14 +++++-
+ 10 files changed, 157 insertions(+), 68 deletions(-)
+
+diff --git a/firmware/src/felucca.c b/firmware/src/felucca.c
+index fa8474b..9e31b12 100644
+--- a/firmware/src/felucca.c
++++ b/firmware/src/felucca.c
+@@ -47,7 +47,7 @@
+ #endif
+ #endif
+ #ifndef FELUCCA_VERSION
+-#define FELUCCA_VERSION "v1.0"     /* (Vizzbox) the Vizzbox's (Vizz 2.0's v2.0, Skiff 2.0.1's v2.0.1); shown in the menu,
++#define FELUCCA_VERSION "v1.1"     /* (Vizzbox) the Vizzbox's (Vizz 2.0's v2.0, Skiff 2.0.1's v2.0.1); shown in the menu,
+                                     * the console and the editor; build.py --release X.Y */
+ #endif
+ #if FELUCCA_OTA && !FELUCCA_FLASH
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 804e3f6..e01705b 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -85,7 +85,7 @@
+ #                   tests/vizz10_fixture.sh): the backup first, the install, the conversion of what 2.0 can't read;
+ #                   a Vizz 1.x by its identity, Skiff 1.4 and a development build by the version; 2.0 installed as it is
+ # VIZZBOX INSTALLER (web/test_vizzbox_installer.mjs, the same way): the Vizzbox's installer over the same units, over
+-#                   Vizz 2.0, Skiff 2.0.1 and a Vizzbox (FM-1_850, v1.0: by its identity) installed only; Vizz 2.0's
++#                   Vizz 2.0, Skiff 2.0.1 and a Vizzbox (FM-1_850, FM-1_851: by its identity) installed only; Vizz 2.0's
+ #                   installer over a Vizzbox the same; Skiff's own page over one (by the version) writes nothing back
+ # VIZZBOX (Vizzbox, the browser emulator's device built natively with VIZZBOX=1): tests/producer_test.c (every
+ #                   subgenre in every LENGTH, determinism, transport and CC 104..109, live moves, MUTE / SOLO, ENDLESS
+@@ -576,19 +576,19 @@ else
+         python3 web/make_vizz_installer.py build/felucca.fwsc 2.0 "$OUT/vizz-installer.html" build/conv/conv.wasm
+     run "(Vizz) the installer in Chromium over a unit running Vizz 1.0 (tests/vizz10_unit.json): backup, install, conversion; Vizz 1.x by its identity, 2.0 as it is" \
+         node web/test_vizz_installer.mjs "$OUT/vizz-installer.html" tests/vizz10_unit.json build/conv/conv.wasm
++    FV=$(sed -n 's/^#define FELUCCA_VERSION "\([^"]*\)".*/\1/p' firmware/src/felucca.c)   # ((1.1) the version: v1.1)
+     run "(Vizzbox) the one-file installer (web/make_vizzbox_installer.py): the package and conv.wasm in it" \
+-        python3 web/make_vizzbox_installer.py build/felucca.fwsc 1.0 "$OUT/vizzbox-installer.html" build/conv/conv.wasm
++        python3 web/make_vizzbox_installer.py build/felucca.fwsc "${FV#v}" "$OUT/vizzbox-installer.html" build/conv/conv.wasm
+     run "(Vizzbox) the installer over Vizz 1.0 / 1.x, Skiff 1.4, a dev build: backup, conversion; over 2.0 and a Vizzbox installed only; Vizz 2.0's over a Vizzbox the same" \
+         node web/test_vizzbox_installer.mjs "$OUT/vizzbox-installer.html" tests/vizz10_unit.json build/conv/conv.wasm "$OUT/vizz-installer.html"
+     mkdir -p build/emu_vizzbox
+-    FV=$(sed -n 's/^#define FELUCCA_VERSION "\([^"]*\)".*/\1/p' firmware/src/felucca.c)
+     run "(Vizzbox) the browser emulator with the producer (VIZZBOX=1 -> build/emu_vizzbox/felucca.wasm)" \
+         emcc -O2 -ffp-contract=off -std=gnu99 -w -DVIZZBOX=1 "-DFELUCCA_VERSION=\"$FV\"" -Ibuild/gen -Ifirmware/src \
+         --no-entry -sSTANDALONE_WASM -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 -sFILESYSTEM=0 \
+         -o build/emu_vizzbox/felucca.wasm web/emu/felucca_web.c
+     run "(Vizzbox) the one-file Vizzbox in the browser (web/emu/make_vizzbox_emu.py)" \
+         python3 web/emu/make_vizzbox_emu.py build/emu_vizzbox/felucca.wasm "${FV#v}" "$OUT/vizzbox-emu.html"
+-    run "(Vizzbox) it in Chromium from the disk: switched on, the VIZZBOX, KNOB 1, PLAY (the screen, the audio), stop" \
++    run "(Vizzbox) it in Chromium from the disk: switched on, the VIZZBOX, KNOB 1, PLAY (the screen, the audio); (1.1) EDIT, SEL + a black key, FX held, a button held by a right-click, the key overview; stop" \
+         node web/emu/test_vizzbox_emu.mjs "$OUT/vizzbox-emu.html"
+ fi
+ 
+diff --git a/tests/ui_golden.txt b/tests/ui_golden.txt
+index efbc035..91164f9 100644
+--- a/tests/ui_golden.txt
++++ b/tests/ui_golden.txt
+@@ -1,9 +1,9 @@
+ # Skiff UI golden (tests/ui_render.c): FNV-1a 64 of every picture ui_render writes, then its name.
+ # Rewritten by UI_GOLDEN_UPDATE=1 tests/run_tests.sh -- only for an intended change of the look.
+-25c1d98f2e3614ce CRYPT_about
++7a452c55b31090eb CRYPT_about
+ 812d1c5ea03b4902 CRYPT_about_credits
+ 97c985bd05100fac CRYPT_about_end
+-0d0f492c24209a56 CRYPT_about_rec
++135a62eb73602e53 CRYPT_about_rec
+ d14a071f275c6385 CRYPT_arp
+ 5ffd1ed622497098 CRYPT_arp_2
+ 5efde6d80f6c8aa7 CRYPT_arp_on
+@@ -227,7 +227,7 @@ a640211c5b3b79d0 CRYPT_song_copyplus
+ ac3785bdfa5b2f17 CRYPT_song_rest_pick
+ eda8d013d956b2bc CRYPT_song_sound
+ bc35c7c0c3ecc61c CRYPT_song_sounds
+-8d7acce5155c8e89 CRYPT_splash
++6fe3fa42af59c8a0 CRYPT_splash
+ ae37ac6fa7460cb3 CRYPT_step
+ 67e3229e84561509 CRYPT_step_mark
+ b722e4598b782da3 CRYPT_step_tiles
+@@ -243,10 +243,10 @@ e28a10113a015c17 CRYPT_user_foot
+ 70347bc09e514016 CRYPT_voice_2
+ c7a0c74aaa23b4b6 CRYPT_voice_2_uni
+ e5f489b7140e9950 CRYPT_voice_glide
+-2ec574e1d2a7f001 CUSTOM_CRYPT_about
++3e60aad4bb871610 CUSTOM_CRYPT_about
+ 5d3f505d87143c83 CUSTOM_CRYPT_about_credits
+ abad782c9b1cb1a7 CUSTOM_CRYPT_about_end
+-2844c3908fc6afdb CUSTOM_CRYPT_about_rec
++16c581753096f836 CUSTOM_CRYPT_about_rec
+ b6a7880a42a5cbcb CUSTOM_CRYPT_arp
+ 618fbbc0f8288bfc CUSTOM_CRYPT_arp_2
+ 13c6ffe8947bed6f CUSTOM_CRYPT_arp_on
+@@ -468,7 +468,7 @@ d9610d28c70ba071 CUSTOM_CRYPT_song_playing
+ faa76a7454080148 CUSTOM_CRYPT_song_rest_pick
+ 816344c11d678d19 CUSTOM_CRYPT_song_sound
+ 86e5a7834c8be426 CUSTOM_CRYPT_song_sounds
+-d95f62be566e4545 CUSTOM_CRYPT_splash
++afce3a00350ab424 CUSTOM_CRYPT_splash
+ 218eb199b74ad5f7 CUSTOM_CRYPT_step
+ d413efa0663ef3c3 CUSTOM_CRYPT_step_mark
+ 468ba1b0c80a5bcb CUSTOM_CRYPT_step_tiles
+@@ -484,10 +484,10 @@ d2d37ef6e92f98ce CUSTOM_CRYPT_take_partial
+ 79ff34823edf6265 CUSTOM_CRYPT_voice_2
+ b2635aa7e5036074 CUSTOM_CRYPT_voice_2_uni
+ 9c3771c1bbcdb617 CUSTOM_CRYPT_voice_glide
+-2ec574e1d2a7f001 CUSTOM_NEON_about
++3e60aad4bb871610 CUSTOM_NEON_about
+ 5d3f505d87143c83 CUSTOM_NEON_about_credits
+ abad782c9b1cb1a7 CUSTOM_NEON_about_end
+-2844c3908fc6afdb CUSTOM_NEON_about_rec
++16c581753096f836 CUSTOM_NEON_about_rec
+ 52c6c53eff824652 CUSTOM_NEON_arp
+ 4ace9b2cc148a5f9 CUSTOM_NEON_arp_2
+ c1116ebb9b27fe92 CUSTOM_NEON_arp_on
+@@ -709,7 +709,7 @@ d69ca969f5dde57e CUSTOM_NEON_song_rest
+ 87962efe4b81985b CUSTOM_NEON_song_rest_pick
+ b4a7f6c7fbd2e5ff CUSTOM_NEON_song_sound
+ 5d370fc26da90fcf CUSTOM_NEON_song_sounds
+-fb295bb05becac82 CUSTOM_NEON_splash
++1750abe20947037b CUSTOM_NEON_splash
+ c96606d07ca04eeb CUSTOM_NEON_step
+ 6e60d7c871c8b5b3 CUSTOM_NEON_step_mark
+ dcc8ea6095b6df63 CUSTOM_NEON_step_tiles
+@@ -725,10 +725,10 @@ eaa3b2e1cb06be20 CUSTOM_NEON_voice
+ 4dbaba5b961109f3 CUSTOM_NEON_voice_2
+ 651539f2321d70a4 CUSTOM_NEON_voice_2_uni
+ d6323b948ce89067 CUSTOM_NEON_voice_glide
+-cf27dd97063f1638 CUSTOM_QUARK_about
++821f50e5141907f8 CUSTOM_QUARK_about
+ 52695c82401f6fc3 CUSTOM_QUARK_about_credits
+ 6a779e93b65e746d CUSTOM_QUARK_about_end
+-4b371c263a3862c3 CUSTOM_QUARK_about_rec
++40f053c036dffbf3 CUSTOM_QUARK_about_rec
+ dcd45277c15630cb CUSTOM_QUARK_arp
+ c0ed127f6a749547 CUSTOM_QUARK_arp_2
+ dc67b31cacd0356d CUSTOM_QUARK_arp_on
+@@ -950,7 +950,7 @@ b5402ebb5c3a9cea CUSTOM_QUARK_song_chains
+ b7ed969e42ab8a4c CUSTOM_QUARK_song_rest_pick
+ 2d947dc4a79bd0e7 CUSTOM_QUARK_song_sound
+ 5a1ab8994af1c9f4 CUSTOM_QUARK_song_sounds
+-1be8ffb087c7fb16 CUSTOM_QUARK_splash
++b6ff7d813d2c7e18 CUSTOM_QUARK_splash
+ c0dcc0f897d1c2cc CUSTOM_QUARK_step
+ 16b61816279b43ac CUSTOM_QUARK_step_mark
+ 531aff2799de09c3 CUSTOM_QUARK_step_tiles
+@@ -966,10 +966,10 @@ d5b13ce57b9ecd56 CUSTOM_QUARK_undo_box
+ 43649eb56a3c94f3 CUSTOM_QUARK_voice_2
+ b58462d0f4241bb9 CUSTOM_QUARK_voice_2_uni
+ 800d38984ddbf29b CUSTOM_QUARK_voice_glide
+-cf27dd97063f1638 CUSTOM_SKIFF_about
++821f50e5141907f8 CUSTOM_SKIFF_about
+ 52695c82401f6fc3 CUSTOM_SKIFF_about_credits
+ 6a779e93b65e746d CUSTOM_SKIFF_about_end
+-4b371c263a3862c3 CUSTOM_SKIFF_about_rec
++40f053c036dffbf3 CUSTOM_SKIFF_about_rec
+ dcd45277c15630cb CUSTOM_SKIFF_arp
+ c0ed127f6a749547 CUSTOM_SKIFF_arp_2
+ dc67b31cacd0356d CUSTOM_SKIFF_arp_on
+@@ -1191,7 +1191,7 @@ b5402ebb5c3a9cea CUSTOM_SKIFF_song_chains
+ b7ed969e42ab8a4c CUSTOM_SKIFF_song_rest_pick
+ 2d947dc4a79bd0e7 CUSTOM_SKIFF_song_sound
+ 5a1ab8994af1c9f4 CUSTOM_SKIFF_song_sounds
+-1be8ffb087c7fb16 CUSTOM_SKIFF_splash
++b6ff7d813d2c7e18 CUSTOM_SKIFF_splash
+ c0dcc0f897d1c2cc CUSTOM_SKIFF_step
+ 16b61816279b43ac CUSTOM_SKIFF_step_mark
+ 531aff2799de09c3 CUSTOM_SKIFF_step_tiles
+@@ -1207,10 +1207,10 @@ d5b13ce57b9ecd56 CUSTOM_SKIFF_undo_box
+ 43649eb56a3c94f3 CUSTOM_SKIFF_voice_2
+ b58462d0f4241bb9 CUSTOM_SKIFF_voice_2_uni
+ 800d38984ddbf29b CUSTOM_SKIFF_voice_glide
+-b53d9be2b7303033 HI-CON_about
++fabdc90e2da722ca HI-CON_about
+ e0bc28fc8040fc35 HI-CON_about_credits
+ 70e0da86c3d97b00 HI-CON_about_end
+-31488b1f33fd8ca5 HI-CON_about_rec
++8fa323f4b8a2561c HI-CON_about_rec
+ 203ab4886e85143a HI-CON_arp
+ 27e02597c98cdc98 HI-CON_arp_2
+ 6fb0450b7452a4f4 HI-CON_arp_on
+@@ -1432,7 +1432,7 @@ ba6f4087ed60e50d HI-CON_song_rest
+ d33abb68ef9d2d1e HI-CON_song_rest_pick
+ 302a778271f844ba HI-CON_song_sound
+ 862ae52c06a7c73f HI-CON_song_sounds
+-da469c38d333b75c HI-CON_splash
++66eca44496702d64 HI-CON_splash
+ 32f948fe2b3e98ac HI-CON_step
+ fe5ab9ee7a712de5 HI-CON_step_mark
+ c10a511522eda44a HI-CON_step_tiles
+@@ -1448,10 +1448,10 @@ bc2e7261b5777a48 HI-CON_voice
+ 47478084fed9ef19 HI-CON_voice_2
+ ee972cec5a663aec HI-CON_voice_2_uni
+ 54da1a184cfdc290 HI-CON_voice_glide
+-25c1d98f2e3614ce LARGE_CRYPT_about
++7a452c55b31090eb LARGE_CRYPT_about
+ 812d1c5ea03b4902 LARGE_CRYPT_about_credits
+ 97c985bd05100fac LARGE_CRYPT_about_end
+-0d0f492c24209a56 LARGE_CRYPT_about_rec
++135a62eb73602e53 LARGE_CRYPT_about_rec
+ 1c9326db96758c6b LARGE_CRYPT_arp
+ 478ba083442d973d LARGE_CRYPT_arp_2
+ f61b8db2d231076a LARGE_CRYPT_arp_on
+@@ -1673,7 +1673,7 @@ cab1b6f37c9f98f6 LARGE_CRYPT_song_playing
+ 066dc5b420adc706 LARGE_CRYPT_song_rest_pick
+ aebc2d83c56358c9 LARGE_CRYPT_song_sound
+ 2f95bf3f5de28ff5 LARGE_CRYPT_song_sounds
+-8d7acce5155c8e89 LARGE_CRYPT_splash
++6fe3fa42af59c8a0 LARGE_CRYPT_splash
+ fa365a152e3ba8b9 LARGE_CRYPT_step
+ 85f824d9dbd15136 LARGE_CRYPT_step_mark
+ 07a6740887431a84 LARGE_CRYPT_step_tiles
+@@ -1689,10 +1689,10 @@ bbb43f324795cb65 LARGE_CRYPT_user_foot
+ ac2ad311307c3d85 LARGE_CRYPT_voice_2
+ ac2ad311307c3d85 LARGE_CRYPT_voice_2_uni
+ 24fcb384a7d679f2 LARGE_CRYPT_voice_glide
+-5e29b38790c2e7e0 LARGE_NEON_about
++abe3087c39c7c251 LARGE_NEON_about
+ 876d3826f0d11fa1 LARGE_NEON_about_credits
+ 532b1ef8196f9f9a LARGE_NEON_about_end
+-90f8be6189036901 LARGE_NEON_about_rec
++ebf4dec900e12694 LARGE_NEON_about_rec
+ 905818ddd255b125 LARGE_NEON_arp
+ c5393b8718ace45e LARGE_NEON_arp_2
+ 9d399d4ecff68cd1 LARGE_NEON_arp_on
+@@ -1914,7 +1914,7 @@ aa3599e7dfb372dd LARGE_NEON_song_playing
+ 0495a0ae7ecc90cc LARGE_NEON_song_rest_pick
+ 957f412a8cff0bea LARGE_NEON_song_sound
+ 3a2d1eeedc7929e3 LARGE_NEON_song_sounds
+-437f1c26ab7fccdc LARGE_NEON_splash
++6b8dd32307676240 LARGE_NEON_splash
+ ce0efa55e9a5badd LARGE_NEON_step
+ c3a8dbb50284e4da LARGE_NEON_step_mark
+ d2292648cb5f302f LARGE_NEON_step_tiles
+@@ -1930,10 +1930,10 @@ abbf9442d25e44a7 LARGE_NEON_voice
+ 26bdd7343f88c7a9 LARGE_NEON_voice_2
+ 26bdd7343f88c7a9 LARGE_NEON_voice_2_uni
+ d255565ab2ad528a LARGE_NEON_voice_glide
+-89730bc4ccfd788f LARGE_QUARK_about
++53d090926cd08c7d LARGE_QUARK_about
+ 6e02e44fcd38b6d4 LARGE_QUARK_about_credits
+ 908f3cc91b66f27d LARGE_QUARK_about_end
+-364d0a031c1adcfb LARGE_QUARK_about_rec
++db7a670a81c25821 LARGE_QUARK_about_rec
+ b41c5dd1cc204c7a LARGE_QUARK_arp
+ ad7b6cab36f98546 LARGE_QUARK_arp_2
+ 932e1d0709cbc588 LARGE_QUARK_arp_on
+@@ -2155,7 +2155,7 @@ fd59f09ce8b1db50 LARGE_QUARK_song_playing
+ 598b2025c171e470 LARGE_QUARK_song_rest_pick
+ f9f71ffe70e6ddfa LARGE_QUARK_song_sound
+ 9fa140b32e516c78 LARGE_QUARK_song_sounds
+-72b01ea5846ef156 LARGE_QUARK_splash
++87a839188296e2f6 LARGE_QUARK_splash
+ cef8e41e87e80512 LARGE_QUARK_step
+ 7d6badc4d2ff5fe8 LARGE_QUARK_step_mark
+ 5087a9c5518f82b6 LARGE_QUARK_step_tiles
+@@ -2171,10 +2171,10 @@ c60ba7f9ff584b65 LARGE_QUARK_user
+ cb2a1f57454860bc LARGE_QUARK_voice_2
+ cb2a1f57454860bc LARGE_QUARK_voice_2_uni
+ 51601312b4ce4b28 LARGE_QUARK_voice_glide
+-87b364b47f143685 LARGE_SKIFF_about
++45f6479e8e5ec543 LARGE_SKIFF_about
+ a0a63cccb102fd7d LARGE_SKIFF_about_credits
+ 600c4ef4d084815a LARGE_SKIFF_about_end
+-7304464ade0867a0 LARGE_SKIFF_about_rec
++7a5594aab34ab826 LARGE_SKIFF_about_rec
+ 1919218073432383 LARGE_SKIFF_arp
+ 441d399f110914fd LARGE_SKIFF_arp_2
+ a0231cd49666b90b LARGE_SKIFF_arp_on
+@@ -2396,7 +2396,7 @@ bbc842775f6d9f83 LARGE_SKIFF_song_new
+ 5a7fec981e7986d4 LARGE_SKIFF_song_rest_pick
+ 56c97d7277279ec0 LARGE_SKIFF_song_sound
+ 4d8d2e3b449c5ff7 LARGE_SKIFF_song_sounds
+-e96d9d68c0313cce LARGE_SKIFF_splash
++979b481f9dcb0549 LARGE_SKIFF_splash
+ 172bc29d75427d91 LARGE_SKIFF_step
+ 29ac214b55edfbc1 LARGE_SKIFF_step_mark
+ 58e4e02e6922f804 LARGE_SKIFF_step_tiles
+@@ -2412,10 +2412,10 @@ fed8ac467c6c1e53 LARGE_SKIFF_user_foot
+ d7d818ddc0431686 LARGE_SKIFF_voice_2
+ d7d818ddc0431686 LARGE_SKIFF_voice_2_uni
+ 35bd27d867b2fb82 LARGE_SKIFF_voice_glide
+-5e29b38790c2e7e0 NEON_about
++abe3087c39c7c251 NEON_about
+ 876d3826f0d11fa1 NEON_about_credits
+ 532b1ef8196f9f9a NEON_about_end
+-90f8be6189036901 NEON_about_rec
++ebf4dec900e12694 NEON_about_rec
+ 8d6c256cf16cc50b NEON_arp
+ ebf41f5e870cbcc2 NEON_arp_2
+ f0c4b8727105eded NEON_arp_on
+@@ -2639,7 +2639,7 @@ f87f243860031880 NEON_song_rest
+ 8b3e54bd8ef84b97 NEON_song_rest_pick
+ c9538febf77d200d NEON_song_sound
+ 14f3ce37265a2048 NEON_song_sounds
+-437f1c26ab7fccdc NEON_splash
++6b8dd32307676240 NEON_splash
+ 3c8db93bc277ea61 NEON_step
+ e40cffb1683e4d0d NEON_step_mark
+ b732c46b74f18b40 NEON_step_tiles
+@@ -2655,10 +2655,10 @@ b14c486a5002c5e0 NEON_voice
+ 62fbe098ac9dae46 NEON_voice_2
+ 24d9e62ca68159c6 NEON_voice_2_uni
+ 5d12230b57fe543d NEON_voice_glide
+-44d718d34cd601f9 PAPER_about
++91c6a739e9599281 PAPER_about
+ c102cce9f93993b9 PAPER_about_credits
+ 8526615db7dc6630 PAPER_about_end
+-9fb618dc3beab4ea PAPER_about_rec
++ce4874091a75d9ca PAPER_about_rec
+ ce8d3d20f8571dc7 PAPER_arp
+ e3c990b8a98bc689 PAPER_arp_2
+ 927d7a0bc22ffe3d PAPER_arp_on
+@@ -2880,7 +2880,7 @@ dca3358b84b45c85 PAPER_song_rest
+ d233176bd7ad4bb6 PAPER_song_rest_pick
+ 5eee041417a65e04 PAPER_song_sound
+ eba5612a222bf378 PAPER_song_sounds
+-79471039d6fa7ff9 PAPER_splash
++921acb4b0d755938 PAPER_splash
+ b65c86687b14d83e PAPER_step
+ db7f00ec95560ca3 PAPER_step_mark
+ df2a768ad8152660 PAPER_step_tiles
+@@ -2902,10 +2902,10 @@ dd2c60d0a0f712a6 PAPER_voice_glide
+ fee43c6ce8c54275 PHLINE_NEON_six_home
+ 6f0de12e8e768565 PHLINE_QUARK_home
+ 55c5d3fb1caee0c5 PHLINE_QUARK_six_home
+-89730bc4ccfd788f QUARK_about
++53d090926cd08c7d QUARK_about
+ 6e02e44fcd38b6d4 QUARK_about_credits
+ 908f3cc91b66f27d QUARK_about_end
+-364d0a031c1adcfb QUARK_about_rec
++db7a670a81c25821 QUARK_about_rec
+ eb0f5a4cae2d8b30 QUARK_arp
+ b8cb4cd1e16d15a6 QUARK_arp_2
+ 58378d0409007d52 QUARK_arp_on
+@@ -3129,7 +3129,7 @@ e962239a11e705a3 QUARK_song_rest
+ dd1c9bd7ef7dd5ec QUARK_song_rest_pick
+ c04aa46e32a12816 QUARK_song_sound
+ aca311e18a58cbf4 QUARK_song_sounds
+-72b01ea5846ef156 QUARK_splash
++87a839188296e2f6 QUARK_splash
+ 2d6d2298e4c1eac4 QUARK_step
+ 1be62a4faa35d252 QUARK_step_mark
+ 5c9db1990bced8f4 QUARK_step_tiles
+@@ -3145,10 +3145,10 @@ d8329245436dd28f QUARK_voice
+ 36d032a5005b0d9a QUARK_voice_2
+ 3e595bb60ef2bdd4 QUARK_voice_2_uni
+ dc43e7d91f1a13a3 QUARK_voice_glide
+-87b364b47f143685 SKIFF_about
++45f6479e8e5ec543 SKIFF_about
+ a0a63cccb102fd7d SKIFF_about_credits
+ 600c4ef4d084815a SKIFF_about_end
+-7304464ade0867a0 SKIFF_about_rec
++7a5594aab34ab826 SKIFF_about_rec
+ dabc0c9d6e5f58a0 SKIFF_arp
+ 865c84d6c5f448ba SKIFF_arp_2
+ c3ed8808d3c1f6ef SKIFF_arp_on
+@@ -3372,7 +3372,7 @@ a023a74732e85dc0 SKIFF_song_rest
+ 1e49e6996b18fe78 SKIFF_song_rest_pick
+ 371ba4044a27ca4c SKIFF_song_sound
+ e12bfd4253c44d60 SKIFF_song_sounds
+-e96d9d68c0313cce SKIFF_splash
++979b481f9dcb0549 SKIFF_splash
+ be3797e720d65fa9 SKIFF_step
+ 6d365a42f7184317 SKIFF_step_mark
+ 041b914d8fd72502 SKIFF_step_tiles
+diff --git a/tests/vizzbox_budget.c b/tests/vizzbox_budget.c
+index fafdf5f..0f68190 100644
+--- a/tests/vizzbox_budget.c
++++ b/tests/vizzbox_budget.c
+@@ -91,8 +91,8 @@ static void all_fx(void)
+ }
+ 
+ /* (1.1, BRIEF-VIZZBOX-1.1.md 7: "schwerste Wahl") the heaviest sound a track may play: each factory sound's cost a
+- * voice (eight notes held on T1, POLY, a second, less the same second without them, by the voices sounding; the least
+- * of three) for what a voice of it counts in the producer's budget (producer.c VB_EW: the dearer engines more than one
++ * voice (eight notes held on T1, POLY, 4 s, less the same 4 s without them, by the voices sounding; the least of
++ * three) for what a voice of it counts in the producer's budget (producer.c VB_EW: the dearer engines more than one
+  * voice, so this is what fills the budget dearest), the dearest of the engines every track may play
+  * on T1..T4, of those T5 and T6 may (engines.c eng_allowed) on them */
+ static uint8_t heavy[NTRK][2];
+@@ -121,9 +121,10 @@ static void heaviest(void)
+                     apply_preset_to(&trk[0], p);
+                     trk[0].p[P_VOICE] = V_POLY;
+                     run_frames(4410);
+-                    t0 = cpu_s();                   /* (the same second without its notes first: what the voices
+-                                                     * add, not the rest of the device split among them) */
+-                    run_frames(44100);
++                    t0 = cpu_s();                   /* (the same 4 s without its notes first: what the voices add,
++                                                     * not the rest of the device split among them; 4 s: one is too
++                                                     * short a time to tell the engines apart) */
++                    run_frames(4u * 44100u);
+                     x = t0 - cpu_s();
+                     for (i = 0; i < 8u; i++)
+                         trk_note_on(&trk[0], 48u + 3u * i, 100);
+@@ -131,7 +132,7 @@ static void heaviest(void)
+                     for (i = 0; i < NVOICE; i++)
+                         n += trk[0].v[i].active;
+                     t0 = cpu_s();
+-                    run_frames(44100);
++                    run_frames(4u * 44100u);
+                     x = (x + cpu_s() - t0) / (n ? n : 1u);
+                     if (write(fd[1], &x, sizeof x) != (ssize_t)sizeof x)
+                         _exit(2);
+diff --git a/tests/vizzbox_mutants.py b/tests/vizzbox_mutants.py
+index 4b90825..2cee51c 100644
+--- a/tests/vizzbox_mutants.py
++++ b/tests/vizzbox_mutants.py
+@@ -166,8 +166,8 @@ FAULTS = [
+ INSTALLER = [
+     ("the installer: a Vizzbox told by its version (v1.0: before 2.0, a backup)",
+      "!before20(device.id, info)", "major(info.version) >= 2"),
+-    ("the installer: no backup, as Skiff's page by the package's version (1.0)",
+-     "  // (Vizzbox) its 1.0 is Skiff 2.0 inside: the backup and the conversion as 2.0's\n",
++    ("the installer: no backup, as Skiff's page by the package's version (1.x)",
++     "  // (Vizzbox) its 1.x is Skiff 2.0 inside: the backup and the conversion as 2.0's\n",
+      "  if (major(meta.version) < 2) return null;\n"),
+ ]
+ CFLAGS = ["-O2", "-ffp-contract=off", "-w"]
+diff --git a/tools/build.py b/tools/build.py
+index 3d70573..4592fa3 100755
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -11,8 +11,8 @@ release-X.Y/ with the package, the app, SHA256SUMS, the samples' attributions an
+ leaves the serial console out (FELUCCA_CDC=0, a developer tool: FELUCCA_CDC=1 keeps it), so the unit is a plain audio
+ + MIDI device (macOS 13-15 see its USB audio input) and MENU has no USB SERIAL.
+ (Vizzbox, a producer on Vizz 2.0, a modified Skiff) the FM-1's identity is FM-1_800 (Vizz's development builds'), a
+-release X.Y's FM-1_8(X+4)Y: Vizzbox 1.0 is FM-1_850, in Vizz's family 8XY (Vizz X.Y is FM-1_8XY) and beside it (the
+-installers take 8XY with X >= 2 for a 2.0 inside: no conversion between Vizz 2.0 and the Vizzbox); the package
++release X.Y's FM-1_8(X+4)Y: Vizzbox 1.0 is FM-1_850, 1.1 FM-1_851, in Vizz's family 8XY (Vizz X.Y is FM-1_8XY) and
++beside it (the installers take 8XY with X >= 2 for a 2.0 inside: no conversion between Vizz 2.0 and the Vizzbox); the package
+ vizzbox-X.Y.fwsc. (Vizz, a modified Skiff) a Vizz's identity is FM-1_800, a release's FM-1_8XY (Skiff's 7XY, Felucca's 9XY: neither
+ the app, the loader nor the installers read more of it than the model before "_"), the package vizz-X.Y.fwsc.
+ See BUILDING.md for the toolchain and the SDK.
+@@ -36,6 +36,7 @@ import shutil
+ import struct
+ import subprocess
+ import sys
++import time
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ 
+@@ -235,6 +236,12 @@ def build_app():
+     flags.append(f'-DFELUCCA_ID="{PRODUCT}"')
+     if VERSION:
+         flags.append(f'-DFELUCCA_VERSION="{VERSION}"')
++    sde = os.environ.get("SOURCE_DATE_EPOCH")   # ((Vizzbox 1.1) reproducible builds: ABOUT's build date (ui_menu.c
++    if sde and sde.isdigit():                   # __DATE__) the day of SOURCE_DATE_EPOCH, as __DATE__ writes it, UTC)
++        t = time.gmtime(int(sde))
++        flags += ["-Wno-builtin-macro-redefined",
++                  f'-D__DATE__="{"JanFebMarAprMayJunJulAugSepOctNovDec"[3 * t.tm_mon - 3:3 * t.tm_mon]} '
++                  f'{t.tm_mday:2d} {t.tm_year}"']
+     # felucca.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
+     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. FELUCCA_SIZE=0: -Os everywhere
+     size = os.environ.get("FELUCCA_SIZE") != "0"
+diff --git a/web/emu/make_vizzbox_emu.py b/web/emu/make_vizzbox_emu.py
+index 062f64d..a510d9a 100644
+--- a/web/emu/make_vizzbox_emu.py
++++ b/web/emu/make_vizzbox_emu.py
+@@ -24,6 +24,39 @@ def sub(html, old, new, n=1):
+     return html.replace(old, new)
+ 
+ 
++# (Vizzbox 1.1, BRIEF-VIZZBOX-1.1.md 8) the computer keyboard as web/emu/index.html maps it (KEYMAP, ARROWS), on the
++# page: every button held while its key is, so a combination is two keys held; the knobs by mouse, wheel or Tab + arrows
++KEYS = ('  <details open><summary><b>Tastenbelegung</b> (Computertastatur; Tasten werden gehalten, solange du sie hältst – '
++        'Kombinationen also mit zwei Tasten)</summary><table class="keys">'
++        '<tr><th>Taste</th><th>FM-1</th><th>in der VIZZBOX</th></tr>'
++        '<tr><td><kbd>1</kbd></td><td>FX</td><td>antippen DROP JETZT · halten: Effekte (weiße Tasten), Makros (Regler)</td></tr>'
++        '<tr><td><kbd>2</kbd></td><td>SEL</td><td>+ schwarze Taste: Fokus-Spur</td></tr>'
++        '<tr><td><kbd>3</kbd></td><td>ENV</td><td>–</td></tr>'
++        '<tr><td><kbd>4</kbd></td><td>LFO</td><td>Seite MOD · halten + Regler: MOMENTARY</td></tr>'
++        '<tr><td><kbd>5</kbd></td><td>EDIT</td><td>Seite KLANG</td></tr>'
++        '<tr><td><kbd>6</kbd></td><td>GLO</td><td>halten: Busse; + weiße Taste Favorit laden, + schwarze SOLO</td></tr>'
++        '<tr><td><kbd>7</kbd></td><td>HOME</td><td>antippen SONG · halten: Karte · + PLAY GROOVEBOX · + schwarze Taste / '
++        '+ EDIT zurückgeben · + FX Effekte offen halten · + PRESETS alle Klänge</td></tr>'
++        '<tr><td><kbd>8</kbd></td><td>SAVE</td><td>+ weiße Taste: Favorit speichern</td></tr>'
++        '<tr><td><kbd>9</kbd></td><td>ARP</td><td>antippen BREAK JETZT · halten: PERFORM</td></tr>'
++        '<tr><td><kbd>0</kbd></td><td>SEQ</td><td>HALTEN</td></tr>'
++        '<tr><td><kbd>-</kbd></td><td>PLAY</td><td>Start / Stopp</td></tr>'
++        '<tr><td><kbd>=</kbd></td><td>REC</td><td>neuer Seed</td></tr>'
++        '<tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>OCT− OCT+</td><td>Oktave der weißen Tasten</td></tr>'
++        '<tr><td><kbd>Z</kbd> … <kbd>/</kbd> (dazu <kbd>Q</kbd> … <kbd>O</kbd> chromatisch)</td><td>weiße Tasten</td><td>spielen die '
++        'Fokus-Spur (DRUMS: ein Instrument je Taste, CHORDS: ein Akkord)</td></tr>'
++        '<tr><td><kbd>S</kbd> <kbd>D</kbd> <kbd>F</kbd> <kbd>H</kbd> <kbd>J</kbd> <kbd>L</kbd></td><td>schwarze Tasten 1–6</td>'
++        '<td>die Spuren: MUTE, mit SEL Fokus, mit HOME zurückgeben, mit GLO SOLO</td></tr>'
++        '<tr><td><kbd>↑</kbd> <kbd>↓</kbd> / <kbd>←</kbd> <kbd>→</kbd></td><td>SELECT / ALGORITHM</td>'
++        '<td>TEMPO / LÄNGE; auf KLANG und MOD: Seite / Fokus-Spur</td></tr>'
++        '<tr><td>Maus, Mausrad, <kbd>Tab</kbd> + Pfeile</td><td>Regler 1–4, PRESETS</td><td>auf SONG der Song, auf KLANG '
++        'und MOD die Fokus-Spur; PRESETS: Klänge</td></tr>'
++        '<tr><td>Klick · <kbd>Shift</kbd>-Klick oder Rechtsklick</td><td>jede Taste</td><td>gehalten, solange die Maus '
++        'drückt · festgehalten bis zum nächsten Klick (so gehen Kombinationen auch mit der Maus: FX festhalten, dann '
++        'eine weiße Taste)</td></tr>'
++        '</table></details>\n')
++
++
+ def page(wasm_path, version):
+     html = (HERE / "index.html").read_text(encoding="utf-8")
+     worklet = (HERE / "worklet.js").read_text(encoding="utf-8")
+@@ -42,8 +75,12 @@ def page(wasm_path, version):
+     html = sub(html, '<small class="version">@VERSION@@PREVIEW@</small><br>',
+                f'<small class="version">Vizzbox {version}</small><br>\n'
+                '  <b>VIZZBOX:</b> Regler 1 GENRE · 2 SUBGENRE · 3 ENERGIE · 4 VARIATION · SELECT TEMPO · ALGORITHM LÄNGE · '
+-               'PRESETS Seed · PLAY Start/Stopp · REC neuer Seed · FX DROP JETZT · ARP BREAK JETZT · SEQ HALTEN · '
+-               'HOME + PLAY GROOVEBOX (dort HOME + PLAY zurück)<br>\n'
++               'PRESETS Seed · PLAY Start/Stopp · REC neuer Seed · FX antippen DROP JETZT · ARP antippen BREAK JETZT · '
++               'SEQ HALTEN · HOME + PLAY GROOVEBOX (dort HOME + PLAY zurück)<br>\n'
++               '  <b>Live (1.1):</b> EDIT KLANG · LFO MOD · SEL + schwarze Taste Fokus-Spur · weiße Tasten spielen sie · '
++               'FX halten Effekte · ARP halten PERFORM · GLO halten Busse · HOME + schwarze Taste / HOME + EDIT '
++               'zurückgeben · HOME halten: die Karte<br>\n'
++               + KEYS +
+                '  Die Vizzbox ist eine geänderte Fassung von Skiff 2.0.1 (Vizz 2.0 und ein Produzent), GPL-3.0; '
+                'nicht von Skiff veröffentlicht.<br>')
+     html = sub(html, '<a href="fonts/OFL.txt">SIL OFL 1.1</a>', '<a href="#ofl">SIL OFL 1.1</a>')
+diff --git a/web/emu/test_vizzbox_emu.mjs b/web/emu/test_vizzbox_emu.mjs
+index f238478..d9295f4 100644
+--- a/web/emu/test_vizzbox_emu.mjs
++++ b/web/emu/test_vizzbox_emu.mjs
+@@ -2,8 +2,10 @@
+ // (Vizzbox) The one-file Vizzbox in the browser (web/emu/make_vizzbox_emu.py) in Chromium (Playwright), opened from
+ // the disk as a user would: it switches on (the WebAssembly and the worklet from inside the page), boots into the
+ // VIZZBOX (its screen drawn), KNOB 1 turned with the mouse wheel changes the genre on the screen, PLAY plays (the
+-// screen moves on bar by bar, the audio is not silent: an AnalyserNode on the output), PLAY again stops; no script
+-// errors. Screenshots of the screen to OUT when given.
++// screen moves on bar by bar, the audio is not silent: an AnalyserNode on the output), (1.1, BRIEF-VIZZBOX-1.1.md 8)
++// while it plays the new controls from the computer keyboard: EDIT (5) KLANG, SEL (2) + black key 2 (D) the focus,
++// EDIT again SONG, FX (1) held its layer and let go; with the mouse a right-click holds FX (latched) and another lets
++// go; the key overview on the page; PLAY again stops; no script errors. Screenshots of the screen to OUT when given.
+ //   node web/emu/test_vizzbox_emu.mjs VIZZBOX-EMU.html [OUT]
+ import { createRequire } from "module";
+ import { mkdirSync, writeFileSync } from "fs";
+@@ -71,6 +73,36 @@ await page.waitForTimeout(3000);
+ const b = await screen("playing-b");
+ ok(a !== b, "PLAY: the screen moves on while it plays");
+ ok(peak > 0.01, `PLAY: the audio is not silent (peak ${peak.toFixed(3)})`);
++/* (1.1) the new controls, the keyboard as the page's overview has it */
++ok(await page.locator("table.keys").count() === 1 && /Tastenbelegung/.test(await page.content()), "the key overview on the page");
++const tapKey = async (code) => { await page.keyboard.down(code); await page.waitForTimeout(80); await page.keyboard.up(code); await page.waitForTimeout(500); };
++const song = await screen("song");
++await tapKey("Digit5");                           /* (EDIT) */
++const klang = await screen("klang");
++ok(klang !== song, "EDIT (key 5): the page KLANG");
++await page.keyboard.down("Digit2");               /* (SEL held + black key 2: the focus BASS) */
++await page.waitForTimeout(100);
++await tapKey("KeyD");
++await page.keyboard.up("Digit2");
++await page.waitForTimeout(400);
++const focus = await screen("klang-bass");
++ok(focus !== klang, "SEL (2) + black key 2 (D): KLANG of the focus track BASS");
++await tapKey("Digit5");
++await page.keyboard.down("Digit1");               /* (FX held: its layer) */
++await page.waitForTimeout(700);
++const fx = await screen("fx-layer");
++await page.keyboard.up("Digit1");
++await page.waitForTimeout(700);
++const after = await screen("fx-let-go");
++ok(fx !== after, "FX (1) held: its layer on the screen, let go: gone");
++const fxHit = page.locator('.hit[aria-label="FX"]').first();
++await fxHit.click({ button: "right" });
++await page.waitForTimeout(300);
++const held = await fxHit.getAttribute("aria-pressed");
++await fxHit.click({ button: "right" });
++await page.waitForTimeout(300);
++ok(held === "true" && await fxHit.getAttribute("aria-pressed") === "false", "the mouse: a right-click holds FX, another lets go");
++await page.waitForTimeout(800);
+ await page.keyboard.press("Minus");
+ await page.waitForTimeout(4000);
+ const c1 = await screen("stopped-a");
+diff --git a/web/make_vizzbox_installer.py b/web/make_vizzbox_installer.py
+index f54f45d..ff90b6a 100644
+--- a/web/make_vizzbox_installer.py
++++ b/web/make_vizzbox_installer.py
+@@ -4,7 +4,7 @@
+ # (Vizzbox, a producer on Vizz 2.0, a modified Skiff: after web/make_vizz_installer.py, Vizz 2.0's)
+ """Make the Vizzbox's browser installer: one self-contained HTML file, the package and the converter in it.
+ 
+-  web/make_vizzbox_installer.py build/vizzbox-1.0.fwsc 1.0 OUT.html [CONV.wasm]
++  web/make_vizzbox_installer.py build/vizzbox-1.1.fwsc 1.1 OUT.html [CONV.wasm]
+ 
+ As web/make_site.py makes Skiff's installer page (index_pkg.html with fm1pkg.js, fm1ota.js, fm1backup.js and (2.0)
+ conv/conv.js inlined), with the package and the converter (build/conv/conv.wasm, web/conv/build.sh's, by default)
+@@ -44,8 +44,8 @@ EDITS = [
+     ('<a href="../../learn/"', '<a href="https://illuminus5.github.io/skiff/learn/" target="_blank" rel="noopener"', 1),
+     ('  <p class="small">Skiff by illuminus5, built on Felucca',
+      f'  <p class="small">The Vizzbox is a modified version of Skiff {BASE}: Vizz 2.0 (SEQ MIDI OUT: the sequencer on '
+-     'USB MIDI, its mutes as CC 103) and a producer that makes the music itself (its sections as CC 104 .. 109); not a '
+-     'release of Skiff.<br>\n'
++     'USB MIDI, its mutes as CC 103) and a producer that makes the music itself, its tracks yours to play live (its '
++     'sections as CC 104 .. 110); not a release of Skiff.<br>\n'
+      '    Skiff by illuminus5, built on Felucca', 1),
+     ('href="../../firmware/LICENSING.md"', 'href="LICENSING.md"', 1),
+     ('href="../../firmware/LICENSE"', 'href="LICENSE"', 1),
+@@ -60,7 +60,7 @@ EDITS = [
+      f'beta: "Vizzbox はカスタムファームウェア（Skiff {BASE} の改変版）です。不具合を Skiff に報告しないでください。', 1),
+     ('beta: "Vizzbox is custom firmware; please report problems on GitHub.',
+      f'beta: "Vizzbox is custom firmware, a modified Skiff {BASE}: please do not report its problems to Skiff.', 1),
+-    # (Vizzbox) Skiff 2.0's question names 2.0: the Vizzbox is 1.0 (Skiff 2.0 inside)
++    # (Vizzbox) Skiff 2.0's question names 2.0: the Vizzbox is 1.x (Skiff 2.0 inside)
+     ('Vizzbox 2.0 は、それより前のファームウェアで', 'Vizzbox は、2.0 より前のファームウェアで', 1),
+     ('Vizzbox 2.0 をインストールしますか？', 'Vizzbox をインストールしますか？', 1),
+     ('Vizzbox 2.0 opens nothing that firmware before it saves', 'Vizzbox opens nothing that firmware before 2.0 saves', 1),
+@@ -78,9 +78,9 @@ EDITS = [
+     ("    if (!info.supported || major(info.version) >= 2) return null;\n",
+      "    if (!info.supported || !before20(device.id, info)) return null;\n", 1),
+     # (Vizzbox) Skiff's page backs up only when what it installs is 2.0 or later (its package's version): the
+-    # Vizzbox's 1.0 is Skiff 2.0 inside, so always
++    # Vizzbox's 1.x is Skiff 2.0 inside, so always
+     ("  if (major(meta.version) < 2) return null;\n",
+-     "  // (Vizzbox) its 1.0 is Skiff 2.0 inside: the backup and the conversion as 2.0's\n", 1),
++     "  // (Vizzbox) its 1.x is Skiff 2.0 inside: the backup and the conversion as 2.0's\n", 1),
+ ]
+ 
+ 
+diff --git a/web/test_vizzbox_installer.mjs b/web/test_vizzbox_installer.mjs
+index 65cb687..0081250 100644
+--- a/web/test_vizzbox_installer.mjs
++++ b/web/test_vizzbox_installer.mjs
+@@ -12,17 +12,21 @@
+ //              decides, not the version) and a later Vizzbox (FM-1_851, v1.1): no backup, no question, installed
+ //   BACK       Vizz 2.0's installer (VIZZ.html, web/make_vizz_installer.py) over a Vizzbox (FM-1_850, v1.0): the same,
+ //              no backup (BRIEF-VIZZBOX.md 6: "ebenso umgekehrt")
++//   BACK 1.0   (1.1, BRIEF-VIZZBOX-1.1.md 6) the Vizzbox 1.0's installer as it shipped (VIZZBOX10.html: its
++//              out/vizzbox-installer.html) over a Vizzbox 1.1 (FM-1_851, v1.1): no backup, installed, the unit then
++//              FM-1_850 (and this one over a Vizzbox 1.0 above: 1.0 -> 1.1 and back)
+ //   SKIFF      Skiff 2.0.1's own page tells a unit by its version string only: over a Vizzbox (v1.0) it saves a backup
+ //              first and runs the converter after; a 2.0 store (Vizz 1.0's unit as 2.0 converted it) gives the
+ //              converter nothing to write back, so nothing of the unit's is touched
+ //   node web/test_vizzbox_installer.mjs INSTALLER.html tests/vizz10_unit.json build/conv/conv.wasm [VIZZ.html]
++//        [VIZZBOX10.html]
+ import { readFileSync } from "fs";
+ import { createRequire } from "module";
+ import { pathToFileURL } from "url";
+ import { readBackup } from "./fm1backup.js";
+ import { loadConverter } from "./conv/conv.js";
+ 
+-const [htmlPath, unitPath, wasmPath, vizzPath] = process.argv.slice(2);
++const [htmlPath, unitPath, wasmPath, vizzPath, vb10Path] = process.argv.slice(2);
+ if (!htmlPath || !unitPath || !wasmPath) { console.log("usage: test_vizzbox_installer.mjs INSTALLER.html UNIT.json CONV.wasm [VIZZ.html]"); process.exit(2); }
+ let chromium;
+ try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
+@@ -213,6 +217,14 @@ if (vizzPath) {
+       `BACK: Vizz ${VZ.version}'s installer over ${name.toUpperCase()} (${id}, FELUCCA ${ver}): no backup, no question, installed`);
+   }
+ } else console.log("vizzbox installer: BACK skipped (no Vizz installer given)");
++/* BACK 1.0: the Vizzbox 1.0's installer over a Vizzbox 1.1 */
++if (vb10Path) {
++  const V10 = pageOf(vb10Path);
++  const r = await install("Vizzbox 1.1", "FM-1_851", infoAs("v1.1"), V10);
++  ok(V10.product === "FM-1_850" && V10.version === "1.0" && r.title === "Vizzbox" && !r.errors.length && !r.backup &&
++     !r.dialogs.length && !r.dev.lists && !r.dev.puts.length && r.dev.log.at(-1) === "boot FM-1_850" && /^Done/.test(r.status),
++    "BACK 1.0: the Vizzbox 1.0's installer over VIZZBOX 1.1 (FM-1_851, FELUCCA v1.1): no backup, installed, FM-1_850");
++} else console.log("vizzbox installer: BACK 1.0 skipped (no Vizzbox 1.0 installer given)");
+ await browser.close();
+ 
+ /* SKIFF: its own page over a Vizzbox (by the version string v1.0: a backup, then the converter) writes nothing back */
+-- 
+2.43.0
+

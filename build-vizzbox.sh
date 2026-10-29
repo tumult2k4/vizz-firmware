@@ -1,8 +1,11 @@
 #!/bin/sh
-# Build Vizzbox 1.0 from this repo (BRIEF-VIZZBOX.md; after build-vizz.sh, Vizz 2.0's): Skiff v2.0.1 + patches/ (Vizz
-# 2.0's five and the Vizzbox's), the release package vizzbox-1.0.fwsc (FM-1_850), the converter, the one-file
-# installer vizzbox-installer.html, every test (tests/run_tests.sh, the installers in Chromium, both counter-checks),
-# out/, and with DEMOS=1 demos/ (an MP3 and the MIDI file of every subgenre, the Vizzbox in the browser as one file).
+# Build Vizzbox 1.1 from this repo (BRIEF-VIZZBOX-1.1.md; after Vizzbox 1.0's, BRIEF-VIZZBOX.md): Skiff v2.0.1 +
+# patches/ (Vizz 2.0's five, the Vizzbox 1.0's, the 1.1's), the release package vizzbox-1.1.fwsc (FM-1_851, its date
+# fixed by SOURCE_DATE_EPOCH: the same bytes on every build), the converter, the one-file installer
+# vizzbox-installer.html, every test (tests/run_tests.sh, the installers in Chromium, 1.0 -> 1.1 and back: the loader
+# with the favourites' sectors, the installers both ways; both counter-checks), out/, and with DEMOS=1 demos/ (an MP3
+# and the MIDI file of each subgenre new in 1.1 (the 36 of 1.0 stay: their songs are 1.0's bit for bit), the live
+# demo, the Vizzbox in the browser as one file).
 # Linux x86-64 (or WSL), with git, curl, python3 (numpy for the demos), pip, a C compiler, node; for the converter and
 # the browser version Emscripten (emcc; fetched into ~/emsdk when missing), for the browser tests Playwright with its
 # Chromium (skipped without), for the demos ffmpeg. Needs to reach github.com, gitee.com (the AC79 SDK),
@@ -12,13 +15,15 @@
 #   JIELI_TOOLCHAIN, AC79_SDK          as Skiff's build.sh (default: ~/.jieli/toolchain, ~/fw-AC79_AIoT_SDK)
 #   EMSDK                              an Emscripten SDK (default: ~/emsdk, version EMSDK_VERSION)
 #   VIZZ10_CHECK=0                     skip rebuilding Vizz 1.0 (branch vizz-1.0) for the installer test's unit
-#   MUTANTS=0                          skip the counter-checks (tests/vizz_mutants.py, tests/vizzbox_mutants.py, ~30 min)
+#   MUTANTS=0                          skip the counter-checks (tests/vizz_mutants.py, tests/vizzbox_mutants.py, ~45 min)
 #   DEMOS=1                            make demos/ again (tools/vizzbox_demos.py, web/emu/make_vizzbox_emu.py)
+#   SOURCE_DATE_EPOCH                  the release's date (default: the Vizzbox 1.1's, 29 Oct 2026)
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 W="${1:-$HERE/../vizzbox-build}"
-VER=1.0
+VER=1.1
 BASE=v2.0.1
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1793275200}"   # (tools/build.py: ABOUT's build date; 2026-10-29 12:00 UTC)
 EMSDK_VERSION="${EMSDK_VERSION:-6.0.13}"
 mkdir -p "$W"
 W="$(cd "$W" && pwd)"
@@ -30,7 +35,7 @@ export EMSDK="${EMSDK:-$HOME/emsdk}"
 [ -d "$W/skiff/.git" ] || git clone https://github.com/illuminus5/skiff.git "$W/skiff"
 cd "$W/skiff"
 git am --abort 2>/dev/null || true
-git checkout -q -f -B vizzbox-1.0 "$BASE"
+git checkout -q -f -B "vizzbox-$VER" "$BASE"
 git -c user.name="${GIT_AUTHOR_NAME:-vizz}" -c user.email="${GIT_AUTHOR_EMAIL:-vizz@localhost}" am -q -3 "$HERE"/patches/*.patch
 
 # 2. what the build needs (Skiff's BUILDING.md); Emscripten for the converter the installer carries (web/conv)
@@ -46,7 +51,7 @@ if ! command -v emcc >/dev/null 2>&1; then
     command -v emcc >/dev/null 2>&1 || PATH="$EMSDK/upstream/emscripten:$PATH"   # (emsdk_env.sh sets nothing under dash)
 fi
 
-# 3. the release (build/vizzbox-1.0.fwsc, FM-1_850) and its converter, the installer, out/
+# 3. the release (build/vizzbox-1.1.fwsc, FM-1_851) and its converter, the installer, out/
 ./build.sh --release "$VER"
 python3 tools/size_report.py build/felucca.elf 80 | tee "$W/size-report.txt"   # where the flash goes
 sh web/conv/build.sh
@@ -73,8 +78,18 @@ fi
 ./build.sh
 tests/run_tests.sh 2>&1 | tee "$W/test-log.txt"
 tail -1 "$W/test-log.txt" | grep -q "ALL HOST TESTS PASSED"
+# (1.1) the Vizzbox 1.0 as released (branch vizzbox-1.0): its installer over a 1.1 and this one over a 1.0 (in the
+# test), the update loader from the one to the other and back, the favourites' sectors kept (tests/ldr_test.c)
+V10=""
+if git -C "$HERE" rev-parse -q --verify origin/vizzbox-1.0 >/dev/null; then
+    git -C "$HERE" show origin/vizzbox-1.0:out/vizzbox-1.0.fwsc > "$W/vizzbox-1.0.fwsc"
+    git -C "$HERE" show origin/vizzbox-1.0:out/vizzbox-installer.html > "$W/vizzbox-1.0-installer.html"
+    V10="$W/vizzbox-1.0-installer.html"
+    build/host/ldr_test "$W/vizzbox-1.0.fwsc" "build/vizzbox-$VER.fwsc" | tee "$W/ldr-1.0-1.1.txt"
+    build/host/ldr_test "build/vizzbox-$VER.fwsc" "$W/vizzbox-1.0.fwsc" | tee "$W/ldr-1.1-1.0.txt"
+fi
 node web/test_vizzbox_installer.mjs "$HERE/out/vizzbox-installer.html" tests/vizz10_unit.json build/conv/conv.wasm \
-    build/host/vizz-installer.html 2>&1 | tee "$W/installer-test-log.txt"
+    build/host/vizz-installer.html $V10 2>&1 | tee "$W/installer-test-log.txt"
 tail -1 "$W/installer-test-log.txt" | grep -q "all ok\|skipped"
 
 # 5. the counter-checks: every deliberate fault caught (Vizz 2.0's and the Vizzbox's)
@@ -85,14 +100,24 @@ if [ "${MUTANTS:-1}" != 0 ]; then
     tail -1 "$W/vizzbox-mutants-log.txt" | grep -q "every fault caught"
 fi
 
-# 6. the demos (BRIEF-VIZZBOX.md 8): every subgenre rendered (seed 5EED, ENERGY 70, VARIATION 40, NORMAL), ~60 s from
-# a BUILD into its DROP as MP3 and the whole song's MIDI file, demos/README.md's tables; the Vizzbox in the browser
+# 6. the demos (BRIEF-VIZZBOX.md 8, BRIEF-VIZZBOX-1.1.md 8): each subgenre new in 1.1 rendered (seed 5EED, ENERGY 70,
+# VARIATION 40, NORMAL), ~60 s from a BUILD into its DROP as MP3 and the whole song's MIDI file, demos/README.md's
+# tables (the rows of the 36 of 1.0 kept); ALL_DEMOS=1 every subgenre again; the Vizzbox in the browser
 if [ "${DEMOS:-0}" != 0 ]; then
     cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_render tools/vizzbox_render.c -lm
     mkdir -p "$HERE/demos"
-    rm -f "$HERE"/demos/*.mp3 "$HERE"/demos/*.mid
-    python3 tools/vizzbox_demos.py build/host/vizzbox_render "$HERE/demos" 2>&1 | tee "$W/demos-log.txt"
+    WHICH=new
+    if [ "${ALL_DEMOS:-0}" != 0 ]; then
+        WHICH=""
+        rm -f "$HERE"/demos/*.mp3 "$HERE"/demos/*.mid
+    fi
+    python3 tools/vizzbox_demos.py build/host/vizzbox_render "$HERE/demos" 5EED 70 40 $WHICH 2>&1 | tee "$W/demos-log.txt"
     rm -f "$HERE/demos/levels.tsv"
+    # (1.1) the live demo: TECH HOUSE with the user's hand on it through the unit's controls (tools/vizzbox_live.c)
+    cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_live tools/vizzbox_live.c -lm
+    build/host/vizzbox_live 0 1 5EED 80 50 "$W/live" | tee "$W/live-log.txt"
+    ffmpeg -v error -y -i "$W/live.wav" -codec:a libmp3lame -b:a 128k \
+        -metadata "title=Vizzbox 1.1 - live: TECH HOUSE, the user's hand on it" -metadata artist=Vizzbox "$HERE/demos/live-1.1.mp3"
     cp build/emu_vizzbox/felucca.wasm "$W/vizzbox-emu.wasm"   # (tests/run_tests.sh built it with VIZZBOX=1)
     python3 web/emu/make_vizzbox_emu.py "$W/vizzbox-emu.wasm" "$VER" "$HERE/demos/vizzbox-im-browser.html"
     node web/emu/test_vizzbox_emu.mjs "$HERE/demos/vizzbox-im-browser.html"

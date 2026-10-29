@@ -1,9 +1,11 @@
 # vizz-firmware
 
 Zutaten für **Vizz**, einen persönlichen Fork der Skiff-Firmware (<https://github.com/illuminus5/skiff>, GPL-3.0)
-für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ. Dieser Branch: **Vizzbox 1.1** (in Arbeit, Stand in
-[CHANGES.md](CHANGES.md)) auf Vizzbox 1.0 / Skiff 2.0.1; `patches/` ist die Serie ab Skiff `v2.0.1`, gebaut wird mit
-`./build-vizzbox.sh`.
+für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ. Dieser Branch: **Vizzbox 1.1** auf Vizzbox 1.0 /
+Skiff 2.0.1 – das Paket `out/vizzbox-1.1.fwsc` (Kennung `FM-1_851`) und der Installer `out/vizzbox-installer.html`
+(eine Datei, in Chrome oder Edge öffnen), die Änderungen in [CHANGES.md](CHANGES.md), die Bedienung in
+[docs/VIZZBOX-ANLEITUNG.md](docs/VIZZBOX-ANLEITUNG.md), Hörproben und die Vizzbox im Browser in [demos/](demos/).
+`patches/` ist die Serie ab Skiff `v2.0.1`, gebaut und getestet wird mit `./build-vizzbox.sh`.
 
 - **SEQ MIDI OUT**: der Sequencer spielt über USB-MIDI mit (Noten je Spur auf ihrem Kanal, CC 102 = Step-Index,
   MIDI Clock, Start/Stop) – `patches/0001`, `patches/0002`
@@ -11,6 +13,10 @@ für die M-VAVE FM-1, abgestimmt auf den Browser-Visualizer VIZZ. Dieser Branch:
 - **Name**: Vizz statt Skiff
 - **Vizzbox** (eigene Firmware auf Vizz 2.0): ein Produzent, der nach Wahl von Genre und Subgenre selbst Musik
   erzeugt und spielt – mit Aufbau, Drops und Breaks
+- **Vizzbox 1.1**: Live-Kontrolle über die Tracks, die der Produzent gerade spielt – Klänge wechseln, Filter und
+  Modulation drehen, Effekte halten, mitspielen; was man anfasst, bleibt seins, bis man es zurückgibt („Hand drauf“).
+  Favoriten mit Klängen, 22 neue Subgenres (58 statt 36, dazu das Genre AFRO & LATIN), CC 110 für den gehaltenen
+  Effekt
 
 | Version | Basis | Auftrag | Ergebnis |
 | --- | --- | --- | --- |

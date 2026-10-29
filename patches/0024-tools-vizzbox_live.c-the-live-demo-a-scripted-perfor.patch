@@ -1,0 +1,227 @@
+From 286d981c02f89f24937aadc30b7fec5338e06f2e Mon Sep 17 00:00:00 2001
+From: Stefan <kloterstefan@gmail.com>
+Date: Thu, 29 Oct 2026 11:48:27 +0000
+Subject: [PATCH 24/24] tools/vizzbox_live.c: the live demo, a scripted
+ performance through the unit's controls (BRIEF-VIZZBOX-1.1.md 8)
+
+The browser emulator's device with the producer, a song played and the user's hand on it as a user would put it there,
+at the song's own sections: SEL + black key 2 and EDIT, PRESETS a turn (another bass sound); SEL + black key 3, LIVE
+KNOB 1 (the CHORDS' filter) down and up; FX held and REPEAT 1/16 into the DROP; SEL + black key 4 and eight bars on
+the white keys. From the GROOVE to the DROP's ninth bar into a WAV (build-vizzbox.sh DEMOS=1: demos/live-1.1.mp3).
+
+Claude-Session: https://claude.ai/code/session_01R1rawochSWXFaES57pjc4r
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tools/vizzbox_live.c | 200 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 200 insertions(+)
+ create mode 100644 tools/vizzbox_live.c
+
+diff --git a/tools/vizzbox_live.c b/tools/vizzbox_live.c
+new file mode 100644
+index 0000000..02988fe
+--- /dev/null
++++ b/tools/vizzbox_live.c
+@@ -0,0 +1,200 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* (Vizzbox 1.1) tools/vizzbox_live: the live demo (BRIEF-VIZZBOX-1.1.md 8: "eine geskriptete Performance über den
++ * Eingabeweg"): the browser emulator's device built natively with the producer (VIZZBOX=1, as tools/vizzbox_render), a
++ * song played and the user's hand on it through the unit's own controls, at the song's own sections:
++ *   GROOVE      SEL + black key 2 (the focus BASS), EDIT (KLANG), PRESETS a turn: another bass, HOME (SONG)
++ *   next 8 bars SEL + black key 3 (CHORDS), EDIT, LIVE KNOB 1 (its first sound knob: the filter) down over two bars and
++ *               up again over two, HOME
++ *   the BUILD's last bar   FX held, from its third beat white key 2 held (REPEAT 1/16), let go on the DROP's one
++ *   the DROP    SEL + black key 4 (LEAD), the white keys: a line of eight bars in the song's key (snapped to it)
++ * Rendered from the GROOVE's first bar to the DROP's ninth, at most SECS (default 90) seconds, to OUT.wav; what it did
++ * printed with its time.
++ *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/host/vizzbox_live tools/vizzbox_live.c -lm
++ *   build/host/vizzbox_live GENRE SUBGENRE SEED ENERGY VARIATION OUT       (SEED in hex; then ffmpeg OUT.wav OUT.mp3) */
++#define VIZZBOX 1
++#include "../web/emu/felucca_web.c"
++#include <math.h>
++
++static FILE *wav;
++static uint32_t nwav, held_btn, held_keys;
++static double peak;
++static const char *VB_SEC_NAME(void);
++
++static void render(uint32_t n)                    /* n frames, into the WAV once it is open */
++{
++    while (n) {
++        uint32_t m = n < 128u ? n : 128u, k;
++        web_render(m);
++        for (k = 0; k < m; k++) {
++            float l = out_l[k], r = out_r[k];
++            int16_t s[2] = {(int16_t)(l > 0.99997f ? 32767 : l < -1.0f ? -32768 : lrintf(l * 32767.0f)),
++                            (int16_t)(r > 0.99997f ? 32767 : r < -1.0f ? -32768 : lrintf(r * 32767.0f))};
++            double a = fabs(l) > fabs(r) ? fabs(l) : fabs(r);
++            if (wav) {
++                fwrite(s, sizeof s, 1, wav);
++                nwav++;
++                peak = a > peak ? a : peak;
++            }
++        }
++        mo_r = mo_w;                               /* (its MIDI: not kept) */
++        n -= m;
++    }
++}
++static void ms(uint32_t n) { render(n * 441u / 10u); }
++static double now(void) { return (double)nwav / FS; }
++static void say(const char *what) { printf("  %6.1f s  bar %3u %-6s  %s\n", now(), vb.bar, VB_SEC_NAME(), what); }
++static uint32_t key_of(int black, uint32_t place)
++{
++    uint32_t k;
++    for (k = 0; k < 27u; k++)
++        if (key_black(k) == black && key_place(k) == place)
++            return k;
++    return 0;
++}
++static void buttons(uint32_t m) { held_btn = m; web_buttons(m); }
++static void keys(uint32_t m) { held_keys = m; web_keys(m); }
++static void tap(uint32_t b)
++{
++    buttons(held_btn | 1u << b);
++    ms(50);
++    buttons(held_btn & ~(1u << b));
++    ms(60);
++}
++static void with_black(uint32_t b, uint32_t place)
++{
++    buttons(1u << b);
++    ms(60);
++    keys(1u << key_of(1, place));
++    ms(60);
++    keys(0);
++    ms(40);
++    buttons(0);
++    ms(80);
++}
++static void until_sec(uint32_t type, uint32_t sbar)   /* on to a section of that type, its bar sbar */
++{
++    uint32_t t;
++    for (t = 0; t < 30000u && !(vb_cur()->type == type && vb.sbar == sbar); t++)
++        ms(10);
++}
++static void until_bar(uint32_t bar)
++{
++    uint32_t t;
++    for (t = 0; t < 30000u && vb.bar < bar; t++)
++        ms(10);
++}
++static void wav_head(FILE *f, uint32_t nframes)
++{
++    uint32_t v;
++    uint16_t a = 1, ch = 2, ba = 4, bits = 16;
++    uint32_t sr = FS, br = FS * 4u;
++    fseek(f, 0, SEEK_SET);
++    fwrite("RIFF", 1, 4, f);
++    v = 36u + nframes * 4u;
++    fwrite(&v, 4, 1, f);
++    fwrite("WAVEfmt ", 1, 8, f);
++    v = 16;
++    fwrite(&v, 4, 1, f);
++    fwrite(&a, 2, 1, f);
++    fwrite(&ch, 2, 1, f);
++    fwrite(&sr, 4, 1, f);
++    fwrite(&br, 4, 1, f);
++    fwrite(&ba, 2, 1, f);
++    fwrite(&bits, 2, 1, f);
++    fwrite("data", 1, 4, f);
++    v = nframes * 4u;
++    fwrite(&v, 4, 1, f);
++}
++static const char *VB_SEC_NAME(void)
++{
++    static const char *const N[] = {"?", "INTRO", "GROOVE", "BUILD", "DROP", "BREAK", "OUTRO"};
++    return song.playing ? N[vb_cur()->type % 7u] : "-";
++}
++
++int main(int argc, char **argv)
++{
++    static const uint8_t LINE[32] = {4, 6, 7, 6, 4, 2, 4, 0,  4, 6, 7, 9, 7, 6, 4, 2,
++                                     4, 6, 7, 6, 4, 2, 4, 7,  9, 7, 6, 4, 2, 4, 6, 4};   /* (white keys, a beat each) */
++    char path[512];
++    uint32_t secs = getenv("SECS") ? (uint32_t)atoi(getenv("SECS")) : 90u, b, i, drop, id;
++    if (argc < 7) {
++        fprintf(stderr, "usage: vizzbox_live GENRE SUBGENRE SEED(hex) ENERGY VARIATION OUT\n");
++        return 2;
++    }
++    snprintf(path, sizeof path, "%s.wav", argv[6]);
++    web_nor_erase();
++    web_boot();
++    usb.config = 1;
++    web_master(1023);
++    ms(600);
++    vb.k.genre = (uint8_t)atoi(argv[1]);
++    vb.k.sub = (uint8_t)atoi(argv[2]);
++    vb.k.seed = (uint16_t)strtoul(argv[3], 0, 16);
++    vb.k.energy = (uint8_t)atoi(argv[4]);
++    vb.k.var = (uint8_t)atoi(argv[5]);
++    vb.k.len = VL_NORMAL;
++    vb_knob_song();
++    printf("vizzbox_live: %s / %s, seed %04X, energy %s, variation %s\n", VB_GNAME[vb.k.genre % VB_NGEN],
++           VB_SNAME[vb_rig(vb.k.genre, vb.k.sub)], vb.k.seed, argv[4], argv[5]);
++    tap(B_PLAY);
++    until_sec(VS_GROOVE, 0);
++    if (!(wav = fopen(path, "wb")))
++        return 2;
++    wav_head(wav, 0);
++    say("the GROOVE: from here on recorded");
++    until_bar(vb.bar + 4u);
++    with_black(B_SCL, 1);                          /* the BASS: another sound */
++    tap(B_EDIT);
++    say("SEL + black key 2: the focus BASS; EDIT: KLANG");
++    ms(400);
++    web_enc(EN_PRESET, 1);
++    ms(300);
++    printf("             PRESETS: BASS now %s %s\n", ENGINES[trk[R_B].eng_req % NENGINES]->name, ui.msg);
++    ms(600);
++    tap(B_HOME);
++    until_bar(vb.bar + 4u);
++    with_black(B_SCL, 2);                          /* the CHORDS: the filter down and up */
++    tap(B_EDIT);
++    ms(300);
++    id = vb_live.id[0];
++    say("SEL + black key 3: the focus CHORDS; EDIT: KLANG, LIVE KNOB 1 down and up");
++    printf("             LIVE KNOB 1: %s\n", param_desc_of(eng_idx(trk[R_C].eng_req), id)->label);
++    for (i = 0; i < 24u; i++) {
++        web_enc(EN_K1, -3);
++        ms((uint32_t)(2u * 240000u / vb.bpm / 24u));
++    }
++    for (i = 0; i < 24u; i++) {
++        web_enc(EN_K1, 3);
++        ms((uint32_t)(2u * 240000u / vb.bpm / 24u));
++    }
++    tap(B_HOME);
++    for (b = 0; b < 2000u && !(vb_cur()->type == VS_BUILD && vb_left() == 1u); b++)
++        ms(10);                                    /* (the BUILD's last bar) */
++    until_bar(vb.bar);
++    ms((uint32_t)(2u * 60000u / vb.bpm));           /* (its third beat) */
++    buttons(1u << B_FX);
++    ms(30);
++    keys(1u << key_of(0, 1));
++    say("FX held, white key 2: REPEAT 1/16 into the DROP");
++    until_sec(VS_DROP, 0);
++    keys(0);
++    buttons(0);
++    drop = vb.bar;
++    say("the DROP: let go");
++    ms(200);
++    with_black(B_SCL, 3);                          /* the LEAD: played along */
++    say("SEL + black key 4: the focus LEAD; the white keys, eight bars");
++    for (i = 0; i < 32u && now() < secs; i++) {
++        uint32_t beat = 60000u / vb.bpm;
++        keys(1u << key_of(0, LINE[i]));
++        ms(beat * 3u / 4u);
++        keys(0);
++        ms(beat / 4u);
++    }
++    until_bar(drop + 8u);
++    say("the end of the recording");
++    printf("vizzbox_live: %.1f s recorded, peak %.1f dBFS\n", now(), 20.0 * log10(peak > 1e-9 ? peak : 1e-9));
++    wav_head(wav, nwav);
++    fclose(wav);
++    return 0;
++}
+-- 
+2.43.0
+
